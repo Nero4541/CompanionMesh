@@ -1,0 +1,77 @@
+# Companion Server configuration (non-secret).
+# Machine-specific overrides go in configs/companion.local.yaml (git-ignored),
+# which is deep-merged on top of this file. Secrets go in .env.
+
+server:
+  host: 127.0.0.1
+  port: 8765
+  dev_client: true          # serve the browser test client at /dev/
+
+logging:
+  level: INFO               # DEBUG | INFO | WARNING | ERROR
+  format: text              # text | json
+
+storage:
+  data_dir: data            # relative to the project root
+
+personas_dir: personas
+
+# Agent backends. hermes/openclaw keep transcripts and long-term memory on the
+# agent's host; base_url may point at another machine (LAN or Tailscale).
+# direct = no agent framework: the companion talks to an LLM itself.
+agent:
+  provider: hermes          # hermes | openclaw | direct
+  persona: default
+  history_turns: 20
+  hermes:
+    base_url: http://127.0.0.1:8642/v1
+    api_key_env: HERMES_API_KEY
+    model: hermes-agent
+    memory_scope: companion # X-Hermes-Session-Key: long-term memory scope
+    timeout: 300
+  openclaw:
+    # Needs gateway.http.endpoints.chatCompletions.enabled: true in openclaw.json
+    base_url: http://127.0.0.1:18789/v1
+    api_key_env: OPENCLAW_GATEWAY_TOKEN   # gateway.auth.token (or password)
+    model: openclaw
+    agent_id: main
+    timeout: 300
+    extra_body: {}          # e.g. {max_tokens: 200}; see README "Performance and hardware"
+
+# Used by agent.provider: direct (Hermes manages its own model).
+llm:
+  provider: openai_compatible
+  base_url: http://127.0.0.1:11434/v1
+  api_key_env: LLM_API_KEY
+  model: default
+  extra_body: {}            # e.g. {chat_template_kwargs: {enable_thinking: false}}
+
+stt:
+  provider: faster_whisper  # faster_whisper | none
+  model: large-v3-turbo
+  language: ja              # null = auto-detect
+  device: auto              # auto | cuda | cpu
+  compute_type: auto
+  beam_size: 1
+  preload: true
+
+vad:
+  provider: silero          # silero | energy
+  threshold: 0.5
+  min_speech_ms: 250
+  min_silence_ms: 1000      # pause that ends an utterance; lower = faster, but splits sentences
+  speech_pad_ms: 200
+  max_utterance_s: 30
+
+tts:
+  provider: openai_compatible   # openai_compatible | none
+  base_url: http://127.0.0.1:8088/v1   # Irodori-TTS-Server default
+  api_key_env: TTS_API_KEY
+  model: irodori-tts
+  # Irodori: "none" = no reference audio. For a stable character voice, put a
+  # reference clip in Irodori-TTS-Server's voices/ dir and use its id here.
+  voice: none
+  response_format: wav
+  extra_body:               # vendor-specific fields merged into the request
+    irodori:
+      seed: 1234            # fixed seed keeps the no-reference voice consistent
