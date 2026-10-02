@@ -38,8 +38,8 @@ The server streams the agent's reply text to the client as it arrives. Each fini
 ## Quick start (Windows, PowerShell)
 
 ```powershell
-git clone <repo-url> companion_server
-cd companion_server
+git clone https://github.com/Nero4541/CompanionMesh.git
+cd CompanionMesh
 
 # Python 3.13 + dependencies (+ local speech recognition, + NVIDIA libraries)
 uv python install 3.13
