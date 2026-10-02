@@ -133,6 +133,9 @@ function onEvent(ev) {
     case "vision.frame.status":
       if (p.status === "rejected") addMsg("error", `frame rejected: ${p.detail}`);
       break;
+    case "vision.frame.used":
+      addMsg("vision", "📷 camera image sent with this message");
+      break;
     case "conversation.transcript":
       addMsg("user", p.text);
       break;
