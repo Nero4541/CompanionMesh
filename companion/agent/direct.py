@@ -10,7 +10,7 @@ from collections.abc import AsyncIterator
 
 from companion.agent.base import AgentContext, AgentEvent, SessionRef
 from companion.memory.store import MemoryStore
-from companion.providers.llm.base import ChatMessage, LLMProvider
+from companion.providers.llm.base import ChatMessage, LLMProvider, message_text
 
 
 class DirectLLMBackend:
@@ -44,7 +44,7 @@ class DirectLLMBackend:
         self, session: SessionRef, messages: list[ChatMessage], context: AgentContext
     ) -> AsyncIterator[AgentEvent]:
         system = context.system_prompt()
-        recall = await self._recall_block(session, messages[-1]["content"])
+        recall = await self._recall_block(session, message_text(messages[-1]["content"]))
         if recall:
             system = f"{system}\n\n{recall}"
         prompt: list[ChatMessage] = [{"role": "system", "content": system}, *messages]
