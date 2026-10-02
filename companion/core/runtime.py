@@ -209,7 +209,9 @@ class CompanionRuntime:
                 "vlm": getattr(self.vlm, "name", None),
             },
             "vision": {
-                "enabled": self.config.vision.enabled and self.vlm is not None,
+                "mode": self.config.vision.mode,
+                "enabled": self.config.vision.enabled
+                and (self.config.vision.mode == "agent" or self.vlm is not None),
                 "store_images": self.image_archive is not None,
                 "active_sessions": sum(s.vision.enabled for s in self.sessions.values()),
             },
