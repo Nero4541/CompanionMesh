@@ -1,14 +1,15 @@
 # Companion Server
 
-An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, thinks through the agent framework of your choice, and answers with streaming text and speech.
+An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v0.1.5. This is an early release; the protocol may still change before v1.0.
+**Status:** v0.2.0. This is an early release; the protocol may still change before v1.0.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
 - **Agents can run elsewhere.** Point the companion at an agent on another machine (LAN or Tailscale). Memory and tools stay on that machine.
-- **Replaceable providers.** STT, TTS and LLM are interfaces. The defaults are local: faster-whisper for STT and Irodori-TTS for Japanese TTS.
-- **Private by default.** With an external agent, the companion writes no conversation data to disk. Audio is never stored.
+- **Opt-in vision.** A client can share camera frames; a vision-language model turns them into short observations the agent can talk about. Off until a session enables it.
+- **Replaceable providers.** STT, TTS, LLM and VLM are interfaces. The defaults are local: faster-whisper for STT and Irodori-TTS for Japanese TTS.
+- **Private by default.** With an external agent, the companion writes no conversation data to disk. Audio and camera images are never stored unless you enable it.
 
 ## How it works
 
@@ -19,6 +20,7 @@ Browser / edge client                     Companion Server                      
 │                   │                │          │                   │─────────►│  memory, tools, model    │
 │ speaker ◄─audio───┼◄───────────────│ TTS ◄── sentence splitter ◄──│◄─stream──│                          │
 │ text ◄──deltas────┼◄───────────────│                              │          └──────────────────────────┘
+│ camera ──JPEG─────┼───────────────►│ filter → VLM → observations  │
 └───────────────────┘                └──────────────────────────────┘
 ```
 
@@ -33,6 +35,7 @@ The server streams the agent's reply text to the client as it arrives. Each fini
 | Agent backend | yes | Hermes, OpenClaw, or any OpenAI-compatible LLM (`direct`) |
 | NVIDIA GPU | recommended | For Whisper. Falls back to CPU automatically. |
 | TTS server | optional | Any OpenAI-compatible `/v1/audio/speech` server. Without one the companion replies in text only. |
+| Vision model | optional | Any OpenAI-compatible chat endpoint that accepts images. Needed only for the camera. |
 | Browser | for the dev client | Chrome or Edge recommended. The microphone needs `localhost` or HTTPS. |
 
 ## Quick start (Windows, PowerShell)
@@ -56,7 +59,7 @@ uv run companion check
 uv run companion
 ```
 
-Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message.
+Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. With a vision model configured, **Start camera** lets the companion see (see [Vision](#vision)).
 
 On Linux, use `cp .env.example .env` instead of `Copy-Item`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
@@ -126,7 +129,9 @@ Then set `base_url: http://127.0.0.1:28789/v1` for the agent and `http://127.0.0
 | `hermes`, `openclaw` | In memory only, dropped when the connection closes; nothing is written to disk | On the agent host |
 | `direct` | SQLite at `data/companion.db` | Same SQLite file (full-text recall) |
 
-Microphone audio and synthesized speech are never written to disk. Logs contain transcripts at `INFO` level; raise `logging.level` to `WARNING` if you do not want that.
+Visual observations (text descriptions) follow the same rule: in memory only with an external agent, which receives them as part of the conversation; in SQLite with `direct`, deleted after `vision.retention_days`.
+
+Microphone audio and synthesized speech are never written to disk. Camera images are never written to disk unless `vision.store_images: true`; they are then kept under `data/vision/` for `vision.retention_days`. Logs contain transcripts at `INFO` level; raise `logging.level` to `WARNING` if you do not want that.
 
 With an external agent, reconnecting with the same session keeps the conversation going (the agent remembers), but the dev client will not replay earlier messages.
 
@@ -160,6 +165,39 @@ uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8088
 ```
 
 `tts.voice: none` synthesizes without reference audio. For a stable character voice, add a reference clip to the server's `voices/` directory and set `tts.voice` to its id. Set `tts.provider: none` for text-only replies.
+
+## Vision
+
+Vision is opt-in per session: the dev client's **Start camera** sends `vision.enable`, and **Stop camera** sends `vision.disable`, which stops all visual processing immediately, including an analysis in progress.
+
+```text
+camera frame (JPEG/PNG/WebP)
+ -> validate type, size and pixel count
+ -> rate limit (vision.min_interval_s; "manual" frames skip it)
+ -> skip near-duplicates of the last analyzed frame (difference hash)
+ -> VLM, newest frame only -> observation
+ -> vision.observation event, episodic memory, next conversation turn
+```
+
+The dev client sends a frame every few seconds (configurable, or only on request). With **Look when I talk**, it also sends a fresh frame whenever you start speaking or send a message. A turn waits up to `vision.wait_for_pending_s` for a frame that is still being analyzed, so a question like 「これ何？」 is answered with what the camera sees now.
+
+New observations are passed to the agent with your next message (`vision.inject: user`), which keeps the agent's prompt cache intact. Each observation is included once, so the agent's own memory records what it saw. `vision.inject: system` instead lists recent observations in the system prompt on every turn.
+
+Clients that detect things themselves, such as a future edge device, can send `vision.event` with a description; it becomes an observation without a VLM call.
+
+### Vision model
+
+```yaml
+vlm:
+  provider: openai_compatible
+  base_url: http://127.0.0.1:8080/v1   # llama.cpp with --mmproj, vLLM, LM Studio, Ollama, cloud…
+  model: default
+  max_image_side: 768                  # frames are downscaled before sending
+```
+
+Any chat endpoint that accepts `image_url` content parts works. The companion asks for a short JSON description (`description`, `tags`, `confidence`) in the persona's language and falls back to plain text if the model ignores the format. It instructs the model not to identify people. `uv run companion check` sends a small test image to verify the model.
+
+A small VLM is enough: descriptions are short, and one frame is analyzed at a time. The VLM shares the GPU budget with everything else (see below); on a busy GPU, raise `vision.min_interval_s`.
 
 ## Performance and hardware
 
@@ -216,6 +254,7 @@ Use a shorter `vad.min_silence_ms` (e.g. 700) for snappier turns if you speak in
 |---|---|
 | Whisper `large-v3-turbo`, fp16 | ~2.3 GB |
 | Irodori-TTS `v4.1-Small`, fp32 | ~4 GB |
+| VLM | depends on the model; small models (a few billion parameters) are enough |
 | LLM | depends on model and context size; usually by far the largest |
 
 The companion server itself needs a GPU only for STT. STT can stay on the machine running the companion while the agent, LLM and TTS run on a server.
@@ -261,7 +300,7 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 
-### Realtime protocol (v0.1)
+### Realtime protocol (v0.2)
 
 Text frames are JSON envelopes:
 
@@ -279,6 +318,9 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le", channels: 1}` |
 | → | `audio.input.chunk` (binary) | PCM s16le mono 16 kHz |
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
+| → | `vision.enable` / `vision.disable` | opt in or out of vision for this session |
+| → | `vision.frame` (binary) | JPEG, PNG or WebP: `{mime, reason, frame_id?}`; reason is `periodic`, `change` or `manual` |
+| → | `vision.event` | `{description or label, tags?, confidence?}`: an observation made by the client |
 | ← | `session.started` | `{session_id, resumed, history, protocol, …}` |
 | ← | `system.state` | `idle`, `listening`, `transcribing`, `thinking` or `speaking` |
 | ← | `system.error` | `{code, message, recoverable}` |
@@ -288,8 +330,11 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `agent.tool.progress` | `{turn_id, tool, label, status}` |
 | ← | `audio.output.chunk` (binary) | encoded audio for one sentence: `{turn_id, seq, mime, text}` |
 | ← | `audio.output.done` | `{turn_id}` |
+| ← | `vision.state` | `{enabled, available}` |
+| ← | `vision.frame.status` | `{frame_id, status, detail?}`: `accepted`, `duplicate`, `rate_limited`, `rejected` or `disabled` |
+| ← | `vision.observation` | `{id, timestamp, device_id, description, confidence, tags, source, source_event_id}` |
 
-Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
+v0.1 clients keep working unchanged: vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
 ## Troubleshooting
 
@@ -301,7 +346,8 @@ Clients and server must ignore event types they do not know. The namespaces `con
 | `agent_empty_response` | The agent ran but produced no text. Usually no model provider is configured in Hermes/OpenClaw; check the agent's own logs. |
 | `provider_auth` | The key in `.env` does not match the agent's `API_SERVER_KEY` or gateway token. |
 | STT runs on the CPU although you have a GPU | Install with `--extra cuda`; `check` prints the device it actually loaded. |
-| The microphone does not work from another device | Browsers allow microphones only on `localhost` or HTTPS. |
+| The microphone or camera does not work from another device | Browsers allow them only on `localhost` or HTTPS. |
+| **Start camera** is greyed out | No vision model is configured (`vlm.provider: none`), or `vision.enabled: false`. |
 | The first TTS reply takes very long | Irodori warms up on its first request; later sentences take well under a second on a GPU. |
 | Replies take tens of seconds | Usually the agent's prompt processing or reasoning; see [Performance and hardware](#performance-and-hardware). |
 
@@ -322,9 +368,10 @@ companion/
   core/        config, runtime, session state machine, sentence splitter, event bus
   agent/       Hermes, OpenClaw and direct backends
   audio/       PCM helpers, VAD, utterance segmentation
+  vision/      image validation, dedup, observations, per-session vision pipeline
   memory/      transcript stores (in-memory, SQLite)
   protocol/    envelope and binary frame codec, event names
-  providers/   llm / stt / tts implementations
+  providers/   llm / stt / tts / vlm implementations
 client/web/    browser development client
 configs/       default configuration
 personas/      persona definitions
@@ -335,7 +382,7 @@ personas/      persona definitions
 | Version | Outcome |
 |---|---|
 | **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
-| v0.2 | Image/VLM ingestion and visual observations |
+| **v0.2** | Image/VLM ingestion and visual observations (implemented; awaiting a test with a real vision model) |
 | v0.3 | Attention engine and controlled proactive conversation |
 | v0.4 | Portable Linux edge client (camera, mic, speaker) talking to the home server |
 | v0.5 | Realtime multimodal interaction: continuous vision, echo-aware audio, barge-in |
@@ -344,4 +391,4 @@ personas/      persona definitions
 
 [Mozilla Public License 2.0](LICENSE). You may use the server in larger works under other licenses, but changes to files covered by the MPL must be shared under the MPL.
 
-Third-party components (Hermes Agent, OpenClaw, faster-whisper, Irodori-TTS, and the models they download) are separate projects with their own licenses.
+Third-party components (Hermes Agent, OpenClaw, faster-whisper, Irodori-TTS, Pillow, and the models they download) are separate projects with their own licenses.
