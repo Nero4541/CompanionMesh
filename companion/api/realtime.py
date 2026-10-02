@@ -116,6 +116,7 @@ async def realtime(ws: WebSocket) -> None:
                 "speech_input": runtime.stt is not None,
                 "speech_output": session.speak,
                 "vision": session.vision.available,
+                "vision_mode": session.vision.mode,
                 "history": [{"role": m.role, "content": m.content} for m in history],
             },
         )
