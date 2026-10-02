@@ -100,6 +100,8 @@ async def _check(config: CompanionConfig) -> int:
         except Exception as exc:
             ok = False
             print(f"vad        FAILED: {exc}")
+        if config.vision.mode == "agent":
+            print("vision     agent mode (frames go to the agent; its model must accept images)")
         if runtime.vlm is not None:
             try:
                 from companion.vision.image import test_card_jpeg
@@ -109,8 +111,8 @@ async def _check(config: CompanionConfig) -> int:
             except Exception as exc:
                 ok = False
                 print(f"vlm        FAILED: {exc}")
-        else:
-            print("vlm        off (vlm.provider: none; vision unavailable)")
+        elif config.vision.mode == "vlm":
+            print("vlm        off (vlm.provider: none; vision unavailable in vlm mode)")
         if runtime.tts is not None:
             try:
                 audio = await runtime.tts.synthesize("テスト。")
