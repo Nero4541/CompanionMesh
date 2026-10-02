@@ -33,6 +33,8 @@ Server -> client
                              rejected | disabled
     vision.observation       payload: {id, timestamp, device_id, description,
                              confidence, tags, source, source_event_id}
+    vision.frame.used        payload: {frame_id, turn_id}  (agent mode: the frame
+                             was attached to this turn's message)
 """
 
 PROTOCOL_VERSION = "0.2"
@@ -65,3 +67,4 @@ AUDIO_OUTPUT_DONE = "audio.output.done"
 VISION_STATE = "vision.state"
 VISION_FRAME_STATUS = "vision.frame.status"
 VISION_OBSERVATION = "vision.observation"
+VISION_FRAME_USED = "vision.frame.used"
