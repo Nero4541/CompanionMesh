@@ -7,7 +7,7 @@ An open-source, self-hosted AI companion server. Talk to it by voice or text fro
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
 - **Agents can run elsewhere.** Point the companion at an agent on another machine (LAN or Tailscale). Memory and tools stay on that machine.
-- **Opt-in vision.** A client can share camera frames; a vision-language model turns them into short observations the agent can talk about. Off until a session enables it.
+- **Opt-in vision.** A client can share camera frames with the agent, either as images for a model that can see or as short descriptions from a separate vision model. Off until a session enables it.
 - **Replaceable providers.** STT, TTS, LLM and VLM are interfaces. The defaults are local: faster-whisper for STT and Irodori-TTS for Japanese TTS.
 - **Private by default.** With an external agent, the companion writes no conversation data to disk. Audio and camera images are never stored unless you enable it.
 
@@ -20,7 +20,7 @@ Browser / edge client                     Companion Server                      
 │                   │                │          │                   │─────────►│  memory, tools, model    │
 │ speaker ◄─audio───┼◄───────────────│ TTS ◄── sentence splitter ◄──│◄─stream──│                          │
 │ text ◄──deltas────┼◄───────────────│                              │          └──────────────────────────┘
-│ camera ──JPEG─────┼───────────────►│ filter → VLM → observations  │
+│ camera ──JPEG─────┼───────────────►│ filter → image (or VLM text) │
 └───────────────────┘                └──────────────────────────────┘
 ```
 
@@ -35,7 +35,7 @@ The server streams the agent's reply text to the client as it arrives. Each fini
 | Agent backend | yes | Hermes, OpenClaw, or any OpenAI-compatible LLM (`direct`) |
 | NVIDIA GPU | recommended | For Whisper. Falls back to CPU automatically. |
 | TTS server | optional | Any OpenAI-compatible `/v1/audio/speech` server. Without one the companion replies in text only. |
-| Vision model | optional | Any OpenAI-compatible chat endpoint that accepts images. Needed only for the camera. |
+| Vision | optional | For the camera: an agent whose model accepts images (default), or a separate vision model. |
 | Browser | for the dev client | Chrome or Edge recommended. The microphone needs `localhost` or HTTPS. |
 
 ## Quick start (Windows, PowerShell)
@@ -59,7 +59,7 @@ uv run companion check
 uv run companion
 ```
 
-Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. With a vision model configured, **Start camera** lets the companion see (see [Vision](#vision)).
+Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see, if the agent's model accepts images (see [Vision](#vision)).
 
 On Linux, use `cp .env.example .env` instead of `Copy-Item`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
@@ -129,7 +129,7 @@ Then set `base_url: http://127.0.0.1:28789/v1` for the agent and `http://127.0.0
 | `hermes`, `openclaw` | In memory only, dropped when the connection closes; nothing is written to disk | On the agent host |
 | `direct` | SQLite at `data/companion.db` | Same SQLite file (full-text recall) |
 
-Visual observations (text descriptions) follow the same rule: in memory only with an external agent, which receives them as part of the conversation; in SQLite with `direct`, deleted after `vision.retention_days`.
+Visual observations (VLM mode descriptions and `vision.event`s) follow the same rule: in memory only with an external agent, which receives them as part of the conversation; in SQLite with `direct`, deleted after `vision.retention_days`.
 
 Microphone audio and synthesized speech are never written to disk. Camera images are never written to disk unless `vision.store_images: true`; they are then kept under `data/vision/` for `vision.retention_days`. Logs contain transcripts at `INFO` level; raise `logging.level` to `WARNING` if you do not want that.
 
@@ -174,18 +174,35 @@ Vision is opt-in per session: the dev client's **Start camera** sends `vision.en
 camera frame (JPEG/PNG/WebP)
  -> validate type, size and pixel count
  -> rate limit (vision.min_interval_s; "manual" frames skip it)
- -> skip near-duplicates of the last analyzed frame (difference hash)
- -> VLM, newest frame only -> observation
- -> vision.observation event, episodic memory, next conversation turn
+ -> skip near-duplicates of the last accepted frame (difference hash)
+ -> downscale to vlm.max_image_side
+ -> vision.mode: agent  newest frame is attached as an image to your next message
+    vision.mode: vlm    a vision model describes the newest frame -> observation text
 ```
 
-The dev client sends a frame every few seconds (configurable, or only on request). With **Look when I talk**, it also sends a fresh frame whenever you start speaking or send a message. A turn waits up to `vision.wait_for_pending_s` for a frame that is still being analyzed, so a question like 「これ何？」 is answered with what the camera sees now.
+The dev client sends a frame every few seconds (configurable, or only on request). With **Look when I talk**, it also sends a fresh frame whenever you start speaking or send a message, so a question like 「これ何？」 is answered with what the camera sees now.
 
-New observations are passed to the agent with your next message (`vision.inject: user`), which keeps the agent's prompt cache intact. Each observation is included once, so the agent's own memory records what it saw. `vision.inject: system` instead lists recent observations in the system prompt on every turn.
+### Agent mode (default)
 
-Clients that detect things themselves, such as a future edge device, can send `vision.event` with a description; it becomes an observation without a VLM call.
+`vision.mode: agent` hands the image straight to the agent: your next message is sent as text plus the newest frame (an OpenAI `image_url` part). The agent's own model does the seeing, and its memory records what it saw. Each frame is sent at most once and only if it is younger than `vision.observation_max_age_s`; the companion keeps no image after the turn.
 
-### Vision model
+This needs an agent backend and model that accept images:
+
+- **Hermes / OpenClaw** pass `image_url` parts through. In OpenClaw, the model definition must list image input, e.g. `"input": ["text", "image"]`, or the image is not forwarded.
+- **llama.cpp** must be started with the model's multimodal projector (`--mmproj …`).
+- **`direct`**: `llm` must point at a model that accepts images.
+
+Images add to the prompt the model has to process; on a slow GPU, a smaller `vlm.max_image_side` (e.g. 512) keeps turns faster.
+
+### VLM mode
+
+`vision.mode: vlm` uses a separate vision model (the `vlm` section) to describe each accepted frame. Only the newest waiting frame is analyzed; descriptions arrive as `vision.observation` events, are kept as episodic memory, and are passed to the agent as text. Use it when the agent's model cannot see, or to keep images away from the agent entirely.
+
+New observations are passed with your next message (`vision.inject: user`), which keeps the agent's prompt cache intact; each is included once. `vision.inject: system` instead lists recent observations in the system prompt on every turn. A turn waits up to `vision.wait_for_pending_s` for a frame that is still being analyzed.
+
+In both modes, clients that detect things themselves, such as a future edge device, can send `vision.event` with a description; it becomes an observation without any model call.
+
+#### Vision model settings
 
 ```yaml
 vlm:
@@ -333,6 +350,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.state` | `{enabled, available}` |
 | ← | `vision.frame.status` | `{frame_id, status, detail?}`: `accepted`, `duplicate`, `rate_limited`, `rejected` or `disabled` |
 | ← | `vision.observation` | `{id, timestamp, device_id, description, confidence, tags, source, source_event_id}` |
+| ← | `vision.frame.used` | `{frame_id, turn_id}`: agent mode attached this frame to the turn |
 
 v0.1 clients keep working unchanged: vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
@@ -347,7 +365,8 @@ v0.1 clients keep working unchanged: vision traffic only appears after a client 
 | `provider_auth` | The key in `.env` does not match the agent's `API_SERVER_KEY` or gateway token. |
 | STT runs on the CPU although you have a GPU | Install with `--extra cuda`; `check` prints the device it actually loaded. |
 | The microphone or camera does not work from another device | Browsers allow them only on `localhost` or HTTPS. |
-| **Start camera** is greyed out | No vision model is configured (`vlm.provider: none`), or `vision.enabled: false`. |
+| **Start camera** is greyed out | `vision.enabled: false`, or VLM mode without a vision model (`vlm.provider: none`). |
+| The agent ignores the camera image | Its model does not accept images: check `--mmproj` for llama.cpp and the model's `input` list in OpenClaw. |
 | The first TTS reply takes very long | Irodori warms up on its first request; later sentences take well under a second on a GPU. |
 | Replies take tens of seconds | Usually the agent's prompt processing or reasoning; see [Performance and hardware](#performance-and-hardware). |
 
@@ -382,7 +401,7 @@ personas/      persona definitions
 | Version | Outcome |
 |---|---|
 | **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
-| **v0.2** | Image/VLM ingestion and visual observations (implemented; awaiting a test with a real vision model) |
+| **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations (implemented; awaiting a test with a real model) |
 | v0.3 | Attention engine and controlled proactive conversation |
 | v0.4 | Portable Linux edge client (camera, mic, speaker) talking to the home server |
 | v0.5 | Realtime multimodal interaction: continuous vision, echo-aware audio, barge-in |
