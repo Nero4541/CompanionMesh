@@ -75,6 +75,12 @@ async def _dispatch(session: Session, event: Envelope) -> None:
             await session.audio_stop()
         case ev.AUDIO_OUTPUT_PLAYED:
             await session.playback_finished(payload.get("turn_id"))
+        case ev.VISION_ENABLE:
+            await session.vision.enable()
+        case ev.VISION_DISABLE:
+            await session.vision.disable()
+        case ev.VISION_EVENT:
+            await session.vision.submit_event(event)
         case _:
             # Forward compatibility: unknown event types are ignored.
             log.debug("ignored event", extra=kv(type=event.type))
@@ -109,6 +115,7 @@ async def realtime(ws: WebSocket) -> None:
                 "persona": runtime.persona.display_name or runtime.persona.name,
                 "speech_input": runtime.stt is not None,
                 "speech_output": session.speak,
+                "vision": session.vision.available,
                 "history": [{"role": m.role, "content": m.content} for m in history],
             },
         )
@@ -127,6 +134,8 @@ async def realtime(ws: WebSocket) -> None:
                     event, data = decode_binary_frame(message["bytes"])
                     if event.type == ev.AUDIO_INPUT_CHUNK:
                         await session.audio_chunk(data)
+                    elif event.type == ev.VISION_FRAME:
+                        await session.vision.submit_frame(event, data)
                     continue
                 if message.get("text") is not None:
                     await _dispatch(session, parse_text_frame(message["text"]))
