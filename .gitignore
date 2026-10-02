@@ -1,0 +1,71 @@
+# =====================================================================
+# Whitelist mode: ignore everything at the repo root, then explicitly
+# re-include only what belongs in the public repository.
+#
+# Never whitelist (private, not published):
+#   docs/        internal development docs / roadmap
+#   .workspace/  private notes, experiments, dev/test scratch data,
+#                recordings, model weights, etc.
+# =====================================================================
+
+/*
+
+# --- Repo meta -------------------------------------------------------
+!/.gitignore
+!/.gitattributes
+!/.python-version
+!/.github/
+
+# --- Project files ---------------------------------------------------
+!/README.md
+!/LICENSE
+!/pyproject.toml
+!/uv.lock
+!/.env.example
+
+# --- Source ----------------------------------------------------------
+!/companion/
+!/client/
+!/configs/
+!/personas/
+!/scripts/
+
+# =====================================================================
+# Re-ignore generated/local files inside whitelisted directories.
+# These must stay BELOW the whitelist so they take precedence.
+# =====================================================================
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+build/
+dist/
+
+# Tooling caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
+
+# Secrets (only .env.example is public)
+.env
+.env.*
+!/.env.example
+
+# Machine-specific config overrides
+*.local.yaml
+*.local.yml
+
+# Logs & OS/editor noise
+*.log
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Private — never published
+/docs/
+.workspace/
