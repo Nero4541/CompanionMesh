@@ -1,4 +1,4 @@
-// Companion dev client: text + half-duplex voice over /v1/realtime.
+// Companion dev client: text, half-duplex voice and opt-in camera over /v1/realtime.
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = "companion.session_id";
 const DEVICE_ID = "web-dev";
@@ -11,6 +11,8 @@ let audioCtx = null;
 let mic = null;            // { stream, source, node }
 let micOn = false;
 let assistantEl = null;    // message element being streamed into
+let cam = null;            // { stream, timer }
+let visionAvailable = false;
 let toolEls = new Map();
 
 // --- UI helpers ------------------------------------------------------------
@@ -29,6 +31,7 @@ function setConn(on) {
   $("conn").className = `pill ${on ? "on" : "off"}`;
   $("connect").textContent = on ? "Disconnect" : "Connect";
   for (const id of ["text", "send", "mic-toggle", "cancel"]) $(id).disabled = !on;
+  $("cam-toggle").disabled = !on || !visionAvailable;
 }
 
 // Show how long the agent has been working; local models can take a while.
@@ -84,6 +87,7 @@ function connect() {
     setConn(false);
     setState("idle");
     stopMic();
+    stopCamera(false);
     addMsg("system", `disconnected (${e.code})`);
     ws = null;
   };
@@ -103,6 +107,10 @@ function onEvent(ev) {
       $("log").replaceChildren();
       for (const m of p.history || []) addMsg(m.role, m.content);
       if (!p.speech_input) $("mic-toggle").disabled = true;
+      visionAvailable = Boolean(p.vision);
+      $("cam-toggle").disabled = !visionAvailable;
+      $("cam-toggle").title = visionAvailable ? "Opt in to vision for this session"
+        : "No vision model configured on the server";
       break;
     case "system.state":
       setState(p.state);
@@ -112,6 +120,18 @@ function onEvent(ev) {
       break;
     case "audio.vad":
       $("meter-bar").style.background = p.state === "speech_start" ? "var(--ok)" : "";
+      if (p.state === "speech_start" && $("look-on-talk").checked) captureFrame("manual");
+      break;
+    case "vision.state":
+      $("vision-state").textContent = p.enabled ? "vision on" : "vision off";
+      $("vision-state").className = `pill ${p.enabled ? "on" : "off"}`;
+      if (!p.enabled && cam) stopCamera(false);
+      break;
+    case "vision.observation":
+      addMsg("vision", `👁 ${p.description}${p.tags?.length ? `  [${p.tags.join(", ")}]` : ""}`);
+      break;
+    case "vision.frame.status":
+      if (p.status === "rejected") addMsg("error", `frame rejected: ${p.detail}`);
       break;
     case "conversation.transcript":
       addMsg("user", p.text);
@@ -270,6 +290,77 @@ function stopMic() {
   $("mic-toggle").classList.remove("active");
 }
 
+// --- camera ----------------------------------------------------------------
+
+const MAX_FRAME_SIDE = 768;
+
+async function listCameras() {
+  const devices = await navigator.mediaDevices.enumerateDevices();
+  const select = $("cam");
+  const current = select.value;
+  select.replaceChildren(new Option("default", ""));
+  for (const d of devices.filter((d) => d.kind === "videoinput")) {
+    select.append(new Option(d.label || `camera ${select.length}`, d.deviceId));
+  }
+  select.value = current;
+}
+
+// Grab the current video frame, downscale and send it as a JPEG vision.frame.
+async function captureFrame(reason) {
+  if (!cam) return;
+  const video = $("preview");
+  if (!video.videoWidth) return;
+  const scale = Math.min(1, MAX_FRAME_SIDE / Math.max(video.videoWidth, video.videoHeight));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(video.videoWidth * scale);
+  canvas.height = Math.round(video.videoHeight * scale);
+  canvas.getContext("2d").drawImage(video, 0, 0, canvas.width, canvas.height);
+  const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.8));
+  if (!blob || !cam) return;
+  sendBinary("vision.frame", { mime: "image/jpeg", reason, frame_id: crypto.randomUUID() },
+             await blob.arrayBuffer());
+}
+
+function scheduleCapture() {
+  if (!cam) return;
+  clearInterval(cam.timer);
+  const seconds = Number($("cam-interval").value);
+  cam.timer = seconds > 0 ? setInterval(() => captureFrame("periodic"), seconds * 1000) : null;
+}
+
+async function startCamera() {
+  const deviceId = $("cam").value;
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { deviceId: deviceId ? { exact: deviceId } : undefined,
+             width: { ideal: 1280 }, height: { ideal: 720 } },
+  });
+  const video = $("preview");
+  video.srcObject = stream;
+  video.hidden = false;
+  cam = { stream, timer: null };
+  send("vision.enable", {});
+  scheduleCapture();
+  $("snap").disabled = false;
+  $("cam-toggle").textContent = "Stop camera";
+  $("cam-toggle").classList.add("active");
+  await listCameras();
+}
+
+function stopCamera(notify = true) {
+  if (cam) {
+    clearInterval(cam.timer);
+    for (const t of cam.stream.getTracks()) t.stop();
+    cam = null;
+    if (notify) send("vision.disable", {});
+  }
+  const video = $("preview");
+  video.srcObject = null;
+  video.hidden = true;
+  $("snap").disabled = true;
+  $("cam-toggle").textContent = "Start camera";
+  $("cam-toggle").classList.remove("active");
+}
+
 // --- wiring ----------------------------------------------------------------
 
 $("connect").onclick = () => (ws ? ws.close() : connect());
@@ -293,16 +384,35 @@ $("mic").onchange = async () => {
   if (micOn) { stopMic(); await startMic(); }
 };
 $("cancel").onclick = () => { playback.stop(); send("conversation.cancel", {}); };
-$("composer").onsubmit = (e) => {
+$("composer").onsubmit = async (e) => {
   e.preventDefault();
   const text = $("text").value.trim();
   if (!text) return;
   ensureAudio(); // user gesture: unlock audio playback
-  addMsg("user", text);
-  send("conversation.text", { text });
   $("text").value = "";
+  addMsg("user", text);
+  // Send a fresh frame first; the server waits briefly for it before answering.
+  if (cam && $("look-on-talk").checked) await captureFrame("manual");
+  send("conversation.text", { text });
 };
+$("cam-toggle").onclick = async () => {
+  try {
+    if (cam) stopCamera(); else await startCamera();
+  } catch (err) {
+    addMsg("error", `camera: ${err.message || err}`);
+    stopCamera();
+  }
+};
+$("cam").onchange = async () => {
+  if (cam) { stopCamera(); await startCamera(); }
+};
+$("cam-interval").onchange = scheduleCapture;
+$("snap").onclick = () => captureFrame("manual");
 
-navigator.mediaDevices?.addEventListener?.("devicechange", listMics);
+navigator.mediaDevices?.addEventListener?.("devicechange", () => {
+  listMics().catch(() => {});
+  listCameras().catch(() => {});
+});
 listMics().catch(() => {});
+listCameras().catch(() => {});
 connect();
