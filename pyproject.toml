@@ -1,0 +1,60 @@
+[project]
+name = "companion-server"
+version = "0.1.5"
+description = "Open-source, self-hosted AI companion server"
+readme = "README.md"
+license = "MPL-2.0"
+license-files = ["LICENSE"]
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "fastapi>=0.115",
+    "uvicorn[standard]>=0.32",
+    "httpx>=0.28",
+    "pydantic>=2.9",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+    "numpy>=2.1",
+    "truststore>=0.10",
+]
+
+[project.optional-dependencies]
+# Local speech-to-text (faster-whisper / CTranslate2) + Silero VAD (onnxruntime).
+stt = [
+    "faster-whisper>=1.1",
+]
+# NVIDIA runtime libraries for CTranslate2 GPU inference (cuBLAS 12 + cuDNN 9).
+cuda = [
+    "nvidia-cublas-cu12; sys_platform == 'win32' or sys_platform == 'linux'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32' or sys_platform == 'linux'",
+]
+
+[project.scripts]
+companion = "companion.__main__:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.24",
+    "ruff>=0.8",
+]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["companion"]
+
+[tool.pytest.ini_options]
+testpaths = [".workspace/tests"]  # private: tests are not published
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+filterwarnings = ["ignore:Using `httpx` with `starlette.testclient`"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP", "ASYNC", "RUF"]
+ignore = ["RUF001", "RUF002", "RUF003"]
