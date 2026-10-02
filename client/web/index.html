@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Companion · dev client</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+  <header>
+    <h1>Companion <small>dev client</small></h1>
+    <div class="status">
+      <span id="conn" class="pill off">disconnected</span>
+      <span id="state" class="pill">idle</span>
+    </div>
+  </header>
+
+  <section class="controls">
+    <button id="connect">Connect</button>
+    <button id="new-session" title="Forget the stored session id and start fresh">New session</button>
+    <label>Microphone
+      <select id="mic"><option value="">default</option></select>
+    </label>
+    <button id="mic-toggle" disabled>Start mic</button>
+    <button id="cancel" disabled>Stop reply</button>
+    <label class="check"><input type="checkbox" id="tts" checked> Play audio</label>
+  </section>
+
+  <div id="meter"><div id="meter-bar"></div></div>
+  <p id="session" class="muted"></p>
+
+  <main id="log" aria-live="polite"></main>
+
+  <form id="composer">
+    <input id="text" autocomplete="off" placeholder="Type a message…" disabled>
+    <button id="send" disabled>Send</button>
+  </form>
+
+  <script src="app.js" type="module"></script>
+</body>
+</html>
