@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 import contextlib
 import logging
 import time
@@ -251,13 +252,27 @@ class Session:
 
         if self.vision.enabled:
             await self.vision.wait_pending()
-        user_prefix, system_block = self.vision.context_for_turn()
-        if system_block:
-            context.extra_system.append(system_block)
-        if user_prefix:
-            # Only the agent sees the observations; the stored transcript keeps
-            # the user's own words.
-            messages[-1] = {"role": "user", "content": f"{user_prefix}\n\nUser: {user_text}"}
+        seen = self.vision.context_for_turn()
+        if seen.system_block:
+            context.extra_system.append(seen.system_block)
+        # Only the agent sees observations and images; the stored transcript
+        # keeps the user's own words and never the image.
+        text = f"{seen.user_prefix}\n\nUser: {user_text}" if seen.user_prefix else user_text
+        if seen.image is not None:
+            image_url = "data:image/jpeg;base64," + base64.b64encode(seen.image.jpeg).decode()
+            note = f"(Camera image from {seen.image.device_id}, {round(seen.image.age_s)} s ago)"
+            messages[-1] = {
+                "role": "user",
+                "content": [
+                    {"type": "text", "text": f"{note}\n{text}"},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ],
+            }
+            await self.emit(
+                ev.VISION_FRAME_USED, {"frame_id": seen.image.frame_id, "turn_id": turn_id}
+            )
+        elif seen.user_prefix:
+            messages[-1] = {"role": "user", "content": text}
 
         parts: list[str] = []
         audio_sent = False
