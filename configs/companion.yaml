@@ -75,3 +75,31 @@ tts:
   extra_body:               # vendor-specific fields merged into the request
     irodori:
       seed: 1234            # fixed seed keeps the no-reference voice consistent
+
+# Vision-language model for camera frames (v0.2). Any OpenAI-compatible chat
+# endpoint that accepts image_url parts: llama.cpp with --mmproj, vLLM,
+# LM Studio, Ollama, or a cloud API.
+vlm:
+  provider: none            # openai_compatible | none
+  base_url: http://127.0.0.1:8080/v1
+  api_key_env: VLM_API_KEY
+  model: default
+  max_image_side: 768       # frames are downscaled before sending
+  max_tokens: 300
+  timeout: 60
+  extra_body: {}
+
+# Camera frames from clients. Each session must opt in (vision.enable).
+vision:
+  enabled: true             # server-wide switch
+  max_frame_bytes: 4194304
+  min_interval_s: 2.0       # rate limit per session (manual frames excepted)
+  dedup: true               # skip frames that look like the last analyzed one
+  dedup_threshold: 6        # difference-hash bits; higher = more frames skipped
+  observation_max_age_s: 300
+  max_context_observations: 3
+  inject: user              # user: prepend new observations to the user's turn
+                            # (keeps agent prompt caches warm); system: system prompt
+  wait_for_pending_s: 3.0   # a turn waits this long for a frame being analyzed
+  store_images: false       # images are never written to disk unless true
+  retention_days: 7         # stored observations (direct backend) and images
