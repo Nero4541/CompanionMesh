@@ -145,6 +145,46 @@ class TTSConfig(_Section):
         return os.environ.get(self.api_key_env) or None
 
 
+class VLMConfig(HttpProviderConfig):
+    """Vision-language model reached through OpenAI-compatible chat completions."""
+
+    provider: Literal["openai_compatible", "none"] = "none"
+    base_url: str = "http://127.0.0.1:8080/v1"
+    api_key_env: str | None = "VLM_API_KEY"
+    timeout: float = Field(default=60.0, gt=0)
+    model: str = "default"
+    # Frames are downscaled (longer side, pixels) and re-encoded before sending.
+    max_image_side: int = Field(default=768, ge=64, le=4096)
+    max_tokens: int = Field(default=300, ge=16)
+    # Replaces the built-in instruction; {language} is substituted.
+    prompt: str | None = None
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+
+
+class VisionConfig(_Section):
+    # Server-wide switch; each session must still opt in with vision.enable.
+    enabled: bool = True
+    max_frame_bytes: int = Field(default=4 * 1024 * 1024, ge=1024)
+    max_pixels: int = Field(default=16_000_000, ge=64 * 64)
+    # Accepted frames per session are at least this far apart (manual frames excepted).
+    min_interval_s: float = Field(default=2.0, ge=0)
+    # Skip frames that look like the last analyzed one (difference-hash distance).
+    dedup: bool = True
+    dedup_threshold: int = Field(default=6, ge=0, le=64)
+    # Observations older than this are not offered to the agent.
+    observation_max_age_s: float = Field(default=300.0, gt=0)
+    max_context_observations: int = Field(default=3, ge=0)
+    # "user": prepend new observations to the user's message (keeps the agent's
+    # prompt cache intact); "system": add recent ones to the system prompt.
+    inject: Literal["user", "system"] = "user"
+    # A turn waits this long for a frame that is still being analyzed.
+    wait_for_pending_s: float = Field(default=3.0, ge=0)
+    # Images are never written to disk unless enabled here.
+    store_images: bool = False
+    # Retention of stored observations (direct backend) and stored images.
+    retention_days: float = Field(default=7.0, gt=0)
+
+
 class CompanionConfig(_Section):
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -154,6 +194,8 @@ class CompanionConfig(_Section):
     stt: STTConfig = STTConfig()
     vad: VADConfig = VADConfig()
     tts: TTSConfig = TTSConfig()
+    vlm: VLMConfig = VLMConfig()
+    vision: VisionConfig = VisionConfig()
     personas_dir: Path = Path("personas")
 
     @field_validator("personas_dir")
