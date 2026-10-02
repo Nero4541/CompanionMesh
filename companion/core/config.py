@@ -153,7 +153,8 @@ class VLMConfig(HttpProviderConfig):
     api_key_env: str | None = "VLM_API_KEY"
     timeout: float = Field(default=60.0, gt=0)
     model: str = "default"
-    # Frames are downscaled (longer side, pixels) and re-encoded before sending.
+    # Frames are downscaled (longer side, pixels) and re-encoded before sending,
+    # in both vision modes.
     max_image_side: int = Field(default=768, ge=64, le=4096)
     max_tokens: int = Field(default=300, ge=16)
     # Replaces the built-in instruction; {language} is substituted.
@@ -174,6 +175,10 @@ class VisionConfig(_Section):
     # Observations older than this are not offered to the agent.
     observation_max_age_s: float = Field(default=300.0, gt=0)
     max_context_observations: int = Field(default=3, ge=0)
+    # "agent": attach the newest frame as an image to the user's next message, for
+    # agents whose model can see. "vlm": describe frames with the vlm provider and
+    # pass the descriptions as text.
+    mode: Literal["agent", "vlm"] = "agent"
     # "user": prepend new observations to the user's message (keeps the agent's
     # prompt cache intact); "system": add recent ones to the system prompt.
     inject: Literal["user", "system"] = "user"
