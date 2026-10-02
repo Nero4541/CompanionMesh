@@ -76,7 +76,7 @@ tts:
     irodori:
       seed: 1234            # fixed seed keeps the no-reference voice consistent
 
-# Vision-language model for camera frames (v0.2). Any OpenAI-compatible chat
+# Vision-language model for vision.mode: vlm. Any OpenAI-compatible chat
 # endpoint that accepts image_url parts: llama.cpp with --mmproj, vLLM,
 # LM Studio, Ollama, or a cloud API.
 vlm:
@@ -92,6 +92,9 @@ vlm:
 # Camera frames from clients. Each session must opt in (vision.enable).
 vision:
   enabled: true             # server-wide switch
+  mode: agent               # agent: attach the newest frame as an image to your next
+                            # message (the agent's model must accept images)
+                            # vlm: describe frames with the vlm provider above
   max_frame_bytes: 4194304
   min_interval_s: 2.0       # rate limit per session (manual frames excepted)
   dedup: true               # skip frames that look like the last analyzed one
