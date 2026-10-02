@@ -1,7 +1,7 @@
 """Agent backend that talks straight to an LLM provider (no agent framework).
 
 Useful without Hermes and for development. Long-term recall is a small
-full-text lookup over earlier conversations.
+full-text lookup over earlier conversations and visual observations.
 """
 
 from __future__ import annotations
@@ -23,15 +23,22 @@ class DirectLLMBackend:
     async def _recall_block(self, session: SessionRef, query: str) -> str | None:
         if self._memory is None:
             return None
+        blocks: list[str] = []
         hits = [
             m
             for m in await self._memory.recall(query, limit=6)
             if m.session_id != session.session_id
         ]
-        if not hits:
-            return None
-        lines = "\n".join(f"- ({m.role}) {m.content}" for m in hits)
-        return f"Possibly relevant excerpts from earlier conversations:\n{lines}"
+        if hits:
+            lines = "\n".join(f"- ({m.role}) {m.content}" for m in hits)
+            blocks.append(f"Possibly relevant excerpts from earlier conversations:\n{lines}")
+        seen = await self._memory.recall_observations(query, limit=3)
+        if seen:
+            lines = "\n".join(
+                f"- {o.timestamp:%Y-%m-%d %H:%M} UTC ({o.device_id}): {o.description}" for o in seen
+            )
+            blocks.append(f"Possibly relevant things seen earlier:\n{lines}")
+        return "\n\n".join(blocks) or None
 
     async def respond(
         self, session: SessionRef, messages: list[ChatMessage], context: AgentContext
