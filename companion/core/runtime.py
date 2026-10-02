@@ -21,6 +21,8 @@ from companion.core.session import Outbox, Session
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
 from companion.providers.stt.base import STTProvider
 from companion.providers.tts.base import TTSProvider
+from companion.providers.vlm.base import VLMProvider
+from companion.vision.archive import ImageArchive
 
 log = logging.getLogger(__name__)
 
@@ -32,6 +34,7 @@ class Providers:
     agent: AgentBackend | None = None
     stt: STTProvider | None = None
     tts: TTSProvider | None = None
+    vlm: VLMProvider | None = None
     vad_factory: Any = None  # Callable[[], VAD]
     disabled: set[str] = field(default_factory=set)
 
@@ -75,6 +78,14 @@ def build_tts(config: CompanionConfig) -> TTSProvider | None:
     return OpenAICompatibleTTS(config.tts)
 
 
+def build_vlm(config: CompanionConfig) -> VLMProvider | None:
+    if config.vlm.provider == "none":
+        return None
+    from companion.providers.vlm.openai_compatible import OpenAICompatibleVLM
+
+    return OpenAICompatibleVLM(config.vlm)
+
+
 class CompanionRuntime:
     def __init__(self, config: CompanionConfig, providers: Providers | None = None) -> None:
         providers = providers or Providers()
@@ -89,18 +100,31 @@ class CompanionRuntime:
         self.tts: TTSProvider | None = (
             None if "tts" in providers.disabled else providers.tts or build_tts(config)
         )
+        self.vlm: VLMProvider | None = (
+            None if "vlm" in providers.disabled else providers.vlm or build_vlm(config)
+        )
+        self.image_archive: ImageArchive | None = (
+            ImageArchive(config.storage.data_dir / "vision", config.vision.retention_days)
+            if config.vision.store_images
+            else None
+        )
         self._vad_factory = providers.vad_factory or (lambda: create_vad(config.vad))
         self.sessions: dict[str, Session] = {}
         self.started_at = time.time()
 
     async def start(self) -> None:
         self.store.open()
+        await self.store.purge_observations(self.config.vision.retention_days)
+        if self.image_archive is not None:
+            await asyncio.to_thread(self.image_archive.purge)
         log.info(
             "runtime started",
             extra=kv(
                 agent=self.agent.name,
                 stt=getattr(self.stt, "name", None),
                 tts=getattr(self.tts, "name", None),
+                vlm=getattr(self.vlm, "name", None),
+                images="stored" if self.image_archive else "not stored",
                 transcripts=self.storage_description(),
             ),
         )
@@ -123,7 +147,7 @@ class CompanionRuntime:
         warmup = getattr(self, "_warmup", None)
         if warmup is not None:
             warmup.cancel()
-        for provider in (self.agent, self.stt, self.tts):
+        for provider in (self.agent, self.stt, self.tts, self.vlm):
             if provider is not None:
                 with contextlib.suppress(Exception):
                     await provider.aclose()
@@ -182,6 +206,12 @@ class CompanionRuntime:
                 "stt": getattr(self.stt, "name", None),
                 "stt_device": getattr(self.stt, "device", None),
                 "tts": getattr(self.tts, "name", None),
+                "vlm": getattr(self.vlm, "name", None),
+            },
+            "vision": {
+                "enabled": self.config.vision.enabled and self.vlm is not None,
+                "store_images": self.image_archive is not None,
+                "active_sessions": sum(s.vision.enabled for s in self.sessions.values()),
             },
         }
         if probe:
