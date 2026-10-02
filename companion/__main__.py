@@ -68,7 +68,7 @@ def serve(config: CompanionConfig) -> int:
         port=port,
         log_config=None,
         timeout_graceful_shutdown=5,
-        ws_max_size=4 * 1024 * 1024,
+        ws_max_size=config.vision.max_frame_bytes + 64 * 1024,
     )
     return 0
 
@@ -100,6 +100,17 @@ async def _check(config: CompanionConfig) -> int:
         except Exception as exc:
             ok = False
             print(f"vad        FAILED: {exc}")
+        if runtime.vlm is not None:
+            try:
+                from companion.vision.image import test_card_jpeg
+
+                seen = await runtime.vlm.describe(test_card_jpeg(), language="en")
+                print(f"vlm        ok  ({seen.description[:60]!r})")
+            except Exception as exc:
+                ok = False
+                print(f"vlm        FAILED: {exc}")
+        else:
+            print("vlm        off (vlm.provider: none; vision unavailable)")
         if runtime.tts is not None:
             try:
                 audio = await runtime.tts.synthesize("テスト。")
