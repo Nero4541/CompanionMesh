@@ -1,4 +1,4 @@
-"""Per-connection conversation session: turn pipeline and half-duplex audio."""
+"""Per-connection conversation session: turn pipeline, half-duplex audio, vision."""
 
 from __future__ import annotations
 
@@ -21,6 +21,7 @@ from companion.core.text import SentenceSplitter
 from companion.protocol import Envelope, make_event
 from companion.protocol import events as ev
 from companion.providers.llm.base import ChatMessage
+from companion.vision.pipeline import VisionChannel
 
 if TYPE_CHECKING:
     from companion.core.runtime import CompanionRuntime
@@ -66,6 +67,7 @@ class Session:
         self._segmenter: UtteranceSegmenter | None = None
         self._speaking_turn: str | None = None
         self._playback_timer: asyncio.TimerHandle | None = None
+        self.vision = VisionChannel(self)
 
     # --- emit -----------------------------------------------------------
 
@@ -247,6 +249,16 @@ class Session:
         await self.set_state(State.THINKING)
         await self.emit(ev.RESPONSE_START, {"turn_id": turn_id})
 
+        if self.vision.enabled:
+            await self.vision.wait_pending()
+        user_prefix, system_block = self.vision.context_for_turn()
+        if system_block:
+            context.extra_system.append(system_block)
+        if user_prefix:
+            # Only the agent sees the observations; the stored transcript keeps
+            # the user's own words.
+            messages[-1] = {"role": "user", "content": f"{user_prefix}\n\nUser: {user_text}"}
+
         parts: list[str] = []
         audio_sent = False
         cancelled = False
@@ -356,6 +368,7 @@ class Session:
 
     async def close(self) -> None:
         self._audio_active = False
+        await self.vision.close()
         await self.cancel_turn()
         if self._playback_timer is not None:
             self._playback_timer.cancel()
