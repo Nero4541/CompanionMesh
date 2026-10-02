@@ -1,13 +1,15 @@
-"""Per-session vision: opt-in state, frame filtering, VLM analysis, observations.
+"""Per-session vision: opt-in state, frame filtering, and hand-off to the agent.
 
 Flow for a frame::
 
-    vision.frame -> enabled? -> rate limit -> decode/validate -> dedup
-                 -> latest-wins slot -> VLM -> VisualObservation
-                 -> vision.observation event, episodic store, turn context
+    vision.frame -> enabled? -> rate limit -> decode/validate -> dedup -> ...
 
-Only the newest waiting frame is analyzed; older waiting frames are dropped.
-Disabling vision cancels the analysis in flight and discards waiting frames.
+    mode "agent": keep the newest frame; attach it as an image to the user's
+                  next message (once), so a multimodal agent sees it directly.
+    mode "vlm":   latest-wins slot -> VLM -> VisualObservation
+                  -> vision.observation event, episodic store, turn context
+
+Disabling vision cancels any analysis in flight and discards held frames.
 """
 
 from __future__ import annotations
@@ -44,12 +46,31 @@ class _Pending:
     received_at: datetime
 
 
+@dataclass(slots=True)
+class TurnImage:
+    jpeg: bytes
+    frame_id: str
+    device_id: str
+    age_s: float
+
+
+@dataclass(slots=True)
+class TurnVision:
+    """What vision contributes to one agent turn."""
+
+    user_prefix: str | None = None
+    system_block: str | None = None
+    image: TurnImage | None = None
+
+
 class VisionChannel:
     def __init__(self, session: Session) -> None:
         self.session = session
         self.runtime = session.runtime
         self.config = session.runtime.config.vision
+        self.mode = self.config.mode
         self.enabled = False
+        self._latest: _Pending | None = None  # agent mode: newest unseen frame
         self._last_accept = 0.0
         self._last_hash: int | None = None
         self._pending: _Pending | None = None
@@ -64,6 +85,8 @@ class VisionChannel:
 
     @property
     def available(self) -> bool:
+        if self.mode == "agent":
+            return self.config.enabled
         return self.config.enabled and self.runtime.vlm is not None
 
     async def _emit_state(self) -> None:
@@ -74,7 +97,7 @@ class VisionChannel:
     async def enable(self) -> None:
         if not self.config.enabled:
             await self.session.emit_error("vision is disabled on this server", code="vision_off")
-        elif self.runtime.vlm is None:
+        elif self.mode == "vlm" and self.runtime.vlm is None:
             await self.session.emit_error(
                 "no vision model is configured (vlm.provider: none)", code="vision_unavailable"
             )
@@ -87,6 +110,7 @@ class VisionChannel:
         """Stop all visual processing immediately."""
         was_enabled, self.enabled = self.enabled, False
         self._pending = None
+        self._latest = None
         await self._stop_worker()
         self._last_hash = None
         if was_enabled:
@@ -142,18 +166,22 @@ class VisionChannel:
             return await self._status(frame_id, "disabled")
         self._last_accept = now
         self._last_hash = frame_hash
-        self._pending = _Pending(
+        frame = _Pending(
             jpeg=jpeg,
             device_id=header.device_id or self.session.device_id or "camera",
             frame_id=frame_id,
             received_at=datetime.now(UTC),
         )
-        self._idle.clear()
-        self._wake.set()
-        if self._worker is None or self._worker.done():
-            self._worker = asyncio.create_task(
-                self._run_worker(), name=f"vision-{self.session.session_id}"
-            )
+        if self.mode == "agent":
+            self._latest = frame
+        else:
+            self._pending = frame
+            self._idle.clear()
+            self._wake.set()
+            if self._worker is None or self._worker.done():
+                self._worker = asyncio.create_task(
+                    self._run_worker(), name=f"vision-{self.session.session_id}"
+                )
         log.info(
             "vision frame accepted",
             extra=kv(
@@ -253,21 +281,28 @@ class VisionChannel:
         with contextlib.suppress(TimeoutError):
             await asyncio.wait_for(self._idle.wait(), timeout=self.config.wait_for_pending_s)
 
-    def context_for_turn(self) -> tuple[str | None, str | None]:
-        """Return ``(user_prefix, system_block)`` for the next agent turn."""
+    def context_for_turn(self) -> TurnVision:
+        """Observations and/or the newest frame to give the agent on this turn."""
         cfg = self.config
-        if cfg.max_context_observations == 0:
-            return None, None
         now = datetime.now(UTC)
+        turn = TurnVision()
+        frame, self._latest = self._latest, None  # each frame is shown once
+        if frame is not None and self.enabled:
+            age = (now - frame.received_at).total_seconds()
+            if age <= cfg.observation_max_age_s:
+                turn.image = TurnImage(frame.jpeg, frame.frame_id, frame.device_id, age)
+        if cfg.max_context_observations == 0:
+            return turn
         fresh = [o for o in self._recent if o.age_s(now) <= cfg.observation_max_age_s]
         if cfg.inject == "system":
             recent = fresh[-cfg.max_context_observations :]
-            return None, (format_for_context(recent, now) if recent else None)
+            turn.system_block = format_for_context(recent, now) if recent else None
+            return turn
         new = [o for o in fresh if o.id not in self._injected][-cfg.max_context_observations :]
-        if not new:
-            return None, None
-        self._injected.update(o.id for o in new)
-        return format_for_context(new, now), None
+        if new:
+            self._injected.update(o.id for o in new)
+            turn.user_prefix = format_for_context(new, now)
+        return turn
 
     # --- lifecycle ---------------------------------------------------------
 
@@ -282,4 +317,5 @@ class VisionChannel:
     async def close(self) -> None:
         self.enabled = False
         self._pending = None
+        self._latest = None
         await self._stop_worker()
