@@ -200,8 +200,9 @@ class CompanionRuntime:
         return session, session.devices[0], resumed
 
     async def disconnect(self, session: Session, device: Device) -> None:
-        """Detach a device; the session ends when its last device leaves."""
+        """Detach a device; the session ends with its last mic/speaker device."""
         if await session.detach(device):
+            await session.end("conversation ended")
             await self.close_session(session)
 
     async def close_session(self, session: Session) -> None:
