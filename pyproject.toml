@@ -1,6 +1,6 @@
 [project]
 name = "companion-server"
-version = "0.2.1"
+version = "0.3.0"
 description = "Open-source, self-hosted AI companion server"
 readme = "README.md"
 license = "MPL-2.0"
@@ -17,6 +17,7 @@ dependencies = [
     "truststore>=0.10",
     "pillow>=11",
     "websockets>=13",
+    "tzdata>=2026.4 ; sys_platform == 'win32'",
 ]
 
 [project.optional-dependencies]
