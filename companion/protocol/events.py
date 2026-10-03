@@ -24,6 +24,9 @@ Client -> server
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
     session.devices          payload: {devices: [{device_id, roles}]} (on join/leave)
+    session.ended            payload: {reason}  (sent to remaining camera devices when
+                             the last mic/speaker device leaves; the server then
+                             closes their connections)
     system.state             payload: {state}
     system.error             payload: {code, message, recoverable}
     audio.vad                payload: {state: "speech_start" | "speech_end"}
@@ -64,6 +67,7 @@ VISION_EVENT = "vision.event"
 # server -> client
 SESSION_STARTED = "session.started"
 SESSION_DEVICES = "session.devices"
+SESSION_ENDED = "session.ended"
 SYSTEM_STATE = "system.state"
 SYSTEM_ERROR = "system.error"
 AUDIO_VAD = "audio.vad"
