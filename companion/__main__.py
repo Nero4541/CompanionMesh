@@ -12,6 +12,7 @@ from pathlib import Path
 
 from companion import __version__
 from companion.core.config import CompanionConfig, ConfigError, load_config
+from companion.core.errors import CompanionError
 from companion.core.logging import kv, setup_logging
 
 log = logging.getLogger("companion")
@@ -26,6 +27,20 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("serve", help="run the server (default)")
     sub.add_parser("check", help="validate config and probe providers, then exit")
+    cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
+    cam.add_argument(
+        "source",
+        help="camera URL: HTTP snapshot (.../shot.jpg), MJPEG stream (.../video) or rtsp://",
+    )
+    cam.add_argument("--server", help="realtime URL (default: this config's server)")
+    cam.add_argument("--session", help="session id to join (default: the active session)")
+    cam.add_argument("--device-id", default="ipcam")
+    cam.add_argument(
+        "--interval", type=float, default=5.0, help="seconds between frames; 0 = only on request"
+    )
+    cam.add_argument(
+        "--no-enable", action="store_true", help="do not switch vision on when joining"
+    )
     return parser
 
 
@@ -152,6 +167,24 @@ def main(argv: list[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     setup_logging(config.logging.level, config.logging.format)
+    if args.command == "camera":
+        from companion.devices.camera import CameraDevice, CameraOptions, server_url
+
+        options = CameraOptions(
+            server=args.server or server_url(config.server.host, config.server.port),
+            source_url=args.source,
+            session_id=args.session,
+            device_id=args.device_id,
+            interval_s=args.interval,
+            enable=not args.no_enable,
+        )
+        try:
+            asyncio.run(CameraDevice(options).run())
+        except KeyboardInterrupt:
+            return 0
+        except CompanionError as exc:
+            log.error(str(exc))
+            return 1
     if args.command == "check":
         return asyncio.run(_check(config))
     try:
