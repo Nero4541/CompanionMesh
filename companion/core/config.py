@@ -182,7 +182,9 @@ class VisionConfig(_Section):
     # "user": prepend new observations to the user's message (keeps the agent's
     # prompt cache intact); "system": add recent ones to the system prompt.
     inject: Literal["user", "system"] = "user"
-    # A turn waits this long for a frame that is still being analyzed.
+    # When a turn starts (speech or text), ask camera devices for a fresh frame.
+    capture_on_turn: bool = True
+    # A turn waits this long for a requested frame, or one still being analyzed.
     wait_for_pending_s: float = Field(default=3.0, ge=0)
     # Images are never written to disk unless enabled here.
     store_images: bool = False
