@@ -35,7 +35,7 @@ The server streams the agent's reply text to the client as it arrives. Each fini
 | Agent backend | yes | Hermes, OpenClaw, or any OpenAI-compatible LLM (`direct`) |
 | NVIDIA GPU | recommended | For Whisper. Falls back to CPU automatically. |
 | TTS server | optional | Any OpenAI-compatible `/v1/audio/speech` server. Without one the companion replies in text only. |
-| Vision | optional | For the camera: an agent whose model accepts images (default), or a separate vision model. |
+| Vision | optional | For the camera: the LLM behind your agent must be multimodal. Otherwise set `vision.mode: vlm` and configure a vision model. |
 | Browser | for the dev client | Chrome or Edge recommended. The microphone needs `localhost` or HTTPS. |
 
 ## Quick start (Windows, PowerShell)
@@ -59,7 +59,7 @@ uv run companion check
 uv run companion
 ```
 
-Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see, if the agent's model accepts images (see [Vision](#vision)).
+Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see. This needs a multimodal LLM behind the agent, or `vision.mode: vlm` with a vision model configured (see [Vision](#vision)).
 
 On Linux, use `cp .env.example .env` instead of `Copy-Item`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
@@ -167,6 +167,8 @@ uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8088
 `tts.voice: none` synthesizes without reference audio. For a stable character voice, add a reference clip to the server's `voices/` directory and set `tts.voice` to its id. Set `tts.provider: none` for text-only replies.
 
 ## Vision
+
+> **The LLM that powers your agent must be multimodal (accept images) for the camera to work in the default mode.** If it is not, set `vision.mode: vlm` and configure a vision model in the `vlm` section ([VLM mode](#vlm-mode)); the agent then receives text descriptions instead of images.
 
 Vision is opt-in per session: the dev client's **Start camera** sends `vision.enable`, and **Stop camera** sends `vision.disable`, which stops all visual processing immediately, including an analysis in progress.
 
