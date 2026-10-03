@@ -29,6 +29,16 @@ class ServerConfig(_Section):
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
     dev_client: bool = True
+    # Token every client must present; required when host is not loopback.
+    auth_token_env: str | None = "COMPANION_TOKEN"
+    # Keep a session this long after its last mic/speaker device drops, so a
+    # device that reconnects (e.g. after a Wi-Fi hiccup) resumes it.
+    session_linger_s: float = Field(default=60.0, ge=0)
+
+    def auth_token(self) -> str | None:
+        if not self.auth_token_env:
+            return None
+        return os.environ.get(self.auth_token_env) or None
 
 
 class LoggingConfig(_Section):
