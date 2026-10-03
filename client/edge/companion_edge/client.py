@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Any
 
 import websockets
-from websockets.asyncio.client import ClientConnection
 
 from companion_edge import protocol, status
 from companion_edge.config import EdgeConfig
@@ -27,8 +26,10 @@ from companion_edge.devices import (
     AlsaSpeaker,
     Camera,
     FfmpegCamera,
+    FfmpegOpusMicrophone,
     Microphone,
     Speaker,
+    ffmpeg_has_opus,
 )
 from companion_edge.opus import OpusEncoder, OpusUnavailable
 
@@ -57,23 +58,24 @@ class EdgeClient:
     ) -> None:
         self.config = config
         a, c = config.audio, config.camera
-        self.mic = microphone or (AlsaMicrophone(a.input_device) if a.enabled else None)
+        self.encoder = encoder
+        self.codec = a.codec
+        self.mic = microphone or (self._pick_microphone() if a.enabled else None)
         self.speaker = speaker or (AlsaSpeaker(a.output_device) if a.enabled else None)
         self.camera = camera or (
             FfmpegCamera(c.device, input_format=c.input_format, size=c.size, quality=c.quality)
             if c.enabled
             else None
         )
-        self.encoder = encoder
-        self.codec = a.codec
-        if self.mic is not None and self.codec == "opus" and self.encoder is None:
-            try:
-                self.encoder = OpusEncoder(a.opus_bitrate)
-            except OpusUnavailable as exc:
-                log.warning("%s; sending uncompressed PCM", exc)
-                self.codec = "pcm"
+        if self.mic is not None and microphone is not None and self.codec == "opus":
+            if self.encoder is None and not getattr(self.mic, "encoded", False):
+                try:
+                    self.encoder = OpusEncoder(a.opus_bitrate)
+                except OpusUnavailable as exc:
+                    log.warning("%s; sending uncompressed PCM", exc)
+                    self.codec = "pcm"
         self.stats = Stats()
-        self.ws: ClientConnection | None = None
+        self.ws: Any = None  # websockets connection (legacy or new client API)
         self.session_id: str | None = self._load_state().get("session_id")
         self.streaming = False  # audio.input.start sent on this connection
         # Mic packets waiting to be sent (also the offline buffer).
@@ -84,6 +86,28 @@ class EdgeClient:
         self.vision_enabled = False
         self.vision_user_disabled = False
         self.frame_interval = c.min_interval_s
+
+    def _pick_microphone(self) -> Microphone:
+        """libopus if present, else ffmpeg's Opus encoder, else uncompressed PCM."""
+        a = self.config.audio
+        if self.codec == "opus" and a.opus_encoder in ("auto", "libopus"):
+            try:
+                if self.encoder is None:
+                    self.encoder = OpusEncoder(a.opus_bitrate)
+                log.info("microphone: arecord + libopus")
+                return AlsaMicrophone(a.input_device)
+            except OpusUnavailable as exc:
+                if a.opus_encoder == "libopus":
+                    log.warning("%s; sending uncompressed PCM", exc)
+                    self.codec = "pcm"
+                    return AlsaMicrophone(a.input_device)
+        if self.codec == "opus" and a.opus_encoder in ("auto", "ffmpeg") and ffmpeg_has_opus():
+            log.info("microphone: ffmpeg (ALSA capture + Opus encoder)")
+            return FfmpegOpusMicrophone(a.input_device, a.opus_bitrate)
+        if self.codec == "opus":
+            log.warning("no Opus encoder (libopus or ffmpeg); sending uncompressed PCM")
+        self.codec = "pcm"
+        return AlsaMicrophone(a.input_device)
 
     # --- state on disk -----------------------------------------------------
 
@@ -125,7 +149,10 @@ class EdgeClient:
             if self._playing:
                 batch.clear()  # half-duplex: do not send our own voice back
                 continue
-            packet = self.encoder.encode(frame) if self.codec == "opus" else frame
+            if getattr(self.mic, "encoded", False) or self.codec != "opus":
+                packet = frame  # already Opus (ffmpeg) or plain PCM
+            else:
+                packet = self.encoder.encode(frame)
             if len(self._pending) == self._pending.maxlen and not self.streaming:
                 self.stats.dropped_audio_s += PACKET_S
             self._pending.append(packet)
@@ -280,7 +307,7 @@ class EdgeClient:
             log.warning("server: %s: %s", p.get("code"), p.get("message"))
         return None
 
-    async def _connection(self, ws: ClientConnection) -> str:
+    async def _connection(self, ws: Any) -> str:
         self.ws = ws
         self.streaming = False
         start: dict[str, Any] = {"roles": self.roles()}
