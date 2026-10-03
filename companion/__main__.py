@@ -67,9 +67,10 @@ def serve(config: CompanionConfig) -> int:
     import uvicorn
 
     from companion.api.app import create_app
+    from companion.api.auth import exposure_problem
 
     host, port = config.server.host, config.server.port
-    problem = _check_port(host, port)
+    problem = exposure_problem(config.server) or _check_port(host, port)
     if problem:
         log.error(problem)
         return 2
@@ -194,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
             device_id=args.device_id,
             interval_s=args.interval,
             enable=not args.no_enable,
+            token=config.server.auth_token(),
         )
         try:
             asyncio.run(CameraDevice(options).run())
