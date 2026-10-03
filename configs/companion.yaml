@@ -6,6 +6,10 @@ server:
   host: 127.0.0.1
   port: 8765
   dev_client: true          # serve the browser test client at /dev/
+  # Clients must present this token (from .env) when it is set; it is required
+  # when host is not loopback, e.g. 0.0.0.0 or a Tailscale address for edge devices.
+  auth_token_env: COMPANION_TOKEN
+  session_linger_s: 60      # keep a session this long so a dropped device can resume
 
 logging:
   level: INFO               # DEBUG | INFO | WARNING | ERROR
