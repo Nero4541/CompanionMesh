@@ -14,6 +14,7 @@ let assistantEl = null;    // message element being streamed into
 let cam = null;            // { stream, timer }
 let visionAvailable = false;
 let visionOn = false;
+let quietOn = false;
 let toolEls = new Map();
 
 // --- UI helpers ------------------------------------------------------------
@@ -34,6 +35,13 @@ function setConn(on) {
   for (const id of ["text", "send", "mic-toggle", "cancel"]) $(id).disabled = !on;
   $("cam-toggle").disabled = !on || !visionAvailable;
   $("vision-state").disabled = !on || !visionAvailable;
+  $("quiet").disabled = !on;
+}
+
+function setQuiet(enabled) {
+  quietOn = enabled;
+  $("quiet").textContent = enabled ? "quiet on" : "quiet off";
+  $("quiet").className = `pill ${enabled ? "on" : "off"}`;
 }
 
 function showDevices(devices) {
@@ -120,6 +128,7 @@ function onEvent(ev) {
       $("cam-toggle").disabled = !visionAvailable;
       $("vision-state").disabled = !visionAvailable;
       setVision(Boolean(p.vision_enabled));
+      setQuiet(Boolean(p.quiet));
       showDevices(p.devices);
       $("cam-toggle").title = visionAvailable ? "Opt in to vision for this session"
         : "No vision model configured on the server";
@@ -140,6 +149,12 @@ function onEvent(ev) {
       setVision(p.enabled);
       if (!p.enabled && cam) stopCamera(false);
       break;
+    case "attention.state":
+      setQuiet(p.quiet);
+      break;
+    case "attention.decision":
+      addMsg("attention", `🧭 ${p.decision}: ${p.kind} (${p.reasons.join("; ")})`);
+      break;
     case "vision.capture.request":
       // The server wants a fresh look (you started talking); answer with our camera.
       if (cam) captureFrame("manual");
@@ -157,7 +172,7 @@ function onEvent(ev) {
       addMsg("user", p.text);
       break;
     case "conversation.response.start":
-      assistantEl = addMsg("assistant", "");
+      assistantEl = addMsg(p.proactive ? "assistant proactive" : "assistant", "");
       playback.begin(p.turn_id);
       break;
     case "conversation.response.delta":
@@ -433,6 +448,7 @@ $("cam").onchange = async () => {
 $("cam-interval").onchange = scheduleCapture;
 $("snap").onclick = () => captureFrame("manual");
 $("vision-state").onclick = () => send(visionOn ? "vision.disable" : "vision.enable", {});
+$("quiet").onclick = () => send("attention.quiet", { enabled: !quietOn });
 
 navigator.mediaDevices?.addEventListener?.("devicechange", () => {
   listMics().catch(() => {});
