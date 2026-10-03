@@ -191,3 +191,120 @@ class FfmpegCamera:
             self._task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await self._task
+
+
+class OggPacketReader:
+    """Split an Ogg stream into packets (enough for Ogg Opus from ffmpeg)."""
+
+    def __init__(self) -> None:
+        self._buf = bytearray()
+        self._partial = bytearray()
+
+    def feed(self, chunk: bytes) -> list[bytes]:
+        self._buf += chunk
+        packets: list[bytes] = []
+        while True:
+            start = self._buf.find(b"OggS")
+            if start < 0:
+                del self._buf[:-3]
+                return packets
+            if start:
+                del self._buf[:start]
+            if len(self._buf) < 27:
+                return packets
+            nsegs = self._buf[26]
+            header_len = 27 + nsegs
+            if len(self._buf) < header_len:
+                return packets
+            lacing = self._buf[27:header_len]
+            body_len = sum(lacing)
+            if len(self._buf) < header_len + body_len:
+                return packets
+            if not self._buf[5] & 0x01:  # page does not continue a packet
+                self._partial.clear()
+            offset = header_len
+            for size in lacing:
+                self._partial += self._buf[offset : offset + size]
+                offset += size
+                if size < 255:  # the packet ends in this segment
+                    packets.append(bytes(self._partial))
+                    self._partial.clear()
+            del self._buf[: header_len + body_len]
+
+
+def ffmpeg_has_opus() -> bool:
+    import subprocess
+
+    ffmpeg = shutil.which("ffmpeg")
+    if ffmpeg is None:
+        return False
+    try:
+        out = subprocess.run(
+            [ffmpeg, "-hide_banner", "-encoders"], capture_output=True, text=True, timeout=10
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return any(line.split()[1:2] in (["opus"], ["libopus"]) for line in out.splitlines())
+
+
+class FfmpegOpusMicrophone:
+    """ALSA capture encoded by ffmpeg's Opus encoder; yields raw Opus packets.
+
+    For boards without libopus: ffmpeg reads the microphone and writes Ogg Opus
+    with one page per 20 ms packet (low latency); we strip the Ogg framing.
+    """
+
+    encoded = True
+
+    def __init__(self, device: str = "default", bitrate: int = 24000) -> None:
+        self.device = device
+        self.bitrate = bitrate
+        self._proc: asyncio.subprocess.Process | None = None
+
+    async def frames(self) -> AsyncIterator[bytes]:
+        ffmpeg = require("ffmpeg", "ffmpeg")
+        self._proc = await asyncio.create_subprocess_exec(
+            ffmpeg,
+            "-hide_banner",
+            "-loglevel",
+            "error",
+            "-f",
+            "alsa",
+            "-ar",
+            "16000",
+            "-ac",
+            "1",
+            "-i",
+            self.device,
+            "-c:a",
+            "opus",
+            "-strict",
+            "-2",
+            "-b:a",
+            str(self.bitrate),
+            "-page_duration",
+            "20000",
+            "-flush_packets",
+            "1",
+            "-f",
+            "opus",
+            "-",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        assert self._proc.stdout is not None
+        reader = OggPacketReader()
+        skipped = 0
+        while chunk := await self._proc.stdout.read(4096):
+            for packet in reader.feed(chunk):
+                if skipped < 2:  # OpusHead and OpusTags
+                    skipped += 1
+                    continue
+                yield packet
+        err = await self._proc.stderr.read() if self._proc.stderr else b""
+        raise RuntimeError(f"ffmpeg microphone stopped: {err.decode(errors='replace')[-300:]}")
+
+    async def close(self) -> None:
+        if self._proc and self._proc.returncode is None:
+            self._proc.kill()
+            await self._proc.wait()
