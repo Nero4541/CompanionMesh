@@ -82,7 +82,8 @@ class CameraDevice:
             if self.vision_enabled:
                 await self._send_frame(ws, "periodic", uuid.uuid4().hex[:12])
 
-    async def _session(self, ws: ClientConnection) -> None:
+    async def _session(self, ws: ClientConnection) -> str:
+        """Serve one session; returns why it ended ("no_session", "ended", "closed")."""
         start: dict[str, object] = {"roles": ["camera"]}
         if self.options.session_id:
             start["session_id"] = self.options.session_id
@@ -122,30 +123,52 @@ class CameraDevice:
                     await self._send_frame(
                         ws, "manual", str(payload.get("request_id") or uuid.uuid4().hex[:12])
                     )
+                elif event.type == ev.SESSION_ENDED:
+                    log.info("session ended; waiting for the next conversation")
+                    self.user_disabled = False  # a new conversation is a fresh start
+                    return "ended"
                 elif event.type == ev.SYSTEM_ERROR:
-                    log.warning("server error", extra=kv(**payload))
                     if payload.get("code") == "no_session":
-                        return
+                        return "no_session"
+                    log.warning("server error", extra=kv(**payload))
         finally:
             if periodic is not None:
                 periodic.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await periodic
+        return "closed"
 
     async def run(self) -> None:
-        if self.source is None:
-            self.source = await open_source(self.options.source_url)
+        warned = False
+        while self.source is None:
+            try:
+                self.source = await open_source(self.options.source_url)
+            except CompanionError as exc:
+                # A phone app may simply not be running yet; keep trying.
+                if not warned:
+                    log.warning("camera unavailable; retrying every 5 s", extra=kv(error=str(exc)))
+                    warned = True
+                await asyncio.sleep(5.0)
         log.info("camera source ready", extra=kv(source=self.source.description))
         backoff = 1.0
+        waiting_logged = False
         try:
             while True:
+                outcome = "error"
                 try:
                     async with websockets.connect(self.options.server, max_size=None) as ws:
                         backoff = 1.0
-                        await self._session(ws)
+                        outcome = await self._session(ws)
                 except (OSError, websockets.WebSocketException) as exc:
                     log.warning("server connection lost", extra=kv(error=str(exc)))
-                # No active session yet, or the connection dropped: try again.
+                if outcome in ("no_session", "ended"):
+                    # Server is fine; wait for someone to start a conversation.
+                    if not waiting_logged:
+                        log.info("no active session yet; retrying every 2 s")
+                        waiting_logged = True
+                    await asyncio.sleep(2.0)
+                    continue
+                waiting_logged = False
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
         finally:
