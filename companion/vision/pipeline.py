@@ -23,6 +23,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from companion.attention.engine import AttentionEvent, SceneTracker
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.protocol import Envelope
@@ -81,6 +82,8 @@ class VisionChannel:
         self._worker: asyncio.Task[None] | None = None
         self._recent: list[VisualObservation] = []
         self._injected: set[str] = set()
+        # Camera signal for the attention engine (v0.3).
+        self.scene = SceneTracker(session.runtime.config.attention)
         # Capture requests: set when a camera device delivers a frame.
         self._frame_arrived = asyncio.Event()
         self._capture_requested_at: float | None = None
@@ -201,7 +204,11 @@ class VisionChannel:
                 bytes=decoded.size_bytes,
             ),
         )
-        return await self._status(frame_id, "accepted")
+        status = await self._status(frame_id, "accepted")
+        change = self.scene.observe(frame_hash, frame.received_at, frame.device_id)
+        if change is not None:
+            await self.session.on_attention_event(change)
+        return status
 
     async def _run_worker(self) -> None:
         vlm = self.runtime.vlm
@@ -271,6 +278,21 @@ class VisionChannel:
             session_id=self.session.session_id,
         )
         await self._record(obs, None)
+        salience = payload.get("salience")
+        await self.session.on_attention_event(
+            AttentionEvent(
+                kind=str(payload.get("label") or "client_event"),
+                description=description[:500],
+                salience=(
+                    max(0.0, min(1.0, float(salience)))
+                    if isinstance(salience, (int, float))
+                    else 0.5
+                ),
+                source="client",
+                at=obs.timestamp,
+                data={"device": obs.device_id},
+            )
+        )
 
     # --- observations -----------------------------------------------------
 
