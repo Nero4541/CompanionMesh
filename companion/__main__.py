@@ -115,6 +115,23 @@ async def _check(config: CompanionConfig) -> int:
         except Exception as exc:
             ok = False
             print(f"vad        FAILED: {exc}")
+        att = config.attention
+        if att.proactive:
+            from datetime import UTC, datetime
+
+            from companion.attention.engine import in_quiet_hours, resolve_zone
+
+            qh = att.quiet_hours
+            zone = qh.timezone or f"host time zone ({resolve_zone(None)})"
+            quiet = (
+                f"quiet {qh.start}-{qh.end} in {zone}"
+                + (", quiet now" if in_quiet_hours(qh, datetime.now(UTC)) else "")
+                if qh.enabled
+                else "no quiet hours"
+            )
+            print(f"attention  proactive on (every >= {att.min_interval_s / 60:g} min; {quiet})")
+        else:
+            print("attention  proactive off")
         if config.vision.mode == "agent":
             print("vision     agent mode (frames go to the agent; its model must accept images)")
         if runtime.vlm is not None:
