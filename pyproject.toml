@@ -1,6 +1,6 @@
 [project]
 name = "companion-server"
-version = "0.2.0"
+version = "0.2.1"
 description = "Open-source, self-hosted AI companion server"
 readme = "README.md"
 license = "MPL-2.0"
@@ -16,6 +16,7 @@ dependencies = [
     "numpy>=2.1",
     "truststore>=0.10",
     "pillow>=11",
+    "websockets>=13",
 ]
 
 [project.optional-dependencies]
