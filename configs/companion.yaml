@@ -103,6 +103,7 @@ vision:
   max_context_observations: 3
   inject: user              # user: prepend new observations to the user's turn
                             # (keeps agent prompt caches warm); system: system prompt
-  wait_for_pending_s: 3.0   # a turn waits this long for a frame being analyzed
+  capture_on_turn: true     # ask camera devices for a fresh frame when you speak/type
+  wait_for_pending_s: 3.0   # a turn waits this long for that frame (or its analysis)
   store_images: false       # images are never written to disk unless true
   retention_days: 7         # stored observations (direct backend) and images
