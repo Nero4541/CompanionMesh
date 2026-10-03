@@ -1,7 +1,13 @@
 """Event type names used by protocol v0.1.
 
 Client -> server
-    session.start            payload: {session_id?, persona?}
+    session.start            payload: {session_id?, join?, roles?}
+                             join: true without session_id attaches to the
+                             most recently active session (e.g. an IP camera
+                             bridge joining the browser's conversation).
+                             roles: subset of ["mic", "speaker", "camera"];
+                             absent = ["mic", "speaker"]. Audio output goes to "speaker"
+                             devices, capture requests to "camera" devices.
     conversation.text        payload: {text}
     conversation.cancel      payload: {}
     audio.input.start        payload: {sample_rate, encoding, channels}
@@ -16,7 +22,8 @@ Client -> server
     vision.event             payload: {description | label, tags?, confidence?}
 
 Server -> client
-    session.started          payload: {session_id, history, protocol}
+    session.started          payload: {session_id, history, protocol, devices, ...}
+    session.devices          payload: {devices: [{device_id, roles}]} (on join/leave)
     system.state             payload: {state}
     system.error             payload: {code, message, recoverable}
     audio.vad                payload: {state: "speech_start" | "speech_end"}
@@ -35,9 +42,11 @@ Server -> client
                              confidence, tags, source, source_event_id}
     vision.frame.used        payload: {frame_id, turn_id}  (agent mode: the frame
                              was attached to this turn's message)
+    vision.capture.request   payload: {request_id, reason}  (to camera devices:
+                             send a fresh "manual" frame now)
 """
 
-PROTOCOL_VERSION = "0.2"
+PROTOCOL_VERSION = "0.2.1"
 
 # client -> server
 SESSION_START = "session.start"
@@ -54,6 +63,7 @@ VISION_EVENT = "vision.event"
 
 # server -> client
 SESSION_STARTED = "session.started"
+SESSION_DEVICES = "session.devices"
 SYSTEM_STATE = "system.state"
 SYSTEM_ERROR = "system.error"
 AUDIO_VAD = "audio.vad"
@@ -68,3 +78,4 @@ VISION_STATE = "vision.state"
 VISION_FRAME_STATUS = "vision.frame.status"
 VISION_OBSERVATION = "vision.observation"
 VISION_FRAME_USED = "vision.frame.used"
+VISION_CAPTURE_REQUEST = "vision.capture.request"
