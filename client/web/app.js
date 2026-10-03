@@ -1,6 +1,18 @@
 // Companion dev client: text, half-duplex voice and opt-in camera over /v1/realtime.
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = "companion.session_id";
+const TOKEN_KEY = "companion.token";
+// Open the page once as /dev/?token=... when the server requires a token;
+// it is remembered in this browser and removed from the address bar.
+(() => {
+  const url = new URL(location.href);
+  const token = url.searchParams.get("token");
+  if (token) {
+    localStorage.setItem(TOKEN_KEY, token);
+    url.searchParams.delete("token");
+    history.replaceState(null, "", url);
+  }
+})();
 const DEVICE_ID = "web-dev";
 const enc = new TextEncoder();
 const dec = new TextDecoder();
@@ -94,7 +106,9 @@ function decodeBinary(buf) {
 
 function connect() {
   const proto = location.protocol === "https:" ? "wss" : "ws";
-  ws = new WebSocket(`${proto}://${location.host}/v1/realtime`);
+  const token = localStorage.getItem(TOKEN_KEY);
+  const query = token ? `?token=${encodeURIComponent(token)}` : "";
+  ws = new WebSocket(`${proto}://${location.host}/v1/realtime${query}`);
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     setConn(true);
@@ -105,7 +119,9 @@ function connect() {
     setState("idle");
     stopMic();
     stopCamera(false);
-    addMsg("system", `disconnected (${e.code})`);
+    addMsg("system", e.code === 1008
+      ? "disconnected: the server needs a token. Open this page as /dev/?token=…"
+      : `disconnected (${e.code})`);
     ws = null;
   };
   ws.onmessage = (e) => {
