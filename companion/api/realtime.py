@@ -87,6 +87,8 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
             await session.vision.disable()
         case ev.VISION_EVENT:
             await session.vision.submit_event(event)
+        case ev.ATTENTION_QUIET:
+            await session.set_quiet(bool(payload.get("enabled", True)))
         case _:
             # Forward compatibility: unknown event types are ignored.
             log.debug("ignored event", extra=kv(type=event.type))
@@ -136,6 +138,8 @@ async def realtime(ws: WebSocket) -> None:
                 "roles": sorted(device.roles),
                 "devices": [d.describe() for d in session.devices],
                 "vision_enabled": session.vision.enabled,
+                "proactive": runtime.config.attention.proactive,
+                "quiet": session.attention.state.quiet_mode,
                 "history": [{"role": m.role, "content": m.content} for m in history],
             },
         )
