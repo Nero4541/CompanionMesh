@@ -11,7 +11,9 @@ Client -> server
     conversation.text        payload: {text}
     conversation.cancel      payload: {}
     audio.input.start        payload: {sample_rate, encoding, channels}
-    audio.input.chunk        binary: PCM s16le mono at the announced rate
+                             encoding: pcm_s16le (16 kHz) or opus
+    audio.input.chunk        binary: PCM s16le mono, or for opus one or more
+                             packets each prefixed with a big-endian uint16 length
     audio.input.stop         payload: {}
     audio.output.played      payload: {turn_id}
     vision.enable            payload: {}  (opt in; vision is off by default)
@@ -21,6 +23,8 @@ Client -> server
                              rate limit and dedup)
     vision.event             payload: {description | label, tags?, confidence?, salience?}
     attention.quiet          payload: {enabled}  (do-not-disturb: no proactive speech)
+    device.status            payload: free-form health, e.g. {cpu_temp_c, mem_free_mb,
+                             wifi_signal_dbm, uptime_s, audio_buffer_ms}
 
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
@@ -53,7 +57,7 @@ Server -> client
                              decision, reasons}  (only with attention.debug)
 """
 
-PROTOCOL_VERSION = "0.3"
+PROTOCOL_VERSION = "0.4"
 
 # client -> server
 SESSION_START = "session.start"
@@ -68,6 +72,7 @@ VISION_DISABLE = "vision.disable"
 VISION_FRAME = "vision.frame"
 VISION_EVENT = "vision.event"
 ATTENTION_QUIET = "attention.quiet"
+DEVICE_STATUS = "device.status"
 
 # server -> client
 SESSION_STARTED = "session.started"
