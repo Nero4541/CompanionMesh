@@ -18,6 +18,8 @@ h1 small { color: var(--muted); font-weight: normal; font-size: 14px; }
 .pill { border: 1px solid var(--line); border-radius: 999px; padding: 2px 10px; font-size: 13px; }
 .pill.on { color: var(--ok); border-color: var(--ok); }
 .pill.off { color: var(--muted); }
+button.pill { background: transparent; cursor: pointer; }
+button.pill:disabled { cursor: default; }
 .controls { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
 .controls label { display: flex; gap: 6px; align-items: center; font-size: 14px; }
 select, input, button { font: inherit; color: inherit; }
