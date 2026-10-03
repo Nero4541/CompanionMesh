@@ -19,7 +19,8 @@ Client -> server
     vision.frame             binary: JPEG/PNG/WebP; payload {mime, reason, frame_id?}
                              reason: periodic | change | manual (manual skips
                              rate limit and dedup)
-    vision.event             payload: {description | label, tags?, confidence?}
+    vision.event             payload: {description | label, tags?, confidence?, salience?}
+    attention.quiet          payload: {enabled}  (do-not-disturb: no proactive speech)
 
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
@@ -31,7 +32,7 @@ Server -> client
     system.error             payload: {code, message, recoverable}
     audio.vad                payload: {state: "speech_start" | "speech_end"}
     conversation.transcript  payload: {text, final}
-    conversation.response.start  payload: {turn_id}
+    conversation.response.start  payload: {turn_id, proactive?, reason?}
     conversation.response.delta  payload: {turn_id, text}
     conversation.response.done   payload: {turn_id, text, cancelled}
     agent.tool.progress      payload: {turn_id, tool, label}
@@ -47,9 +48,12 @@ Server -> client
                              was attached to this turn's message)
     vision.capture.request   payload: {request_id, reason}  (to camera devices:
                              send a fresh "manual" frame now)
+    attention.state          payload: {proactive, quiet, speech_blockers}
+    attention.decision       payload: {kind, description, salience, source,
+                             decision, reasons}  (only with attention.debug)
 """
 
-PROTOCOL_VERSION = "0.2.1"
+PROTOCOL_VERSION = "0.3"
 
 # client -> server
 SESSION_START = "session.start"
@@ -63,6 +67,7 @@ VISION_ENABLE = "vision.enable"
 VISION_DISABLE = "vision.disable"
 VISION_FRAME = "vision.frame"
 VISION_EVENT = "vision.event"
+ATTENTION_QUIET = "attention.quiet"
 
 # server -> client
 SESSION_STARTED = "session.started"
@@ -83,3 +88,5 @@ VISION_FRAME_STATUS = "vision.frame.status"
 VISION_OBSERVATION = "vision.observation"
 VISION_FRAME_USED = "vision.frame.used"
 VISION_CAPTURE_REQUEST = "vision.capture.request"
+ATTENTION_STATE = "attention.state"
+ATTENTION_DECISION = "attention.decision"
