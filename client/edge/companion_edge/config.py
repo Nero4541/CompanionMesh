@@ -15,7 +15,10 @@ class AudioConfig:
     enabled: bool = True
     input_device: str = "default"  # ALSA device for arecord, e.g. "hw:0,0" or "plughw:1,0"
     output_device: str = "default"  # ALSA device for aplay
-    codec: str = "opus"  # opus | pcm (opus falls back to pcm without libopus)
+    codec: str = "opus"  # opus | pcm
+    # Who encodes Opus: libopus (ctypes), ffmpeg (its own encoder), or auto
+    # (libopus, then ffmpeg, then fall back to PCM).
+    opus_encoder: str = "auto"
     opus_bitrate: int = 24000
     packets_per_frame: int = 5  # 20 ms Opus packets batched per WebSocket frame
     buffer_s: float = 3.0  # mic audio kept while disconnected, sent on reconnect
