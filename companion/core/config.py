@@ -192,6 +192,57 @@ class VisionConfig(_Section):
     retention_days: float = Field(default=7.0, gt=0)
 
 
+_HHMM = r"^([01]\d|2[0-3]):[0-5]\d$"
+
+
+class QuietHoursConfig(_Section):
+    """No proactive speech during these hours (normal conversation is unaffected)."""
+
+    enabled: bool = True
+    start: str = Field(default="23:00", pattern=_HHMM)
+    end: str = Field(default="08:00", pattern=_HHMM)
+    # IANA name such as "Asia/Tokyo"; null = the host's local time zone.
+    timezone: str | None = None
+
+    @field_validator("timezone")
+    @classmethod
+    def _known_zone(cls, v: str | None) -> str | None:
+        if v is None:
+            return v
+        from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+        try:
+            ZoneInfo(v)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError(f"unknown time zone {v!r}") from exc
+        return v
+
+
+class AttentionConfig(_Section):
+    """When the companion may speak on its own (v0.3)."""
+
+    # Master switch for proactive speech; conversation works either way.
+    proactive: bool = True
+    # Minimum time between proactive turns, and a per-hour budget.
+    min_interval_s: float = Field(default=900.0, ge=0)
+    max_per_hour: int = Field(default=4, ge=0)
+    quiet_hours: QuietHoursConfig = QuietHoursConfig()
+    # No proactive speech this soon after the user or the companion spoke.
+    grace_after_activity_s: float = Field(default=120.0, ge=0)
+    # Camera signals: difference-hash bits (0-64) that count as a scene change,
+    # and how long a quiet scene must last before a change means "activity resumed".
+    scene_change_threshold: int = Field(default=20, ge=1, le=64)
+    absence_s: float = Field(default=1200.0, gt=0)
+    # Repeats of the same kind of event within this window are ignored.
+    event_dedup_s: float = Field(default=120.0, ge=0)
+    # Salience thresholds (0-1) for REMEMBER, CONTEXT_ONLY and SPEAK.
+    remember_threshold: float = Field(default=0.2, ge=0, le=1)
+    context_threshold: float = Field(default=0.4, ge=0, le=1)
+    speak_threshold: float = Field(default=0.6, ge=0, le=1)
+    # Send every decision with its reasons to clients (attention.decision).
+    debug: bool = False
+
+
 class CompanionConfig(_Section):
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -203,6 +254,7 @@ class CompanionConfig(_Section):
     tts: TTSConfig = TTSConfig()
     vlm: VLMConfig = VLMConfig()
     vision: VisionConfig = VisionConfig()
+    attention: AttentionConfig = AttentionConfig()
     personas_dir: Path = Path("personas")
 
     @field_validator("personas_dir")
