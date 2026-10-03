@@ -54,6 +54,9 @@ class _CollectOutbox:
     async def send_binary(self, event: Envelope, data: bytes) -> None:
         pass
 
+    async def close(self) -> None:
+        pass
+
 
 @router.post("/v1/chat")
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
