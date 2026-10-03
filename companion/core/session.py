@@ -11,6 +11,7 @@ import asyncio
 import base64
 import contextlib
 import logging
+import re
 import time
 import uuid
 from collections.abc import Iterable
@@ -599,6 +600,14 @@ class Session:
             if not text or SILENT in text:
                 log.info("proactive turn: agent chose silence", extra=kv(kind=event.kind))
                 return
+            # We asked for one short remark; some models draft several
+            # alternatives separated by blank lines. Say only the first.
+            first, *rest = re.split(r"\n\s*\n", text, maxsplit=1)
+            if rest:
+                log.info(
+                    "proactive reply trimmed to its first paragraph", extra=kv(kind=event.kind)
+                )
+                text = first.strip()
             self._proactive = False  # speaking now: half-duplex applies again
             await self._speak_proactively(turn_id, text, event)
         finally:
