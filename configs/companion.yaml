@@ -107,3 +107,24 @@ vision:
   wait_for_pending_s: 3.0   # a turn waits this long for that frame (or its analysis)
   store_images: false       # images are never written to disk unless true
   retention_days: 7         # stored observations (direct backend) and images
+
+# When the companion may speak on its own (v0.3). Camera changes and client
+# events are scored by fixed rules; the agent is only asked when every guard
+# passes, and it may still choose to stay silent.
+attention:
+  proactive: true           # master switch; conversation works either way
+  min_interval_s: 900       # at least 15 minutes between proactive remarks
+  max_per_hour: 4
+  quiet_hours:              # no proactive speech in this window
+    enabled: true
+    start: "23:00"
+    end: "08:00"
+    timezone: null          # null = this host's time zone; or e.g. "Asia/Tokyo"
+  grace_after_activity_s: 120   # stay quiet this long after anyone spoke
+  scene_change_threshold: 20    # frame-hash bits that count as a scene change
+  absence_s: 1200               # a change after this long counts as "activity resumed"
+  event_dedup_s: 120
+  remember_threshold: 0.2
+  context_threshold: 0.4
+  speak_threshold: 0.6
+  debug: false              # send each decision and its reasons to clients
