@@ -2,10 +2,11 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v0.2.1. This is an early release; the protocol may still change before v1.0.
+**Status:** v0.3.0. This is an early release; the protocol may still change before v1.0.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
+- **Speaks up, within limits.** When the camera sees something worth mentioning, the companion can start the conversation, at most once every 15 minutes, never during quiet hours, and only if the agent thinks it is worth saying.
 - **Several devices, one conversation.** A browser can keep the mic and speaker while an IP camera (or a phone running a camera app) joins the same session as the companion's eyes.
 - **Agents can run elsewhere.** Point the companion at an agent on another machine (LAN or Tailscale). Memory and tools stay on that machine.
 - **Opt-in vision.** A client can share camera frames with the agent, either as images for a model that can see or as short descriptions from a separate vision model. Off until a session enables it.
@@ -243,6 +244,41 @@ Any chat endpoint that accepts `image_url` content parts works. The companion as
 
 A small VLM is enough: descriptions are short, and one frame is analyzed at a time. The VLM shares the GPU budget with everything else (see below); on a busy GPU, raise `vision.min_interval_s`.
 
+## Proactive behavior
+
+The companion can speak first, under strict rules. Every noticed event goes through a fixed policy:
+
+```text
+event -> salience -> repeat? -> anyone talking / turn in progress?
+      -> proactive switch, do-not-disturb, quiet hours, cooldown, hourly budget
+      -> IGNORE | REMEMBER | CONTEXT_ONLY | SPEAK
+```
+
+| Decision | Effect |
+|---|---|
+| `ignore` | Nothing |
+| `remember` | Kept as an episodic record |
+| `context_only` | Told to the agent with your next message ("Noticed since the user's last message: …") |
+| `speak` | A proactive turn: the agent gets a description of the event (and the current camera image in agent mode) and may say one short remark, or reply `[SILENT]` to stay quiet |
+
+Events come from the camera and from clients:
+
+- **Scene change:** the camera view changes a lot (`attention.scene_change_threshold`, in difference-hash bits). Bigger changes score higher; a moderate change is context only.
+- **Activity resumed:** a big change after the view stayed still for `attention.absence_s` (20 minutes by default), e.g. you came back to your desk. Scores high enough to speak.
+- **Client events:** `vision.event` with an optional `salience` (0–1), for devices that detect things themselves.
+
+The rules that keep it polite are deterministic; no model can override them:
+
+- at most one proactive turn every `attention.min_interval_s` (15 minutes) and `attention.max_per_hour` (4);
+- nothing within `attention.grace_after_activity_s` of you or the companion speaking, and nothing while a turn is in progress;
+- quiet hours, `23:00`–`08:00` by default, in the **host's time zone** unless `attention.quiet_hours.timezone` names one (e.g. `Asia/Tokyo`);
+- do-not-disturb at any time: the dev client's **quiet** button (`attention.quiet`);
+- `attention.proactive: false` turns proactive speech off entirely; normal conversation is unaffected.
+
+The companion never reacts to its own voice: audio input is ignored while it speaks. A proactive turn that is still waiting for the agent keeps listening, so you can simply start talking, and your turn takes over. Set `attention.debug: true` to see every decision and its reasons in the dev client.
+
+With slow local models, a proactive turn takes as long as any other turn; the agent's reply is only spoken once it is complete.
+
 ## Performance and hardware
 
 The time from the end of your sentence to the first spoken word is roughly:
@@ -344,7 +380,7 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 
-### Realtime protocol (v0.2.1)
+### Realtime protocol (v0.3)
 
 Text frames are JSON envelopes:
 
@@ -364,7 +400,8 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
 | → | `vision.enable` / `vision.disable` | opt in or out of vision for this session |
 | → | `vision.frame` (binary) | JPEG, PNG or WebP: `{mime, reason, frame_id?}`; reason is `periodic`, `change` or `manual` |
-| → | `vision.event` | `{description or label, tags?, confidence?}`: an observation made by the client |
+| → | `vision.event` | `{description or label, tags?, confidence?, salience?}`: an observation made by the client |
+| → | `attention.quiet` | `{enabled}`: do-not-disturb on or off |
 | ← | `session.started` | `{session_id, resumed, history, protocol, roles, devices, vision_enabled, …}` |
 | ← | `session.devices` | `{devices: [{device_id, roles}]}`: a device joined or left |
 | ← | `session.ended` | `{reason}`: to remaining camera devices when the conversation ends |
@@ -372,7 +409,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `system.error` | `{code, message, recoverable}` |
 | ← | `audio.vad` | `speech_start` or `speech_end` |
 | ← | `conversation.transcript` | `{text, final}` |
-| ← | `conversation.response.start` / `.delta` / `.done` | `{turn_id, text, cancelled?}` |
+| ← | `conversation.response.start` / `.delta` / `.done` | `{turn_id, text, cancelled?}`; `start` has `proactive: true` and `reason` when the companion spoke first |
 | ← | `agent.tool.progress` | `{turn_id, tool, label, status}` |
 | ← | `audio.output.chunk` (binary) | encoded audio for one sentence: `{turn_id, seq, mime, text}` |
 | ← | `audio.output.done` | `{turn_id}` |
@@ -381,6 +418,8 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.observation` | `{id, timestamp, device_id, description, confidence, tags, source, source_event_id}` |
 | ← | `vision.frame.used` | `{frame_id, turn_id}`: agent mode attached this frame to the turn |
 | ← | `vision.capture.request` | `{request_id, reason}`: to `camera` devices: send a fresh `manual` frame now |
+| ← | `attention.state` | `{proactive, quiet, speech_blockers}` |
+| ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
 
 A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). v0.1 clients keep working unchanged: they get the default roles, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
@@ -418,6 +457,7 @@ companion/
   agent/       Hermes, OpenClaw and direct backends
   audio/       PCM helpers, VAD, utterance segmentation
   vision/      image validation, dedup, observations, per-session vision pipeline
+  attention/   attention policy, scene tracking, proactive-speech guards
   devices/     device processes: IP camera bridge and frame sources
   memory/      transcript stores (in-memory, SQLite)
   protocol/    envelope and binary frame codec, event names
@@ -433,7 +473,7 @@ personas/      persona definitions
 |---|---|
 | **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
 | **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations; v0.2.1 adds multi-device sessions and IP cameras |
-| v0.3 | Attention engine and controlled proactive conversation |
+| **v0.3** | Attention engine and controlled proactive conversation |
 | v0.4 | Portable Linux edge client (camera, mic, speaker) talking to the home server |
 | v0.5 | Realtime multimodal interaction: continuous vision, echo-aware audio, barge-in |
 
