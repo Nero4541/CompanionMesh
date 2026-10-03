@@ -2,10 +2,11 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v0.2.0. This is an early release; the protocol may still change before v1.0.
+**Status:** v0.2.1. This is an early release; the protocol may still change before v1.0.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
+- **Several devices, one conversation.** A browser can keep the mic and speaker while an IP camera (or a phone running a camera app) joins the same session as the companion's eyes.
 - **Agents can run elsewhere.** Point the companion at an agent on another machine (LAN or Tailscale). Memory and tools stay on that machine.
 - **Opt-in vision.** A client can share camera frames with the agent, either as images for a model that can see or as short descriptions from a separate vision model. Off until a session enables it.
 - **Replaceable providers.** STT, TTS, LLM and VLM are interfaces. The defaults are local: faster-whisper for STT and Irodori-TTS for Japanese TTS.
@@ -182,7 +183,7 @@ camera frame (JPEG/PNG/WebP)
     vision.mode: vlm    a vision model describes the newest frame -> observation text
 ```
 
-The dev client sends a frame every few seconds (configurable, or only on request). With **Look when I talk**, it also sends a fresh frame whenever you start speaking or send a message, so a question like 「これ何？」 is answered with what the camera sees now.
+Cameras send a frame every few seconds (configurable, or only on request). In addition, when you start speaking or send a message, the server asks every camera device for a fresh frame (`vision.capture.request`, controlled by `vision.capture_on_turn`) and waits up to `vision.wait_for_pending_s` for it, so a question like 「これ何？」 is answered with what the camera sees now.
 
 ### Agent mode (default)
 
@@ -201,6 +202,21 @@ Images add to the prompt the model has to process; on a slow GPU, a smaller `vlm
 `vision.mode: vlm` uses a separate vision model (the `vlm` section) to describe each accepted frame. Only the newest waiting frame is analyzed; descriptions arrive as `vision.observation` events, are kept as episodic memory, and are passed to the agent as text. Use it when the agent's model cannot see, or to keep images away from the agent entirely.
 
 New observations are passed with your next message (`vision.inject: user`), which keeps the agent's prompt cache intact; each is included once. `vision.inject: system` instead lists recent observations in the system prompt on every turn. A turn waits up to `vision.wait_for_pending_s` for a frame that is still being analyzed.
+
+### IP cameras and phones
+
+Any camera reachable over HTTP or RTSP can be the companion's eyes. `companion camera` runs a small device process that joins the active conversation with the `camera` role, switches vision on, and sends frames (periodically and whenever the server asks):
+
+```powershell
+# A phone running an "IP camera" app on the same network (or on Tailscale)
+uv run companion camera http://192.168.1.20:8080/shot.jpg      # HTTP snapshot
+uv run companion camera http://192.168.1.20:8080/video         # MJPEG stream
+uv run companion camera rtsp://192.168.1.20:8554/live          # RTSP, needs ffmpeg on PATH
+```
+
+The source type is detected from the URL and the response. Options: `--interval 5` (seconds between frames; `0` = only on request), `--session <id>` to join a specific session instead of the most recently started one, `--device-id`, and `--no-enable` to leave vision off until someone enables it. The bridge reconnects automatically. If vision is switched off in the session (for example with the **vision on** button in the dev client), the camera pauses and stays paused until vision is switched on again.
+
+Start the browser conversation first, then the camera; it waits and retries until there is a session to join.
 
 In both modes, clients that detect things themselves, such as a future edge device, can send `vision.event` with a description; it becomes an observation without any model call.
 
@@ -319,7 +335,7 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 
-### Realtime protocol (v0.2)
+### Realtime protocol (v0.2.1)
 
 Text frames are JSON envelopes:
 
@@ -331,7 +347,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 
 | Direction | Event | Payload |
 |---|---|---|
-| → | `session.start` (first frame) | `{session_id?}`: resume an existing session |
+| → | `session.start` (first frame) | `{session_id?, join?, roles?}`: resume or join a session; `join: true` without an id joins the most recently started one; `roles` ⊆ `mic`, `speaker`, `camera` (default `mic`, `speaker`) |
 | → | `conversation.text` | `{text}` |
 | → | `conversation.cancel` | stop the current reply |
 | → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le", channels: 1}` |
@@ -340,7 +356,8 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `vision.enable` / `vision.disable` | opt in or out of vision for this session |
 | → | `vision.frame` (binary) | JPEG, PNG or WebP: `{mime, reason, frame_id?}`; reason is `periodic`, `change` or `manual` |
 | → | `vision.event` | `{description or label, tags?, confidence?}`: an observation made by the client |
-| ← | `session.started` | `{session_id, resumed, history, protocol, …}` |
+| ← | `session.started` | `{session_id, resumed, history, protocol, roles, devices, vision_enabled, …}` |
+| ← | `session.devices` | `{devices: [{device_id, roles}]}`: a device joined or left |
 | ← | `system.state` | `idle`, `listening`, `transcribing`, `thinking` or `speaking` |
 | ← | `system.error` | `{code, message, recoverable}` |
 | ← | `audio.vad` | `speech_start` or `speech_end` |
@@ -353,8 +370,9 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.frame.status` | `{frame_id, status, detail?}`: `accepted`, `duplicate`, `rate_limited`, `rejected` or `disabled` |
 | ← | `vision.observation` | `{id, timestamp, device_id, description, confidence, tags, source, source_event_id}` |
 | ← | `vision.frame.used` | `{frame_id, turn_id}`: agent mode attached this frame to the turn |
+| ← | `vision.capture.request` | `{request_id, reason}`: to `camera` devices: send a fresh `manual` frame now |
 
-v0.1 clients keep working unchanged: vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
+A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last device disconnects. v0.1 clients keep working unchanged: they get the default roles, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
 ## Troubleshooting
 
@@ -390,6 +408,7 @@ companion/
   agent/       Hermes, OpenClaw and direct backends
   audio/       PCM helpers, VAD, utterance segmentation
   vision/      image validation, dedup, observations, per-session vision pipeline
+  devices/     device processes: IP camera bridge and frame sources
   memory/      transcript stores (in-memory, SQLite)
   protocol/    envelope and binary frame codec, event names
   providers/   llm / stt / tts / vlm implementations
@@ -403,7 +422,7 @@ personas/      persona definitions
 | Version | Outcome |
 |---|---|
 | **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
-| **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations (implemented; awaiting a test with a real model) |
+| **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations; v0.2.1 adds multi-device sessions and IP cameras |
 | v0.3 | Attention engine and controlled proactive conversation |
 | v0.4 | Portable Linux edge client (camera, mic, speaker) talking to the home server |
 | v0.5 | Realtime multimodal interaction: continuous vision, echo-aware audio, barge-in |
