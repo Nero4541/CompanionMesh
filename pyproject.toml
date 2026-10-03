@@ -1,6 +1,6 @@
 [project]
 name = "companion-server"
-version = "0.3.0"
+version = "0.4.0"
 description = "Open-source, self-hosted AI companion server"
 readme = "README.md"
 license = "MPL-2.0"
@@ -24,6 +24,10 @@ dependencies = [
 # Local speech-to-text (faster-whisper / CTranslate2) + Silero VAD (onnxruntime).
 stt = [
     "faster-whisper>=1.1",
+]
+# Opus-compressed microphone audio from edge devices (decoder: PyAV/FFmpeg).
+opus = [
+    "av>=14",
 ]
 # NVIDIA runtime libraries for CTranslate2 GPU inference (cuBLAS 12 + cuDNN 9).
 cuda = [
