@@ -142,6 +142,8 @@ class CompanionRuntime:
 
     async def stop(self) -> None:
         for session in list(self.sessions.values()):
+            if session.linger is not None:
+                session.linger.cancel()
             with contextlib.suppress(Exception):
                 await session.close()
         self.sessions.clear()
@@ -192,6 +194,9 @@ class CompanionRuntime:
             session_id = next(reversed(self.sessions))  # most recently started
         live = self.sessions.get(session_id) if session_id else None
         if live is not None:
+            if live.linger is not None:  # a device came back in time
+                live.linger.cancel()
+                live.linger = None
             device = live.attach(outbox, device_id=device_id, roles=roles)
             return live, device, True
         sid, resumed = await self.store.ensure_session(session_id, device_id)
@@ -200,10 +205,31 @@ class CompanionRuntime:
         return session, session.devices[0], resumed
 
     async def disconnect(self, session: Session, device: Device) -> None:
-        """Detach a device; the session ends with its last mic/speaker device."""
-        if await session.detach(device):
-            await session.end("conversation ended")
-            await self.close_session(session)
+        """Detach a device; the session ends with its last mic/speaker device.
+
+        It lingers for ``server.session_linger_s`` first, so a device that drops
+        off the network and reconnects resumes the same conversation.
+        """
+        if not await session.detach(device):
+            return
+        linger = self.config.server.session_linger_s
+        if linger <= 0:
+            await self._end(session)
+            return
+        loop = asyncio.get_running_loop()
+        session.linger = loop.call_later(
+            linger, lambda: loop.create_task(self._end_if_still_away(session))
+        )
+        log.info("session lingering", extra=kv(session=session.session_id, seconds=linger))
+
+    async def _end_if_still_away(self, session: Session) -> None:
+        session.linger = None
+        if not session.has_conversation_device and self.sessions.get(session.session_id) is session:
+            await self._end(session)
+
+    async def _end(self, session: Session) -> None:
+        await session.end("conversation ended")
+        await self.close_session(session)
 
     async def close_session(self, session: Session) -> None:
         await session.close()
@@ -224,7 +250,11 @@ class CompanionRuntime:
             "version": __version__,
             "uptime_s": round(time.time() - self.started_at, 1),
             "active_sessions": len(self.sessions),
-            "devices": sum(len(s.devices) for s in self.sessions.values()),
+            "devices": [
+                {"session_id": s.session_id, **d.report()}
+                for s in self.sessions.values()
+                for d in s.devices
+            ],
             "stored_sessions": await self.store.session_count(),
             "transcripts": self.storage_description(),
             "persona": self.persona.name,
