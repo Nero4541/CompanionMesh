@@ -1,0 +1,24 @@
+# Example systemd unit for a Linux edge device.
+#   sudo cp companion-edge.service /etc/systemd/system/
+#   sudo systemctl daemon-reload && sudo systemctl enable --now companion-edge
+# Adjust User, WorkingDirectory and the paths below.
+
+[Unit]
+Description=Companion edge device (camera, microphone, speaker)
+Wants=network-online.target sound.target
+After=network-online.target sound.target
+
+[Service]
+Type=simple
+User=companion
+WorkingDirectory=/opt/companion/client/edge
+# COMPANION_TOKEN=... lives here, readable only by root and the service user.
+EnvironmentFile=/etc/companion-edge.env
+ExecStart=/usr/local/bin/uv run --frozen companion-edge --config /etc/companion-edge.toml
+Restart=always
+RestartSec=5
+# Audio and camera access.
+SupplementaryGroups=audio video
+
+[Install]
+WantedBy=multi-user.target
