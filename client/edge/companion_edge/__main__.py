@@ -26,13 +26,17 @@ def check(config: EdgeConfig) -> int:
             ok &= bool(found)
             print(f"{tool:<8} {found or f'MISSING (apt install {package})'}")
     if config.audio.enabled and config.audio.codec == "opus":
+        from companion_edge.devices import ffmpeg_has_opus
         from companion_edge.opus import OpusEncoder, OpusUnavailable
 
         try:
             OpusEncoder().close()
-            print("libopus  ok")
-        except OpusUnavailable as exc:
-            print(f"libopus  missing ({exc}); audio will be sent as PCM")
+            print("opus     libopus")
+        except OpusUnavailable:
+            if ffmpeg_has_opus():
+                print("opus     ffmpeg's built-in encoder (no libopus)")
+            else:
+                print("opus     none: audio will be sent as uncompressed PCM")
     if config.camera.enabled:
         found = os.path.exists(config.camera.device)
         ok &= found
