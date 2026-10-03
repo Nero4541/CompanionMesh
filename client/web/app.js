@@ -13,6 +13,7 @@ let micOn = false;
 let assistantEl = null;    // message element being streamed into
 let cam = null;            // { stream, timer }
 let visionAvailable = false;
+let visionOn = false;
 let toolEls = new Map();
 
 // --- UI helpers ------------------------------------------------------------
@@ -32,6 +33,14 @@ function setConn(on) {
   $("connect").textContent = on ? "Disconnect" : "Connect";
   for (const id of ["text", "send", "mic-toggle", "cancel"]) $(id).disabled = !on;
   $("cam-toggle").disabled = !on || !visionAvailable;
+  $("vision-state").disabled = !on || !visionAvailable;
+}
+
+function showDevices(devices) {
+  const others = (devices || []).filter((d) => d.device_id !== DEVICE_ID);
+  $("devices").textContent = others.length
+    ? `also connected: ${others.map((d) => `${d.device_id || "device"} (${d.roles.join(", ")})`).join("; ")}`
+    : "";
 }
 
 // Show how long the agent has been working; local models can take a while.
@@ -81,7 +90,7 @@ function connect() {
   ws.binaryType = "arraybuffer";
   ws.onopen = () => {
     setConn(true);
-    send("session.start", { session_id: sessionId });
+    send("session.start", { session_id: sessionId, roles: ["mic", "speaker", "camera"] });
   };
   ws.onclose = (e) => {
     setConn(false);
@@ -109,6 +118,9 @@ function onEvent(ev) {
       if (!p.speech_input) $("mic-toggle").disabled = true;
       visionAvailable = Boolean(p.vision);
       $("cam-toggle").disabled = !visionAvailable;
+      $("vision-state").disabled = !visionAvailable;
+      setVision(Boolean(p.vision_enabled));
+      showDevices(p.devices);
       $("cam-toggle").title = visionAvailable ? "Opt in to vision for this session"
         : "No vision model configured on the server";
       break;
@@ -120,12 +132,17 @@ function onEvent(ev) {
       break;
     case "audio.vad":
       $("meter-bar").style.background = p.state === "speech_start" ? "var(--ok)" : "";
-      if (p.state === "speech_start" && $("look-on-talk").checked) captureFrame("manual");
+      break;
+    case "session.devices":
+      showDevices(p.devices);
       break;
     case "vision.state":
-      $("vision-state").textContent = p.enabled ? "vision on" : "vision off";
-      $("vision-state").className = `pill ${p.enabled ? "on" : "off"}`;
+      setVision(p.enabled);
       if (!p.enabled && cam) stopCamera(false);
+      break;
+    case "vision.capture.request":
+      // The server wants a fresh look (you started talking); answer with our camera.
+      if (cam) captureFrame("manual");
       break;
     case "vision.observation":
       addMsg("vision", `👁 ${p.description}${p.tags?.length ? `  [${p.tags.join(", ")}]` : ""}`);
@@ -297,6 +314,12 @@ function stopMic() {
 
 const MAX_FRAME_SIDE = 768;
 
+function setVision(enabled) {
+  visionOn = enabled;
+  $("vision-state").textContent = enabled ? "vision on" : "vision off";
+  $("vision-state").className = `pill ${enabled ? "on" : "off"}`;
+}
+
 async function listCameras() {
   const devices = await navigator.mediaDevices.enumerateDevices();
   const select = $("cam");
@@ -394,8 +417,6 @@ $("composer").onsubmit = async (e) => {
   ensureAudio(); // user gesture: unlock audio playback
   $("text").value = "";
   addMsg("user", text);
-  // Send a fresh frame first; the server waits briefly for it before answering.
-  if (cam && $("look-on-talk").checked) await captureFrame("manual");
   send("conversation.text", { text });
 };
 $("cam-toggle").onclick = async () => {
@@ -411,6 +432,7 @@ $("cam").onchange = async () => {
 };
 $("cam-interval").onchange = scheduleCapture;
 $("snap").onclick = () => captureFrame("manual");
+$("vision-state").onclick = () => send(visionOn ? "vision.disable" : "vision.enable", {});
 
 navigator.mediaDevices?.addEventListener?.("devicechange", () => {
   listMics().catch(() => {});
