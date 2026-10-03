@@ -5,10 +5,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import time
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from companion.api.auth import presented_token, token_ok
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.runtime import CompanionRuntime
@@ -89,6 +91,9 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
             await session.vision.submit_event(event)
         case ev.ATTENTION_QUIET:
             await session.set_quiet(bool(payload.get("enabled", True)))
+        case ev.DEVICE_STATUS:
+            device.status = {k: v for k, v in payload.items() if isinstance(k, str)}
+            device.status_at = time.time()
         case _:
             # Forward compatibility: unknown event types are ignored.
             log.debug("ignored event", extra=kv(type=event.type))
@@ -97,6 +102,9 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
 @router.websocket("/v1/realtime")
 async def realtime(ws: WebSocket) -> None:
     runtime: CompanionRuntime = ws.app.state.runtime
+    if not token_ok(runtime.config.server, presented_token(ws)):
+        await ws.close(code=1008, reason="missing or wrong token")
+        return
     await ws.accept()
     outbox = WebSocketOutbox(ws)
     session: Session | None = None
@@ -144,6 +152,10 @@ async def realtime(ws: WebSocket) -> None:
             },
         )
         await session.emit_to([device], ev.SYSTEM_STATE, {"state": session.state.value})
+        if resumed and device.roles & {"mic", "speaker"}:
+            replayed = await session.replay_backlog(device)
+            if replayed:
+                log.info("replayed backlog", extra=kv(session=session.session_id, events=replayed))
         if len(session.devices) > 1:
             await session.announce_devices()
         log.info(
