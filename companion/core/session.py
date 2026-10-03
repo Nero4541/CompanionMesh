@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 
 from companion.agent.base import AgentContext, SessionRef
+from companion.attention.engine import AttentionEngine, AttentionEvent, Decision
 from companion.audio.pcm import SAMPLE_RATE, pcm16_to_float32
 from companion.audio.segmenter import SpeechStart, Utterance, UtteranceSegmenter
 from companion.core.errors import CompanionError
@@ -38,6 +39,15 @@ log = logging.getLogger(__name__)
 
 MIN_UTTERANCE_S = 0.3
 PLAYBACK_ACK_TIMEOUT_S = 90.0
+CONTEXT_NOTE_MAX_AGE_S = 1800.0
+SILENT = "[SILENT]"
+
+PROACTIVE_PROMPT = (
+    "[Proactive check: this is not a message from the user.] {description} "
+    "You may say one short, natural remark to the user about it, in the language you "
+    "normally use with them. If it is not worth mentioning, or you are unsure, reply with "
+    "exactly " + SILENT + " and nothing else."
+)
 
 ROLES = frozenset({"mic", "speaker", "camera"})
 # Clients that do not declare roles (v0.1/v0.2) can still send frames, but are
@@ -96,6 +106,9 @@ class Session:
         self.devices: list[Device] = [Device(outbox, device_id, roles)]
         self._mic_device: Device | None = None
         self.speak = speak and runtime.tts is not None
+        self.attention = AttentionEngine(runtime.config.attention)
+        self._context_notes: list[AttentionEvent] = []
+        self._proactive = False  # the current turn was started by the companion
         self.state = State.IDLE
         self._turn: asyncio.Task[None] | None = None
         self._audio_active = False
@@ -233,12 +246,17 @@ class Session:
             return
         if device is not None and device is not self._mic_device:
             return  # one microphone per session
-        if self.state not in (State.IDLE, State.LISTENING):
+        listening_through = self._proactive and self.state == State.THINKING
+        if self.state not in (State.IDLE, State.LISTENING) and not listening_through:
             # Half-duplex: ignore the mic while thinking/speaking so the
-            # companion never hears (and answers) its own voice.
+            # companion never hears (and answers) its own voice. A proactive
+            # turn that has not started speaking yet keeps listening, so the
+            # user can simply talk over it.
             return
         for item in self._segmenter.feed(pcm16_to_float32(data)):
             if isinstance(item, SpeechStart):
+                if self._proactive:
+                    await self.cancel_turn()  # the user comes first
                 await self.emit(ev.AUDIO_VAD, {"state": "speech_start"})
                 await self.vision.request_capture("speech")
             elif isinstance(item, Utterance):
@@ -329,6 +347,7 @@ class Session:
         """Run one conversational turn; returns the assistant text."""
         rt = self.runtime
         turn_id = uuid.uuid4().hex[:12]
+        self.attention.note_user_turn()
         await rt.store.add_message(self.session_id, "user", user_text, turn_id=turn_id)
         # Previous turns plus the user message just added.
         limit = rt.config.agent.history_turns * 2 + 1
@@ -346,9 +365,11 @@ class Session:
         seen = self.vision.context_for_turn()
         if seen.system_block:
             context.extra_system.append(seen.system_block)
-        # Only the agent sees observations and images; the stored transcript
-        # keeps the user's own words and never the image.
-        text = f"{seen.user_prefix}\n\nUser: {user_text}" if seen.user_prefix else user_text
+        # Only the agent sees observations, noticed events and images; the
+        # stored transcript keeps the user's own words and never the image.
+        prefix = "\n\n".join(p for p in (self._take_context_notes(), seen.user_prefix) if p)
+        seen.user_prefix = prefix or None
+        text = f"{prefix}\n\nUser: {user_text}" if prefix else user_text
         if seen.image is not None:
             image_url = "data:image/jpeg;base64," + base64.b64encode(seen.image.jpeg).decode()
             note = f"(Camera image from {seen.image.device_id}, {round(seen.image.age_s)} s ago)"
@@ -432,6 +453,7 @@ class Session:
     ) -> None:
         with contextlib.suppress(Exception):
             if text:
+                self.attention.note_agent_speech()
                 await self.runtime.store.add_message(
                     self.session_id, "assistant", text, turn_id=turn_id
                 )
@@ -472,6 +494,132 @@ class Session:
                 await self.set_state(State.SPEAKING)
             seq += 1
         return seq > 0
+
+    # --- attention (v0.3) ------------------------------------------------------
+
+    def _take_context_notes(self) -> str | None:
+        now = self.attention.clock()
+        notes = [
+            n for n in self._context_notes if (now - n.at).total_seconds() <= CONTEXT_NOTE_MAX_AGE_S
+        ]
+        self._context_notes = []
+        if not notes:
+            return None
+        lines = "\n".join(
+            f"- {round((now - n.at).total_seconds())} s ago: {n.description}" for n in notes
+        )
+        return f"Noticed since the user's last message:\n{lines}"
+
+    async def set_quiet(self, quiet: bool) -> None:
+        self.attention.set_quiet(quiet)
+        await self.emit_attention_state()
+
+    async def emit_attention_state(self) -> None:
+        engine = self.attention
+        await self.emit(
+            ev.ATTENTION_STATE,
+            {
+                "proactive": engine.config.proactive,
+                "quiet": engine.state.quiet_mode,
+                "speech_blockers": engine.speech_blockers(engine.clock()),
+            },
+        )
+
+    async def on_attention_event(self, event: AttentionEvent) -> Decision:
+        """Decide what to do with a noticed event and do it."""
+        busy = self.busy or self.state not in (State.IDLE, State.LISTENING)
+        record = self.attention.evaluate(event, busy=busy)
+        payload = {**record.to_payload(), "session_id": self.session_id}
+        log.info("attention decision", extra=kv(**payload))
+        decision_event = make_event(ev.ATTENTION_DECISION, payload, session_id=self.session_id)
+        await self.runtime.bus.publish(decision_event)
+        if self.runtime.config.attention.debug:
+            await self.emit(ev.ATTENTION_DECISION, record.to_payload())
+
+        match record.decision:
+            case Decision.REMEMBER:
+                from companion.vision.observation import VisualObservation
+
+                with contextlib.suppress(Exception):
+                    await self.runtime.store.add_observation(
+                        VisualObservation(
+                            timestamp=event.at,
+                            device_id=str(event.data.get("device") or event.source),
+                            description=event.description,
+                            confidence=None,
+                            tags=[event.kind],
+                            source_event_id=event.kind,
+                            source="event",
+                            session_id=self.session_id,
+                        )
+                    )
+            case Decision.CONTEXT_ONLY:
+                self._context_notes.append(event)
+                del self._context_notes[:-5]
+            case Decision.SPEAK:
+                self.attention.record_proactive_turn()
+                self._start_turn(self._proactive_turn(event))
+            case Decision.IGNORE:
+                pass
+        return record.decision
+
+    async def _proactive_turn(self, event: AttentionEvent) -> None:
+        """Offer the agent a chance to remark on an event; it may stay silent."""
+        rt = self.runtime
+        turn_id = uuid.uuid4().hex[:12]
+        self._proactive = True
+        try:
+            await self.set_state(State.THINKING)
+            limit = rt.config.agent.history_turns * 2
+            history = await rt.store.history(self.session_id, limit=limit) if limit else []
+            prompt = PROACTIVE_PROMPT.format(description=event.description)
+            seen = self.vision.context_for_turn()
+            content: Any = prompt
+            if seen.image is not None:
+                image_url = "data:image/jpeg;base64," + base64.b64encode(seen.image.jpeg).decode()
+                content = [
+                    {"type": "text", "text": prompt},
+                    {"type": "image_url", "image_url": {"url": image_url}},
+                ]
+            messages: list[ChatMessage] = [
+                *({"role": m.role, "content": m.content} for m in history),
+                {"role": "user", "content": content},
+            ]
+            context = AgentContext(persona=rt.persona, turn_id=turn_id)
+            session = SessionRef(self.session_id, self.device_id)
+            parts: list[str] = []
+            try:
+                async for item in rt.agent.respond(session, messages, context):
+                    if item.kind == "text":
+                        parts.append(item.text)
+            except CompanionError as exc:
+                log.warning("proactive turn failed", extra=kv(error=str(exc)))
+                return
+            text = "".join(parts).strip()
+            if not text or SILENT in text:
+                log.info("proactive turn: agent chose silence", extra=kv(kind=event.kind))
+                return
+            self._proactive = False  # speaking now: half-duplex applies again
+            await self._speak_proactively(turn_id, text, event)
+        finally:
+            self._proactive = False
+            if self.state == State.THINKING:
+                await self.set_state(self._rest_state())
+
+    async def _speak_proactively(self, turn_id: str, text: str, event: AttentionEvent) -> None:
+        await self.emit(
+            ev.RESPONSE_START, {"turn_id": turn_id, "proactive": True, "reason": event.kind}
+        )
+        await self.emit(ev.RESPONSE_DELTA, {"turn_id": turn_id, "text": text})
+        audio_sent = False
+        if self.speak and self.with_role("speaker"):
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+            splitter = SentenceSplitter()
+            for sentence in [*splitter.feed(text), *splitter.flush()]:
+                queue.put_nowait(sentence)
+            queue.put_nowait(None)
+            audio_sent = await self._tts_worker(turn_id, queue)
+        await self._finish_turn(turn_id, text, cancelled=False, audio_sent=audio_sent)
 
     async def close(self) -> None:
         self._audio_active = False
