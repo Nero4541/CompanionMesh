@@ -79,7 +79,7 @@ wheels = [
 
 [[package]]
 name = "companion-server"
-version = "0.3.0"
+version = "0.4.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -100,6 +100,9 @@ cuda = [
     { name = "nvidia-cublas-cu12", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
     { name = "nvidia-cudnn-cu12", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
 ]
+opus = [
+    { name = "av" },
+]
 stt = [
     { name = "faster-whisper" },
 ]
@@ -113,6 +116,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "av", marker = "extra == 'opus'", specifier = ">=14" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "faster-whisper", marker = "extra == 'stt'", specifier = ">=1.1" },
     { name = "httpx", specifier = ">=0.28" },
@@ -128,7 +132,7 @@ requires-dist = [
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
     { name = "websockets", specifier = ">=13" },
 ]
-provides-extras = ["stt", "cuda"]
+provides-extras = ["stt", "opus", "cuda"]
 
 [package.metadata.requires-dev]
 dev = [
