@@ -8,7 +8,7 @@ requires-python = ">=3.11"
 # Deliberately tiny: audio and video go through ALSA tools, ffmpeg and libopus,
 # so no numpy/Pillow/OpenCV has to be compiled on the board.
 dependencies = [
-    "websockets>=13",
+    "websockets>=10",  # the legacy (10-13) and new client APIs both work
 ]
 
 [project.scripts]
