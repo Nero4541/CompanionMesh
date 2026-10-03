@@ -1,0 +1,27 @@
+# companion-edge configuration. Copy to edge.toml and adjust.
+# The token is read from the environment (COMPANION_TOKEN), not from this file.
+
+# The Companion Server's realtime endpoint, e.g. its Tailscale address.
+server = "ws://100.64.0.10:8765/v1/realtime"
+token_env = "COMPANION_TOKEN"
+# device_id = "desk-companion"     # default: the hostname
+heartbeat_s = 30
+state_file = "~/.local/state/companion-edge/state.json"   # remembers the session id
+
+[audio]
+enabled = true
+input_device = "default"     # arecord -l lists devices; e.g. "plughw:0,0"
+output_device = "default"    # aplay -l lists devices
+codec = "opus"               # opus (needs libopus0) or pcm
+opus_bitrate = 24000
+packets_per_frame = 5        # 5 x 20 ms Opus packets per message
+buffer_s = 3.0               # microphone audio kept while offline
+
+[camera]
+enabled = true
+device = "/dev/video0"
+input_format = "mjpeg"       # "" if the camera has no MJPEG mode
+size = "640x480"
+min_interval_s = 5           # adaptive: as often as this while the view changes
+max_interval_s = 60          # as rarely as this while it stays the same
+quality = 5
