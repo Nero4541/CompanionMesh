@@ -216,7 +216,16 @@ uv run companion camera rtsp://192.168.1.20:8554/live          # RTSP, needs ffm
 
 The source type is detected from the URL and the response. Options: `--interval 5` (seconds between frames; `0` = only on request), `--session <id>` to join a specific session instead of the most recently started one, `--device-id`, and `--no-enable` to leave vision off until someone enables it. The bridge reconnects automatically. If vision is switched off in the session (for example with the **vision on** button in the dev client), the camera pauses and stays paused until vision is switched on again.
 
-Start the browser conversation first, then the camera; it waits and retries until there is a session to join.
+If the camera asks for a login (Basic or Digest, e.g. the "IP Webcam" Android app with a password set), put it in `.env` rather than on the command line:
+
+```bash
+CAMERA_USERNAME=…
+CAMERA_PASSWORD=…
+```
+
+`http://user:pass@host:8080/shot.jpg` also works. Credentials never appear in logs.
+
+The bridge is meant to run for a long time. Start it whenever you like: it waits for the camera to come up (retrying every 5 s), waits for a conversation to join, and when a conversation ends it joins the next one.
 
 In both modes, clients that detect things themselves, such as a future edge device, can send `vision.event` with a description; it becomes an observation without any model call.
 
@@ -358,6 +367,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `vision.event` | `{description or label, tags?, confidence?}`: an observation made by the client |
 | ← | `session.started` | `{session_id, resumed, history, protocol, roles, devices, vision_enabled, …}` |
 | ← | `session.devices` | `{devices: [{device_id, roles}]}`: a device joined or left |
+| ← | `session.ended` | `{reason}`: to remaining camera devices when the conversation ends |
 | ← | `system.state` | `idle`, `listening`, `transcribing`, `thinking` or `speaking` |
 | ← | `system.error` | `{code, message, recoverable}` |
 | ← | `audio.vad` | `speech_start` or `speech_end` |
@@ -372,7 +382,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.frame.used` | `{frame_id, turn_id}`: agent mode attached this frame to the turn |
 | ← | `vision.capture.request` | `{request_id, reason}`: to `camera` devices: send a fresh `manual` frame now |
 
-A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last device disconnects. v0.1 clients keep working unchanged: they get the default roles, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
+A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). v0.1 clients keep working unchanged: they get the default roles, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
 ## Troubleshooting
 
