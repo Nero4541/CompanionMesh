@@ -18,6 +18,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
@@ -80,6 +81,9 @@ class VisionChannel:
         self._worker: asyncio.Task[None] | None = None
         self._recent: list[VisualObservation] = []
         self._injected: set[str] = set()
+        # Capture requests: set when a camera device delivers a frame.
+        self._frame_arrived = asyncio.Event()
+        self._capture_requested_at: float | None = None
 
     # --- state ----------------------------------------------------------
 
@@ -111,6 +115,7 @@ class VisionChannel:
         was_enabled, self.enabled = self.enabled, False
         self._pending = None
         self._latest = None
+        self._capture_requested_at = None
         await self._stop_worker()
         self._last_hash = None
         if was_enabled:
@@ -126,7 +131,9 @@ class VisionChannel:
         await self.session.emit(ev.VISION_FRAME_STATUS, payload)
         return status
 
-    async def submit_frame(self, header: Envelope, data: bytes) -> FrameStatus:
+    async def submit_frame(
+        self, header: Envelope, data: bytes, sender_id: str | None = None
+    ) -> FrameStatus:
         payload = header.payload
         frame_id = str(payload.get("frame_id") or header.id)
         if not self.enabled:
@@ -168,10 +175,12 @@ class VisionChannel:
         self._last_hash = frame_hash
         frame = _Pending(
             jpeg=jpeg,
-            device_id=header.device_id or self.session.device_id or "camera",
+            device_id=header.device_id or sender_id or self.session.device_id or "camera",
             frame_id=frame_id,
             received_at=datetime.now(UTC),
         )
+        self._capture_requested_at = None
+        self._frame_arrived.set()
         if self.mode == "agent":
             self._latest = frame
         else:
@@ -273,6 +282,32 @@ class VisionChannel:
         if jpeg is not None and self.runtime.image_archive is not None:
             await asyncio.to_thread(self.runtime.image_archive.save, obs, jpeg)
         await self.session.emit(ev.VISION_OBSERVATION, obs.to_payload())
+
+    async def request_capture(self, reason: str) -> None:
+        """Ask camera devices for a fresh frame (the user started a turn)."""
+        if not (self.enabled and self.config.capture_on_turn):
+            return
+        cameras = self.session.with_role("camera")
+        if not cameras:
+            return
+        self._frame_arrived.clear()
+        self._capture_requested_at = time.monotonic()
+        await self.session.emit_to(
+            cameras,
+            ev.VISION_CAPTURE_REQUEST,
+            {"request_id": uuid.uuid4().hex[:12], "reason": reason},
+        )
+
+    async def wait_for_capture(self) -> None:
+        """Give a requested frame a moment to arrive before the turn starts."""
+        requested = self._capture_requested_at
+        if requested is None or not self.enabled:
+            return
+        remaining = self.config.wait_for_pending_s - (time.monotonic() - requested)
+        if remaining > 0:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(self._frame_arrived.wait(), timeout=remaining)
+        self._capture_requested_at = None
 
     async def wait_pending(self) -> None:
         """Let a turn wait briefly for a frame that is still being analyzed."""
