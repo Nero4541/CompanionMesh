@@ -14,6 +14,7 @@ import logging
 import re
 import time
 import uuid
+from collections import deque
 from collections.abc import Iterable
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -85,9 +86,20 @@ class Device:
     device_id: str | None
     roles: frozenset[str]
     id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    connected_at: float = field(default_factory=time.time)
+    status: dict[str, Any] = field(default_factory=dict)  # last device.status
+    status_at: float | None = None
 
     def describe(self) -> dict[str, Any]:
         return {"device_id": self.device_id, "roles": sorted(self.roles)}
+
+    def report(self) -> dict[str, Any]:
+        return {
+            **self.describe(),
+            "connected_s": round(time.time() - self.connected_at),
+            "status": self.status,
+            "status_age_s": round(time.time() - self.status_at) if self.status_at else None,
+        }
 
 
 class Session:
@@ -106,9 +118,14 @@ class Session:
         self.device_id = device_id
         self.devices: list[Device] = [Device(outbox, device_id, roles)]
         self._mic_device: Device | None = None
+        self._decoder: Any = None  # OpusDecoder when the mic sends opus
         self.speak = speak and runtime.tts is not None
         self.attention = AttentionEngine(runtime.config.attention)
         self._context_notes: list[AttentionEvent] = []
+        # Events emitted while every conversation device is away (session
+        # linger); replayed to the device that comes back. Bounded.
+        self._backlog: deque[Envelope] = deque(maxlen=200)
+        self.linger: asyncio.TimerHandle | None = None
         self._proactive = False  # the current turn was started by the companion
         self.state = State.IDLE
         self._turn: asyncio.Task[None] | None = None
@@ -155,6 +172,13 @@ class Session:
     def with_role(self, role: str) -> list[Device]:
         return [d for d in self.devices if role in d.roles]
 
+    async def replay_backlog(self, device: Device) -> int:
+        """Deliver what happened while the conversation devices were away."""
+        events, self._backlog = list(self._backlog), deque(maxlen=self._backlog.maxlen)
+        for event in events:
+            await device.outbox.send_event(event)
+        return len(events)
+
     async def announce_devices(self) -> None:
         await self.emit(ev.SESSION_DEVICES, {"devices": [d.describe() for d in self.devices]})
 
@@ -162,6 +186,8 @@ class Session:
 
     async def emit(self, type_: str, payload: dict[str, Any] | None = None) -> None:
         event = make_event(type_, payload, session_id=self.session_id, device_id=self.device_id)
+        if not self.has_conversation_device and type_ != ev.SESSION_DEVICES:
+            self._backlog.append(event)
         for device in list(self.devices):
             await device.outbox.send_event(event)
         await self.runtime.bus.publish(event)
@@ -212,16 +238,26 @@ class Session:
         rate = int(payload.get("sample_rate", SAMPLE_RATE))
         encoding = payload.get("encoding", "pcm_s16le")
         channels = int(payload.get("channels", 1))
-        if rate != SAMPLE_RATE or encoding != "pcm_s16le" or channels != 1:
+        pcm_ok = encoding == "pcm_s16le" and rate == SAMPLE_RATE
+        if not (pcm_ok or encoding == "opus") or channels != 1:
             await self.emit_error(
                 f"unsupported audio format {encoding}/{rate}Hz/{channels}ch; "
-                f"send pcm_s16le mono at {SAMPLE_RATE} Hz",
+                f"send mono pcm_s16le at {SAMPLE_RATE} Hz, or opus",
                 code="audio_format",
             )
             return
         if self.runtime.stt is None:
             await self.emit_error("speech input is disabled (stt.provider: none)", code="stt_off")
             return
+        self._decoder = None
+        if encoding == "opus":
+            from companion.audio.opus import OpusDecoder
+
+            try:
+                self._decoder = OpusDecoder()
+            except CompanionError as exc:
+                await self.emit_error(exc)
+                return
         self._segmenter = self.runtime.new_segmenter()
         self._mic_device = device or self.devices[0]
         self._audio_active = True
@@ -254,7 +290,8 @@ class Session:
             # turn that has not started speaking yet keeps listening, so the
             # user can simply talk over it.
             return
-        for item in self._segmenter.feed(pcm16_to_float32(data)):
+        samples = self._decoder.decode(data) if self._decoder else pcm16_to_float32(data)
+        for item in self._segmenter.feed(samples):
             if isinstance(item, SpeechStart):
                 if self._proactive:
                     await self.cancel_turn()  # the user comes first
