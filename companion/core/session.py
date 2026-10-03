@@ -1,4 +1,9 @@
-"""Per-connection conversation session: turn pipeline, half-duplex audio, vision."""
+"""Conversation session: turn pipeline, half-duplex audio, vision.
+
+A session can have several devices attached at once (e.g. a browser with the
+mic and speaker plus a separate IP camera). Events go to every device; speech
+audio goes only to devices with the "speaker" role.
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,8 @@ import contextlib
 import logging
 import time
 import uuid
+from collections.abc import Iterable
+from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -32,6 +39,11 @@ log = logging.getLogger(__name__)
 MIN_UTTERANCE_S = 0.3
 PLAYBACK_ACK_TIMEOUT_S = 90.0
 
+ROLES = frozenset({"mic", "speaker", "camera"})
+# Clients that do not declare roles (v0.1/v0.2) can still send frames, but are
+# not asked for captures, which they would not answer.
+DEFAULT_ROLES = frozenset({"mic", "speaker"})
+
 
 class State(StrEnum):
     IDLE = "idle"
@@ -47,6 +59,24 @@ class Outbox(Protocol):
     async def send_binary(self, event: Envelope, data: bytes) -> None: ...
 
 
+def parse_roles(value: object) -> frozenset[str]:
+    """Roles a device declares in session.start; absent means mic + speaker."""
+    if not isinstance(value, list):
+        return DEFAULT_ROLES
+    return frozenset(str(r) for r in value) & ROLES
+
+
+@dataclass(eq=False)
+class Device:
+    outbox: Outbox
+    device_id: str | None
+    roles: frozenset[str]
+    id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+
+    def describe(self) -> dict[str, Any]:
+        return {"device_id": self.device_id, "roles": sorted(self.roles)}
+
+
 class Session:
     def __init__(
         self,
@@ -55,12 +85,14 @@ class Session:
         outbox: Outbox,
         *,
         device_id: str | None = None,
+        roles: frozenset[str] = DEFAULT_ROLES,
         speak: bool = True,
     ) -> None:
         self.runtime = runtime
         self.session_id = session_id
         self.device_id = device_id
-        self.outbox = outbox
+        self.devices: list[Device] = [Device(outbox, device_id, roles)]
+        self._mic_device: Device | None = None
         self.speak = speak and runtime.tts is not None
         self.state = State.IDLE
         self._turn: asyncio.Task[None] | None = None
@@ -70,12 +102,43 @@ class Session:
         self._playback_timer: asyncio.TimerHandle | None = None
         self.vision = VisionChannel(self)
 
+    # --- devices ----------------------------------------------------------
+
+    def attach(self, outbox: Outbox, *, device_id: str | None, roles: frozenset[str]) -> Device:
+        device = Device(outbox, device_id, roles)
+        self.devices.append(device)
+        return device
+
+    async def detach(self, device: Device) -> bool:
+        """Remove a device; returns True when none are left."""
+        if device in self.devices:
+            self.devices.remove(device)
+        if device is self._mic_device:
+            await self.audio_stop(device)
+        if self.devices:
+            await self.announce_devices()
+        return not self.devices
+
+    def with_role(self, role: str) -> list[Device]:
+        return [d for d in self.devices if role in d.roles]
+
+    async def announce_devices(self) -> None:
+        await self.emit(ev.SESSION_DEVICES, {"devices": [d.describe() for d in self.devices]})
+
     # --- emit -----------------------------------------------------------
 
     async def emit(self, type_: str, payload: dict[str, Any] | None = None) -> None:
         event = make_event(type_, payload, session_id=self.session_id, device_id=self.device_id)
-        await self.outbox.send_event(event)
+        for device in list(self.devices):
+            await device.outbox.send_event(event)
         await self.runtime.bus.publish(event)
+
+    async def emit_to(
+        self, devices: Iterable[Device], type_: str, payload: dict[str, Any] | None = None
+    ) -> None:
+        event = make_event(type_, payload, session_id=self.session_id, device_id=self.device_id)
+        for device in devices:
+            await device.outbox.send_event(event)
 
     async def emit_error(self, err: CompanionError | str, *, code: str | None = None) -> None:
         if isinstance(err, CompanionError):
@@ -104,6 +167,7 @@ class Session:
         if not text:
             return
         await self.cancel_turn()
+        await self.vision.request_capture("text")
         self._start_turn(self._text_turn(text))
 
     async def _text_turn(self, text: str) -> None:
@@ -111,7 +175,7 @@ class Session:
 
     # --- audio input ----------------------------------------------------
 
-    async def audio_start(self, payload: dict[str, Any]) -> None:
+    async def audio_start(self, payload: dict[str, Any], device: Device | None = None) -> None:
         rate = int(payload.get("sample_rate", SAMPLE_RATE))
         encoding = payload.get("encoding", "pcm_s16le")
         channels = int(payload.get("channels", 1))
@@ -126,11 +190,15 @@ class Session:
             await self.emit_error("speech input is disabled (stt.provider: none)", code="stt_off")
             return
         self._segmenter = self.runtime.new_segmenter()
+        self._mic_device = device or self.devices[0]
         self._audio_active = True
         if self.state == State.IDLE:
             await self.set_state(State.LISTENING)
 
-    async def audio_stop(self) -> None:
+    async def audio_stop(self, device: Device | None = None) -> None:
+        if device is not None and self._mic_device is not None and device is not self._mic_device:
+            return  # only the device that opened the mic can close it
+        self._mic_device = None
         self._audio_active = False
         segmenter, self._segmenter = self._segmenter, None
         if segmenter is not None and self.state == State.LISTENING:
@@ -141,9 +209,11 @@ class Session:
         if self.state == State.LISTENING:
             await self.set_state(State.IDLE)
 
-    async def audio_chunk(self, data: bytes) -> None:
+    async def audio_chunk(self, data: bytes, device: Device | None = None) -> None:
         if not self._audio_active or self._segmenter is None:
             return
+        if device is not None and device is not self._mic_device:
+            return  # one microphone per session
         if self.state not in (State.IDLE, State.LISTENING):
             # Half-duplex: ignore the mic while thinking/speaking so the
             # companion never hears (and answers) its own voice.
@@ -151,6 +221,7 @@ class Session:
         for item in self._segmenter.feed(pcm16_to_float32(data)):
             if isinstance(item, SpeechStart):
                 await self.emit(ev.AUDIO_VAD, {"state": "speech_start"})
+                await self.vision.request_capture("speech")
             elif isinstance(item, Utterance):
                 await self.emit(ev.AUDIO_VAD, {"state": "speech_end"})
                 await self._on_utterance(item)
@@ -251,6 +322,7 @@ class Session:
         await self.emit(ev.RESPONSE_START, {"turn_id": turn_id})
 
         if self.vision.enabled:
+            await self.vision.wait_for_capture()
             await self.vision.wait_pending()
         seen = self.vision.context_for_turn()
         if seen.system_block:
@@ -281,7 +353,7 @@ class Session:
         first_token_s: float | None = None
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         tts_task: asyncio.Task[bool] | None = None
-        if self.speak:
+        if self.speak and self.with_role("speaker"):
             tts_task = asyncio.create_task(self._tts_worker(turn_id, queue))
         splitter = SentenceSplitter()
         try:
@@ -375,7 +447,8 @@ class Session:
                 session_id=self.session_id,
                 device_id=self.device_id,
             )
-            await self.outbox.send_binary(header, audio.data)
+            for device in self.with_role("speaker"):
+                await device.outbox.send_binary(header, audio.data)
             if seq == 0:
                 await self.set_state(State.SPEAKING)
             seq += 1
