@@ -58,6 +58,8 @@ class Outbox(Protocol):
 
     async def send_binary(self, event: Envelope, data: bytes) -> None: ...
 
+    async def close(self) -> None: ...
+
 
 def parse_roles(value: object) -> frozenset[str]:
     """Roles a device declares in session.start; absent means mic + speaker."""
@@ -109,15 +111,32 @@ class Session:
         self.devices.append(device)
         return device
 
+    @property
+    def has_conversation_device(self) -> bool:
+        return any(d.roles & {"mic", "speaker"} for d in self.devices)
+
     async def detach(self, device: Device) -> bool:
-        """Remove a device; returns True when none are left."""
+        """Remove a device; returns True when the conversation is over.
+
+        That is when no device with a mic or speaker remains: a camera on its
+        own does not keep a session alive.
+        """
         if device in self.devices:
             self.devices.remove(device)
         if device is self._mic_device:
             await self.audio_stop(device)
-        if self.devices:
-            await self.announce_devices()
-        return not self.devices
+        if not self.has_conversation_device:
+            return True
+        await self.announce_devices()
+        return False
+
+    async def end(self, reason: str) -> None:
+        """Tell the remaining devices the session is over and disconnect them."""
+        remaining, self.devices = list(self.devices), []
+        await self.emit_to(remaining, ev.SESSION_ENDED, {"reason": reason})
+        for device in remaining:
+            with contextlib.suppress(Exception):
+                await device.outbox.close()
 
     def with_role(self, role: str) -> list[Device]:
         return [d for d in self.devices if role in d.roles]
