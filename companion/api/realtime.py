@@ -52,6 +52,11 @@ class WebSocketOutbox:
             with contextlib.suppress(WebSocketDisconnect, RuntimeError):
                 await self._ws.send_bytes(encode_binary_frame(event, data))
 
+    async def close(self) -> None:
+        if self.open:
+            with contextlib.suppress(WebSocketDisconnect, RuntimeError):
+                await self._ws.close(code=1000)
+
 
 async def _send_error(outbox: WebSocketOutbox, code: str, message: str) -> None:
     await outbox.send_event(
