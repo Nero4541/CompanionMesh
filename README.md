@@ -2,11 +2,12 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v0.3.0. This is an early release; the protocol may still change before v1.0.
+**Status:** v0.4.0. This is an early release; the protocol may still change before v1.0.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
 - **Speaks up, within limits.** When the camera sees something worth mentioning, the companion can start the conversation, at most once every 15 minutes, never during quiet hours, and only if the agent thinks it is worth saying.
+- **A body for the companion.** A small Linux board (camera, microphone, speaker) can be the companion's endpoint over Wi-Fi or a phone hotspot, with Opus-compressed audio and automatic reconnection.
 - **Several devices, one conversation.** A browser can keep the mic and speaker while an IP camera (or a phone running a camera app) joins the same session as the companion's eyes.
 - **Agents can run elsewhere.** Point the companion at an agent on another machine (LAN or Tailscale). Memory and tools stay on that machine.
 - **Opt-in vision.** A client can share camera frames with the agent, either as images for a model that can see or as short descriptions from a separate vision model. Off until a session enables it.
@@ -244,6 +245,58 @@ Any chat endpoint that accepts `image_url` content parts works. The companion as
 
 A small VLM is enough: descriptions are short, and one frame is analyzed at a time. The VLM shares the GPU budget with everything else (see below); on a busy GPU, raise `vision.min_interval_s`.
 
+## Edge devices
+
+A small Linux board with a camera, microphone and speaker can be the companion's body, while all inference stays on the server. The edge client lives in `client/edge`: a separate, deliberately tiny uv project whose only Python dependency is `websockets`. Audio and video go through standard tools (ALSA `arecord`/`aplay`, `ffmpeg`, and `libopus` via ctypes), so nothing heavy has to be compiled on boards such as RISC-V SBCs with 256 MB of RAM.
+
+```text
+board: arecord -> Opus (libopus) ----\                     /-> STT -> agent -> TTS --\
+       ffmpeg (V4L2) -> JPEG frames ---> WebSocket (token) --> camera frames            |
+       aplay <-------------------------------------------------- speech audio <--------/
+```
+
+**On the server:** listen on an address the board can reach and set a token:
+
+```yaml
+# configs/companion.local.yaml
+server:
+  host: 0.0.0.0          # or the server's Tailscale IP
+```
+
+```bash
+# .env
+COMPANION_TOKEN=<a long random string>
+```
+
+```powershell
+uv sync --extra stt --extra cuda --extra opus   # opus: decode compressed edge audio
+```
+
+The server refuses to listen beyond localhost without a token. With a token set, every client must present it: the dev client as `/dev/?token=…` (opened once; the browser remembers it), `companion camera` and the edge client from `COMPANION_TOKEN` in their environment.
+
+**On the board** (Debian/Ubuntu-based images):
+
+```bash
+sudo apt install alsa-utils ffmpeg libopus0
+git clone https://github.com/Nero4541/CompanionMesh.git && cd CompanionMesh/client/edge
+cp edge.example.toml edge.toml      # set server = "ws://<server>:8765/v1/realtime"
+export COMPANION_TOKEN=…
+uv run companion-edge --config edge.toml --check   # tools, libopus, camera
+uv run companion-edge --config edge.toml
+```
+
+`client/edge/systemd/companion-edge.service` is an example unit for running it at boot.
+
+What the edge client does:
+
+- **Microphone:** 16 kHz audio, Opus-encoded at ~24 kbps (about a tenth of raw PCM) and sent in batches of 20 ms packets; without `libopus` it falls back to PCM. While the speaker plays, the mic is not sent (half-duplex).
+- **Speaker:** plays each synthesized sentence and reports when playback finished.
+- **Camera:** ffmpeg decodes the V4L2 camera at 1 fps and keeps only the newest frame. Frames are sent on the server's capture requests (when you speak) and periodically, with **adaptive sampling**: every frame the server reports as a duplicate doubles the interval (up to `max_interval_s`), and a changed view resets it.
+- **Network loss:** reconnects with exponential backoff, resumes the same session (the id is stored on disk), and keeps at most `buffer_s` seconds of microphone audio while offline. The server keeps the session for `server.session_linger_s` (60 s) after the last device drops and replays what the device missed, e.g. a reply that finished meanwhile.
+- **Heartbeat:** `device.status` every `heartbeat_s` with CPU temperature, free memory, Wi-Fi signal, uptime and buffer level; `/v1/status` lists every connected device with its latest status.
+
+The protocol has nothing board-specific: any client that speaks it (another SBC, a phone app) works the same way.
+
 ## Proactive behavior
 
 The companion can speak first, under strict rules. Every noticed event goes through a fixed policy:
@@ -373,14 +426,16 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 
 | Endpoint | Description |
 |---|---|
-| `GET /health` | Liveness |
-| `GET /v1/status?probe=true` | Version, sessions, providers, agent reachability |
+| `GET /health` | Liveness (no token needed) |
+| `GET /v1/status?probe=true` | Version, sessions, connected devices and their status, providers, agent reachability |
 | `GET /v1/config` | Effective configuration (secret values are never included) |
 | `POST /v1/chat` | One text turn: `{"text": "...", "session_id": "optional"}` → `{"session_id", "text"}` |
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 
-### Realtime protocol (v0.3)
+### Realtime protocol (v0.4)
+
+With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
 Text frames are JSON envelopes:
 
@@ -395,8 +450,9 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `session.start` (first frame) | `{session_id?, join?, roles?}`: resume or join a session; `join: true` without an id joins the most recently started one; `roles` ⊆ `mic`, `speaker`, `camera` (default `mic`, `speaker`) |
 | → | `conversation.text` | `{text}` |
 | → | `conversation.cancel` | stop the current reply |
-| → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le", channels: 1}` |
-| → | `audio.input.chunk` (binary) | PCM s16le mono 16 kHz |
+| → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le" or "opus", channels: 1}` |
+| → | `audio.input.chunk` (binary) | PCM s16le mono 16 kHz; for `opus`, one or more packets each prefixed with a big-endian uint16 length |
+| → | `device.status` | free-form device health, e.g. `{cpu_temp_c, mem_free_mb, wifi_signal_dbm, uptime_s}` |
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
 | → | `vision.enable` / `vision.disable` | opt in or out of vision for this session |
 | → | `vision.frame` (binary) | JPEG, PNG or WebP: `{mime, reason, frame_id?}`; reason is `periodic`, `change` or `manual` |
@@ -432,6 +488,8 @@ A session can have several devices attached at once. Every device receives the c
 | `provider_unavailable` … `cannot connect` | The agent or TTS server is not running, the URL is wrong, or a firewall blocks it. Check with `uv run companion check`. |
 | `agent_empty_response` | The agent ran but produced no text. Usually no model provider is configured in Hermes/OpenClaw; check the agent's own logs. |
 | `provider_auth` | The key in `.env` does not match the agent's `API_SERVER_KEY` or gateway token. |
+| `server.host is '0.0.0.0' but no token is set` | Set `COMPANION_TOKEN` in `.env` before listening beyond localhost. |
+| Dev client says the server needs a token | Open it once as `/dev/?token=<COMPANION_TOKEN>`. |
 | STT runs on the CPU although you have a GPU | Install with `--extra cuda`; `check` prints the device it actually loaded. |
 | The microphone or camera does not work from another device | Browsers allow them only on `localhost` or HTTPS. |
 | **Start camera** is greyed out | `vision.enabled: false`, or VLM mode without a vision model (`vlm.provider: none`). |
@@ -463,6 +521,7 @@ companion/
   protocol/    envelope and binary frame codec, event names
   providers/   llm / stt / tts / vlm implementations
 client/web/    browser development client
+client/edge/   edge device client (separate uv project, websockets only)
 configs/       default configuration
 personas/      persona definitions
 ```
@@ -474,7 +533,7 @@ personas/      persona definitions
 | **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
 | **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations; v0.2.1 adds multi-device sessions and IP cameras |
 | **v0.3** | Attention engine and controlled proactive conversation |
-| v0.4 | Portable Linux edge client (camera, mic, speaker) talking to the home server |
+| **v0.4** | Portable Linux edge client (camera, mic, speaker) talking to the home server (implemented; awaiting a test on the reference board) |
 | v0.5 | Realtime multimodal interaction: continuous vision, echo-aware audio, barge-in |
 
 ## License
