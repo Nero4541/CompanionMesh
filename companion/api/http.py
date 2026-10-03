@@ -2,14 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from companion.api.auth import require_token
 from companion.core.runtime import CompanionRuntime
 from companion.protocol import Envelope
 from companion.protocol import events as ev
 
 router = APIRouter()
+protected = APIRouter(dependencies=[Depends(require_token)])
 
 
 def _runtime(request: Request) -> CompanionRuntime:
@@ -21,12 +23,12 @@ async def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
-@router.get("/v1/status")
+@protected.get("/v1/status")
 async def status(request: Request, probe: bool = False) -> dict[str, Any]:
     return await _runtime(request).status(probe=probe)
 
 
-@router.get("/v1/config")
+@protected.get("/v1/config")
 async def config(request: Request) -> dict[str, Any]:
     return _runtime(request).config.public_view()
 
@@ -58,7 +60,7 @@ class _CollectOutbox:
         pass
 
 
-@router.post("/v1/chat")
+@protected.post("/v1/chat")
 async def chat(request: Request, body: ChatRequest) -> ChatResponse:
     """Text-only, non-streaming turn. Use /v1/realtime for streaming and voice."""
     runtime = _runtime(request)
