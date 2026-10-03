@@ -79,7 +79,7 @@ wheels = [
 
 [[package]]
 name = "companion-server"
-version = "0.2.0"
+version = "0.2.1"
 source = { editable = "." }
 dependencies = [
     { name = "fastapi" },
@@ -91,6 +91,7 @@ dependencies = [
     { name = "pyyaml" },
     { name = "truststore" },
     { name = "uvicorn", extra = ["standard"] },
+    { name = "websockets" },
 ]
 
 [package.optional-dependencies]
@@ -123,6 +124,7 @@ requires-dist = [
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "truststore", specifier = ">=0.10" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.32" },
+    { name = "websockets", specifier = ">=13" },
 ]
 provides-extras = ["stt", "cuda"]
 
