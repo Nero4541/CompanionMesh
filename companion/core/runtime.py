@@ -15,9 +15,10 @@ from companion.audio.segmenter import UtteranceSegmenter
 from companion.audio.vad import VAD, create_vad
 from companion.core.bus import EventBus
 from companion.core.config import CompanionConfig
+from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.persona import Persona, load_persona
-from companion.core.session import Outbox, Session
+from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
 from companion.providers.stt.base import STTProvider
 from companion.providers.tts.base import TTSProvider
@@ -167,17 +168,41 @@ class CompanionRuntime:
         session_id: str | None = None,
         device_id: str | None = None,
         speak: bool = True,
-        register: bool = True,
     ) -> tuple[Session, bool]:
+        """A standalone session for one request (HTTP); not joinable."""
         sid, resumed = await self.store.ensure_session(session_id, device_id)
-        previous = self.sessions.get(sid)
-        if previous is not None and register:
-            # Same session reconnecting (e.g. page reload): retire the old connection.
-            await previous.close()
-        session = Session(self, sid, outbox, device_id=device_id, speak=speak)
-        if register:
-            self.sessions[sid] = session
-        return session, resumed
+        return Session(self, sid, outbox, device_id=device_id, speak=speak), resumed
+
+    async def connect(
+        self,
+        outbox: Outbox,
+        *,
+        session_id: str | None = None,
+        device_id: str | None = None,
+        roles: frozenset[str] = DEFAULT_ROLES,
+        join: bool = False,
+    ) -> tuple[Session, Device, bool]:
+        """Attach a realtime device to a live session, or start/resume one.
+
+        Returns ``(session, device, resumed)``.
+        """
+        if join and not session_id:
+            if not self.sessions:
+                raise CompanionError("there is no active session to join", code="no_session")
+            session_id = next(reversed(self.sessions))  # most recently started
+        live = self.sessions.get(session_id) if session_id else None
+        if live is not None:
+            device = live.attach(outbox, device_id=device_id, roles=roles)
+            return live, device, True
+        sid, resumed = await self.store.ensure_session(session_id, device_id)
+        session = Session(self, sid, outbox, device_id=device_id, roles=roles)
+        self.sessions[sid] = session
+        return session, session.devices[0], resumed
+
+    async def disconnect(self, session: Session, device: Device) -> None:
+        """Detach a device; the session ends when its last device leaves."""
+        if await session.detach(device):
+            await self.close_session(session)
 
     async def close_session(self, session: Session) -> None:
         await session.close()
@@ -198,6 +223,7 @@ class CompanionRuntime:
             "version": __version__,
             "uptime_s": round(time.time() - self.started_at, 1),
             "active_sessions": len(self.sessions),
+            "devices": sum(len(s.devices) for s in self.sessions.values()),
             "stored_sessions": await self.store.session_count(),
             "transcripts": self.storage_description(),
             "persona": self.persona.name,
