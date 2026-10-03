@@ -30,6 +30,7 @@ def create_app(config: CompanionConfig, providers: Providers | None = None) -> F
     app = FastAPI(title="Companion Server", version=__version__, lifespan=lifespan)
     app.state.runtime = runtime
     app.include_router(http.router)
+    app.include_router(http.protected)
     app.include_router(realtime.router)
 
     if config.server.dev_client and WEB_CLIENT_DIR.is_dir():
