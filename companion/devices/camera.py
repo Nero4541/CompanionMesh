@@ -37,6 +37,7 @@ class CameraOptions:
     device_id: str = "ipcam"
     interval_s: float = 5.0  # 0 = only when the server asks
     enable: bool = True
+    token: str | None = None  # the server's COMPANION_TOKEN, if it requires one
 
 
 def _shrink(jpeg: bytes) -> bytes:
@@ -156,7 +157,14 @@ class CameraDevice:
             while True:
                 outcome = "error"
                 try:
-                    async with websockets.connect(self.options.server, max_size=None) as ws:
+                    headers = (
+                        {"Authorization": f"Bearer {self.options.token}"}
+                        if self.options.token
+                        else None
+                    )
+                    async with websockets.connect(
+                        self.options.server, max_size=None, additional_headers=headers
+                    ) as ws:
                         backoff = 1.0
                         outcome = await self._session(ws)
                 except (OSError, websockets.WebSocketException) as exc:
