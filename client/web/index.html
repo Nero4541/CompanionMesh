@@ -40,13 +40,14 @@
       </select>
     </label>
     <button id="snap" disabled>Look now</button>
-    <label class="check"><input type="checkbox" id="look-on-talk" checked> Look when I talk</label>
-    <span id="vision-state" class="pill off">vision off</span>
+    <button id="vision-state" class="pill off" disabled
+            title="Vision for this session (also controls IP cameras); click to toggle">vision off</button>
   </section>
   <video id="preview" autoplay muted playsinline hidden></video>
 
   <div id="meter"><div id="meter-bar"></div></div>
   <p id="session" class="muted"></p>
+  <p id="devices" class="muted"></p>
 
   <main id="log" aria-live="polite"></main>
 
