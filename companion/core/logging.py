@@ -7,8 +7,19 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from typing import Any
+
+# Credentials that may appear in URLs or headers (e.g. uvicorn logs the full
+# WebSocket path, including ?token=). They are never written to logs.
+_SECRETS = re.compile(
+    r"(?i)((?:token|api_key|key|password|secret)=)[^&\s\"']+|(Bearer\s+)[^\s\"']+"
+)
+
+
+def redact(text: str) -> str:
+    return _SECRETS.sub(lambda m: (m.group(1) or m.group(2)) + "***", text)
 
 
 def kv(**fields: Any) -> dict[str, Any]:
@@ -24,7 +35,7 @@ class _TextFormatter(logging.Formatter):
             base += " " + " ".join(f"{k}={v!r}" for k, v in fields.items())
         if record.exc_info:
             base += "\n" + self.formatException(record.exc_info)
-        return base
+        return redact(base)
 
 
 class _JsonFormatter(logging.Formatter):
@@ -38,7 +49,7 @@ class _JsonFormatter(logging.Formatter):
         out.update(getattr(record, "fields", None) or {})
         if record.exc_info:
             out["exc"] = self.formatException(record.exc_info)
-        return json.dumps(out, ensure_ascii=False, default=str)
+        return redact(json.dumps(out, ensure_ascii=False, default=str))
 
 
 def setup_logging(level: str = "INFO", fmt: str = "text") -> None:
