@@ -11,7 +11,7 @@ dependencies = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "websockets", specifier = ">=13" }]
+requires-dist = [{ name = "websockets", specifier = ">=10" }]
 
 [[package]]
 name = "websockets"
