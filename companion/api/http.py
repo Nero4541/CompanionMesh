@@ -65,7 +65,6 @@ async def chat(request: Request, body: ChatRequest) -> ChatResponse:
         session_id=body.session_id,
         device_id=body.device_id or "http",
         speak=False,
-        register=False,
     )
     try:
         text = await session.run_turn(body.text.strip())
