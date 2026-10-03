@@ -9,9 +9,10 @@ import logging
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
+from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.runtime import CompanionRuntime
-from companion.core.session import Session
+from companion.core.session import Device, Session, parse_roles
 from companion.protocol import (
     Envelope,
     ProtocolError,
@@ -58,7 +59,7 @@ async def _send_error(outbox: WebSocketOutbox, code: str, message: str) -> None:
     )
 
 
-async def _dispatch(session: Session, event: Envelope) -> None:
+async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
     payload = event.payload
     match event.type:
         case ev.CONVERSATION_TEXT:
@@ -70,9 +71,9 @@ async def _dispatch(session: Session, event: Envelope) -> None:
         case ev.CONVERSATION_CANCEL:
             await session.cancel_turn()
         case ev.AUDIO_INPUT_START:
-            await session.audio_start(payload)
+            await session.audio_start(payload, device)
         case ev.AUDIO_INPUT_STOP:
-            await session.audio_stop()
+            await session.audio_stop(device)
         case ev.AUDIO_OUTPUT_PLAYED:
             await session.playback_finished(payload.get("turn_id"))
         case ev.VISION_ENABLE:
@@ -92,21 +93,31 @@ async def realtime(ws: WebSocket) -> None:
     await ws.accept()
     outbox = WebSocketOutbox(ws)
     session: Session | None = None
+    device: Device | None = None
     try:
-        # First frame must be session.start (resume by passing session_id).
+        # First frame must be session.start (resume by passing session_id,
+        # or join the active session with join=true).
         start = parse_text_frame(await ws.receive_text())
         if start.type != ev.SESSION_START:
             await _send_error(outbox, "protocol", "first event must be session.start")
             await ws.close(code=1002)
             return
         requested = start.payload.get("session_id") or start.session_id
-        session, resumed = await runtime.open_session(
-            outbox,
-            session_id=str(requested) if requested else None,
-            device_id=start.device_id,
-        )
+        try:
+            session, device, resumed = await runtime.connect(
+                outbox,
+                session_id=str(requested) if requested else None,
+                device_id=start.device_id,
+                roles=parse_roles(start.payload.get("roles")),
+                join=bool(start.payload.get("join")),
+            )
+        except CompanionError as exc:
+            await _send_error(outbox, exc.code, str(exc))
+            await ws.close(code=1008)
+            return
         history = await runtime.store.history(session.session_id, limit=50)
-        await session.emit(
+        await session.emit_to(
+            [device],
             ev.SESSION_STARTED,
             {
                 "session_id": session.session_id,
@@ -117,13 +128,23 @@ async def realtime(ws: WebSocket) -> None:
                 "speech_output": session.speak,
                 "vision": session.vision.available,
                 "vision_mode": session.vision.mode,
+                "roles": sorted(device.roles),
+                "devices": [d.describe() for d in session.devices],
+                "vision_enabled": session.vision.enabled,
                 "history": [{"role": m.role, "content": m.content} for m in history],
             },
         )
-        await session.emit(ev.SYSTEM_STATE, {"state": session.state.value})
+        await session.emit_to([device], ev.SYSTEM_STATE, {"state": session.state.value})
+        if len(session.devices) > 1:
+            await session.announce_devices()
         log.info(
             "realtime connected",
-            extra=kv(session=session.session_id, device=start.device_id, resumed=resumed),
+            extra=kv(
+                session=session.session_id,
+                device=start.device_id,
+                roles=",".join(sorted(device.roles)),
+                resumed=resumed,
+            ),
         )
 
         while True:
@@ -134,12 +155,12 @@ async def realtime(ws: WebSocket) -> None:
                 if message.get("bytes") is not None:
                     event, data = decode_binary_frame(message["bytes"])
                     if event.type == ev.AUDIO_INPUT_CHUNK:
-                        await session.audio_chunk(data)
+                        await session.audio_chunk(data, device)
                     elif event.type == ev.VISION_FRAME:
-                        await session.vision.submit_frame(event, data)
+                        await session.vision.submit_frame(event, data, device.device_id)
                     continue
                 if message.get("text") is not None:
-                    await _dispatch(session, parse_text_frame(message["text"]))
+                    await _dispatch(session, device, parse_text_frame(message["text"]))
             except ProtocolError as exc:
                 await _send_error(outbox, "protocol", str(exc))
     except ProtocolError as exc:
@@ -149,6 +170,9 @@ async def realtime(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
-        if session is not None:
-            await runtime.close_session(session)
-            log.info("realtime disconnected", extra=kv(session=session.session_id))
+        if session is not None and device is not None:
+            await runtime.disconnect(session, device)
+            log.info(
+                "realtime disconnected",
+                extra=kv(session=session.session_id, device=device.device_id),
+            )
