@@ -13,6 +13,7 @@ from typing import Any
 @dataclass
 class AudioConfig:
     enabled: bool = True
+    input_enabled: bool = True  # false: a speaker-only device (no microphone)
     input_device: str = "default"  # ALSA device for arecord, e.g. "hw:0,0" or "plughw:1,0"
     output_device: str = "default"  # ALSA device for aplay
     # Silence before speech when the output stream opens: Bluetooth speakers
