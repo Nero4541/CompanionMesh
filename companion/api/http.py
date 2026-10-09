@@ -28,6 +28,12 @@ async def status(request: Request, probe: bool = False) -> dict[str, Any]:
     return await _runtime(request).status(probe=probe)
 
 
+@protected.get("/v1/metrics")
+async def metrics(request: Request) -> dict[str, Any]:
+    """Latency per pipeline stage (seconds) and counters; no media or text."""
+    return _runtime(request).metrics.summary()
+
+
 @protected.get("/v1/config")
 async def config(request: Request) -> dict[str, Any]:
     return _runtime(request).config.public_view()
