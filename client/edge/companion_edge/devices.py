@@ -168,7 +168,7 @@ class AlsaSpeaker:
         self._proc = await asyncio.create_subprocess_exec(
             *self._argv(*fmt),
             stdin=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.PIPE,  # -q: only errors, read when it dies
         )
         self._format = fmt
         self._ends_at = 0.0
@@ -189,8 +189,22 @@ class AlsaSpeaker:
         # most of a long clip has already been consumed.
         now = asyncio.get_running_loop().time()
         self._ends_at = max(self._ends_at, now) + len(pcm) / (rate * channels * width)
-        self._proc.stdin.write(pcm)
-        await self._proc.stdin.drain()
+        proc = self._proc
+        try:
+            proc.stdin.write(pcm)
+            await proc.stdin.drain()
+        except (BrokenPipeError, ConnectionResetError):
+            # aplay is gone, e.g. the device vanished (a Bluetooth speaker that
+            # switched off says "PCM not found"): report why, start over next time.
+            self._proc, self._format = None, None
+            reason = b""
+            if proc.stderr is not None:
+                with contextlib.suppress(asyncio.TimeoutError, OSError):
+                    reason = await asyncio.wait_for(proc.stderr.read(), timeout=1)
+            message = reason.decode(errors="replace").strip().splitlines()
+            raise RuntimeError(
+                f"aplay on {self.device!r} stopped: {message[-1] if message else 'no output'}"
+            ) from None
 
     async def _keep_open(self) -> None:
         """Feed silence until more speech comes or ``hold_s`` passes, then close."""
@@ -200,8 +214,8 @@ class AlsaSpeaker:
                 if self._ends_at - loop.time() < MARGIN_S:
                     await self._write(self._silence(SILENCE_S))
                 await asyncio.sleep(SILENCE_S / 2)
-        except (BrokenPipeError, ConnectionResetError):
-            pass
+        except (BrokenPipeError, ConnectionResetError, RuntimeError):
+            pass  # the stream died while idle; the next clip reopens it
         self._closing = True
         try:
             await self.close()
