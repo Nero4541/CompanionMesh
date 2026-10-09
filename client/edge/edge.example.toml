@@ -10,6 +10,7 @@ state_file = "~/.local/state/companion-edge/state.json"   # remembers the sessio
 
 [audio]
 enabled = true
+input_enabled = true         # false for a speaker-only device
 input_device = "default"     # arecord -l lists devices; e.g. "plughw:0,0"
 output_device = "default"    # aplay -l lists devices
 output_lead_in_ms = 0        # ~300 for Bluetooth speakers (they chop the first audio)
