@@ -2,15 +2,16 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v0.4.0. This is an early release; the protocol may still change before v1.0.
+**Status:** v0.5.0. This is an early release; the protocol may still change before v1.0.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
+- **Conversational, not walkie-talkie.** Talk over the companion and it stops mid-sentence to listen (barge-in), without mistaking its own voice for yours.
 - **Speaks up, within limits.** When the camera sees something worth mentioning, the companion can start the conversation, at most once every 15 minutes, never during quiet hours, and only if the agent thinks it is worth saying.
 - **A body for the companion.** A small Linux board (camera, microphone, speaker) can be the companion's endpoint over Wi-Fi or a phone hotspot, with Opus-compressed audio and automatic reconnection.
 - **Several devices, one conversation.** A browser can keep the mic and speaker while an IP camera (or a phone running a camera app) joins the same session as the companion's eyes.
 - **Agents can run elsewhere.** Point the companion at an agent on another machine (LAN or Tailscale). Memory and tools stay on that machine.
-- **Opt-in vision.** A client can share camera frames with the agent, either as images for a model that can see or as short descriptions from a separate vision model. Off until a session enables it.
+- **Opt-in vision.** A client can share camera frames with the agent, either as images for a model that can see or as short descriptions from a separate vision model. Cameras are watched locally and only frames where something changed are sent: no continuous video upstream. Off until a session enables it.
 - **Replaceable providers.** STT, TTS, LLM and VLM are interfaces. The defaults are local: faster-whisper for STT and Irodori-TTS for Japanese TTS.
 - **Private by default.** With an external agent, the companion writes no conversation data to disk. Audio and camera images are never stored unless you enable it.
 
@@ -27,7 +28,7 @@ Browser / edge client                     Companion Server                      
 └───────────────────┘                └──────────────────────────────┘
 ```
 
-The server streams the agent's reply text to the client as it arrives. Each finished sentence is synthesized and played while the rest of the reply is still being generated. v0.1.x is half-duplex: the microphone is ignored while the companion is thinking or speaking, so it never answers its own voice.
+The server streams the agent's reply text to the client as it arrives. Each finished sentence is synthesized and played while the rest of the reply is still being generated. The microphone stays open while the companion speaks, so you can interrupt it; see [Realtime conversation](#realtime-conversation).
 
 ## Requirements
 
@@ -169,6 +170,44 @@ uv run --no-sync python -m irodori_openai_tts --host 127.0.0.1 --port 8088
 
 `tts.voice: none` synthesizes without reference audio. For a stable character voice, add a reference clip to the server's `voices/` directory and set `tts.voice` to its id. Set `tts.provider: none` for text-only replies.
 
+## Realtime conversation
+
+Conversation is full duplex with clients that support it (the dev client and the edge client do): the microphone keeps streaming while the companion speaks.
+
+**Barge-in.** When you start talking over a reply, the server cancels the agent's reply and any speech still being synthesized (`TTS cancellation`), tells every speaker device to stop at once (`audio.output.stop`), and treats what you say as your next turn. The interrupted reply is remembered only up to what you actually heard, and the next turn sees it ending in "…". Speaking while the companion is still *thinking* restarts the turn with both of your messages. Older clients stay half duplex: their audio is ignored while the companion thinks or speaks. Set `realtime.barge_in: false` to make every client half duplex.
+
+**Not hearing itself.** A speaker next to a microphone means the companion's voice reaches its own ears. Three layers keep that from turning into a conversation with itself:
+
+1. **Devices with echo cancellation** say so (`aec: "device"` in `audio.input.start`). Browsers do (`echoCancellation`), and so do most USB speakerphones. Nothing else is needed.
+2. **Gating.** While reply audio plays on a device without echo cancellation, speech has to be longer (`barge_in_min_speech_ms`, 600 ms) and clearer (`barge_in_threshold`) to count as you cutting in.
+3. **Echo guard.** A transcript that mostly repeats what the companion said in the last `guard_window_s` seconds is its own voice coming back. It is dropped (counted as `echo_dropped` in `/v1/metrics`).
+
+`realtime.echo.canceller: nlms` adds a reference acoustic echo canceller on the server. Devices report when each reply clip starts playing as a position in their microphone stream. The server lines up the audio it sent with the microphone signal, finds the remaining speaker and room delay (up to `max_delay_ms`), and subtracts the echo with a frequency-domain NLMS filter. It is a reference implementation for boards without hardware AEC: it helps with a fixed speaker and microphone, while a speakerphone with built-in AEC is better.
+
+**States and recovery.** Every session moves through `idle`, `listening`, `transcribing`, `thinking`, `speaking`, `interrupting` and `recovering`, and only along defined transitions. Each busy state has a deadline. If a transcription hangs, a device never confirms playback, or the only speaker disconnects mid-reply, the session moves to `recovering` and back to listening instead of staying stuck.
+
+**Latency.** `GET /v1/metrics` shows where the time goes, per stage, with p50/p95 over recent turns. It records numbers only: no audio, images or text.
+
+```json
+{"stages": {"mic_to_vad": {...}, "vad_to_stt": {"p50": 0.41, "p95": 0.8, ...},
+            "stt_to_first_token": {"p50": 9.8, ...}, "first_token_to_audio": {...},
+            "speech_to_audio": {...}, "network_rtt": {...}, "barge_in_to_stop": {...},
+            "frame_to_observation": {...}},
+ "counters": {"barge_ins": 3, "echo_dropped": 1, "recoveries": 0},
+ "bottleneck": "stt_to_first_token"}
+```
+
+The server pings each device every `realtime.ping_interval_s` (10 s) to measure the round trip and the offset between the device's clock and its own. Device timestamps (when audio was captured, when a frame was taken) can then be compared with server time. `/v1/status` shows each device's `rtt_ms` and `clock_offset_ms`. Set `metrics.emit_turn: true` to also send each turn's timings to clients as `metrics.turn`.
+
+```yaml
+realtime:
+  barge_in: true
+  barge_in_min_speech_ms: 600
+  echo:
+    canceller: none      # or nlms
+    guard: true
+```
+
 ## Vision
 
 > **The LLM that powers your agent must be multimodal (accept images) for the camera to work in the default mode.** If it is not, set `vision.mode: vlm` and configure a vision model in the `vlm` section ([VLM mode](#vlm-mode)); the agent then receives text descriptions instead of images.
@@ -207,7 +246,7 @@ New observations are passed with your next message (`vision.inject: user`), whic
 
 ### IP cameras and phones
 
-Any camera reachable over HTTP or RTSP can be the companion's eyes. `companion camera` runs a small device process that joins the active conversation with the `camera` role, switches vision on, and sends frames (periodically and whenever the server asks):
+Any camera reachable over HTTP or RTSP can be the companion's eyes. `companion camera` runs a small device process that joins the active conversation with the `camera` role, switches vision on, and sends frames when the view changes and whenever the server asks:
 
 ```powershell
 # A phone running an "IP camera" app on the same network (or on Tailscale)
@@ -216,7 +255,7 @@ uv run companion camera http://192.168.1.20:8080/video         # MJPEG stream
 uv run companion camera rtsp://192.168.1.20:8554/live          # RTSP, needs ffmpeg on PATH
 ```
 
-The source type is detected from the URL and the response. Options: `--interval 5` (seconds between frames; `0` = only on request), `--session <id>` to join a specific session instead of the most recently started one, `--device-id`, and `--no-enable` to leave vision off until someone enables it. The bridge reconnects automatically. If vision is switched off in the session (for example with the **vision on** button in the dev client), the camera pauses and stays paused until vision is switched on again.
+The source type is detected from the URL and the response. By default (`--mode change`) the bridge looks at the camera itself about once a second, on a tiny greyscale copy, and sends a frame only when something moves or the scene changes, plus a routine frame every `--heartbeat 300` seconds. `--mode periodic --interval 5` sends a frame every 5 seconds instead (`0` = only on request). Other options: `--session <id>` to join a specific session instead of the most recently started one, `--device-id`, and `--no-enable` to leave vision off until someone enables it. The bridge reconnects automatically. If vision is switched off in the session (for example with the **vision on** button in the dev client), the camera pauses and stays paused until vision is switched on again.
 
 If the camera asks for a login (Basic or Digest, e.g. the "IP Webcam" Android app with a password set), put it in `.env` rather than on the command line:
 
@@ -229,7 +268,9 @@ CAMERA_PASSWORD=…
 
 The bridge is meant to run for a long time. Start it whenever you like: it waits for the camera to come up (retrying every 5 s), waits for a conversation to join, and when a conversation ends it joins the next one.
 
-In both modes, clients that detect things themselves, such as a future edge device, can send `vision.event` with a description; it becomes an observation without any model call.
+**Visual events.** Frames sent because something changed carry what the camera's detector saw (`event: {kind, score, area}`). They are prioritized: frames you asked for come first, then big changes, then routine frames. Vetted change frames skip the duplicate check, and important ones skip the rate limit. In VLM mode, frames wait in a small priority queue, and stale routine frames are dropped when the model is busy. Changes become events for the [attention engine](#proactive-behavior): in VLM mode with the model's description of the frame, in agent mode as "something moved" (worth remembering, rarely worth speaking about).
+
+In both modes, clients that detect things themselves, such as an edge device with an accelerator, can send `vision.event` with a description; it becomes an observation without any model call.
 
 #### Vision model settings
 
@@ -289,11 +330,22 @@ uv run companion-edge --config edge.toml
 
 What the edge client does:
 
-- **Microphone:** 16 kHz audio, Opus-encoded at ~24 kbps (about a tenth of raw PCM) and sent in batches of 20 ms packets; without `libopus` it falls back to PCM. While the speaker plays, the mic is not sent (half-duplex).
-- **Speaker:** plays each synthesized sentence and reports when playback finished.
-- **Camera:** ffmpeg decodes the V4L2 camera at 1 fps and keeps only the newest frame. Frames are sent on the server's capture requests (when you speak) and periodically, with **adaptive sampling**: every frame the server reports as a duplicate doubles the interval (up to `max_interval_s`), and a changed view resets it.
+- **Microphone:** 16 kHz audio, Opus-encoded at ~24 kbps (about a tenth of raw PCM) and sent in batches of 20 ms packets. Without `libopus` it uses ffmpeg's Opus encoder, or falls back to PCM. Each batch carries its position in the microphone stream and its capture time. The mic keeps streaming while the companion speaks, so you can interrupt it (`full_duplex = true`). Set `aec = "device"` if your microphone cancels its own speaker's echo.
+- **Speaker:** sentences of a reply are played back to back through one output stream, so there are no gaps between them. The client reports when each clip starts (for echo handling) and when the reply finished, and stops immediately when the server says so.
+- **Camera:** ffmpeg reads the V4L2 camera once and produces both JPEG frames and a 64x48 greyscale copy. In `change` mode (default), the client checks the greyscale copy `analysis_fps` times a second for motion or a scene change, in plain Python, and sends a frame only when something changed, plus one every `heartbeat_s`. Frames are also sent on the server's capture requests (when you speak). `mode = "periodic"` uses adaptive sampling instead: every frame the server reports as a duplicate doubles the interval (up to `max_interval_s`), and a changed view resets it.
 - **Network loss:** reconnects with exponential backoff, resumes the same session (the id is stored on disk), and keeps at most `buffer_s` seconds of microphone audio while offline. The server keeps the session for `server.session_linger_s` (60 s) after the last device drops and replays what the device missed, e.g. a reply that finished meanwhile.
 - **Heartbeat:** `device.status` every `heartbeat_s` with CPU temperature, free memory, Wi-Fi signal, uptime and buffer level; `/v1/status` lists every connected device with its latest status.
+
+**Bluetooth speakers** work through [bluez-alsa](https://github.com/arkq/bluez-alsa): pair the speaker with `bluetoothctl`, run `bluealsa -p a2dp-source`, and point `output_device` at an ALSA PCM for it, e.g. in `~/.asoundrc`:
+
+```text
+pcm.speaker {
+    type plug
+    slave.pcm "bluealsa:DEV=AA:BB:CC:DD:EE:FF,PROFILE=a2dp"
+}
+```
+
+Then set `output_device = "speaker"` and `output_lead_in_ms = 300`: Bluetooth speakers chop the first fraction of a second after their stream starts.
 
 The protocol has nothing board-specific: any client that speaks it (another SBC, a phone app) works the same way.
 
@@ -428,12 +480,13 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 |---|---|
 | `GET /health` | Liveness (no token needed) |
 | `GET /v1/status?probe=true` | Version, sessions, connected devices and their status, providers, agent reachability |
+| `GET /v1/metrics` | Latency per pipeline stage and counters (barge-ins, echoes dropped, recoveries) |
 | `GET /v1/config` | Effective configuration (secret values are never included) |
 | `POST /v1/chat` | One text turn: `{"text": "...", "session_id": "optional"}` → `{"session_id", "text"}` |
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 
-### Realtime protocol (v0.4)
+### Realtime protocol (v0.5)
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -450,25 +503,30 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `session.start` (first frame) | `{session_id?, join?, roles?}`: resume or join a session; `join: true` without an id joins the most recently started one; `roles` ⊆ `mic`, `speaker`, `camera` (default `mic`, `speaker`) |
 | → | `conversation.text` | `{text}` |
 | → | `conversation.cancel` | stop the current reply |
-| → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le" or "opus", channels: 1}` |
-| → | `audio.input.chunk` (binary) | PCM s16le mono 16 kHz; for `opus`, one or more packets each prefixed with a big-endian uint16 length |
+| → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le" or "opus", channels: 1, full_duplex?, aec?}`; `full_duplex: true` keeps the mic open during replies (barge-in); `aec: "device"` if the device cancels its own echo |
+| → | `audio.input.chunk` (binary) | PCM s16le mono 16 kHz; for `opus`, one or more packets each prefixed with a big-endian uint16 length. Optional payload `{pos, t}`: first sample's index in the mic stream and its capture time (device clock, ms since the epoch) |
 | → | `device.status` | free-form device health, e.g. `{cpu_temp_c, mem_free_mb, wifi_signal_dbm, uptime_s}` |
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
+| → | `audio.output.progress` | `{turn_id, seq, state: "started", pos?}`: a clip began playing; `pos` = mic stream position at that moment |
+| → | `audio.output.stopped` | `{turn_id, reason?}`: answer to `audio.output.stop` |
+| → | `system.pong` | `{ping_id, t_server, t_device}`: answer to `system.ping` with the device's clock |
 | → | `vision.enable` / `vision.disable` | opt in or out of vision for this session |
-| → | `vision.frame` (binary) | JPEG, PNG or WebP: `{mime, reason, frame_id?}`; reason is `periodic`, `change` or `manual` |
+| → | `vision.frame` (binary) | JPEG, PNG or WebP: `{mime, reason, frame_id?, captured_at?, event?}`; reason is `periodic`, `change` or `manual`; `event: {kind, score, area}` from a detector at the camera |
 | → | `vision.event` | `{description or label, tags?, confidence?, salience?}`: an observation made by the client |
 | → | `attention.quiet` | `{enabled}`: do-not-disturb on or off |
 | ← | `session.started` | `{session_id, resumed, history, protocol, roles, devices, vision_enabled, …}` |
 | ← | `session.devices` | `{devices: [{device_id, roles}]}`: a device joined or left |
 | ← | `session.ended` | `{reason}`: to remaining camera devices when the conversation ends |
-| ← | `system.state` | `idle`, `listening`, `transcribing`, `thinking` or `speaking` |
+| ← | `system.state` | `{state, previous, reason?, turn_id?}`: `idle`, `listening`, `transcribing`, `thinking`, `speaking`, `interrupting` or `recovering` |
+| ← | `system.ping` | `{ping_id, t_server}`: clock sync and round trip; answer with `system.pong` |
 | ← | `system.error` | `{code, message, recoverable}` |
 | ← | `audio.vad` | `speech_start` or `speech_end` |
 | ← | `conversation.transcript` | `{text, final}` |
-| ← | `conversation.response.start` / `.delta` / `.done` | `{turn_id, text, cancelled?}`; `start` has `proactive: true` and `reason` when the companion spoke first |
+| ← | `conversation.response.start` / `.delta` / `.done` | `{turn_id, text, cancelled?}`; `start` has `proactive: true` and `reason` when the companion spoke first; a cancelled `done` has `reason` and, if the device reported progress, `heard_text` |
 | ← | `agent.tool.progress` | `{turn_id, tool, label, status}` |
 | ← | `audio.output.chunk` (binary) | encoded audio for one sentence: `{turn_id, seq, mime, text}` |
 | ← | `audio.output.done` | `{turn_id}` |
+| ← | `audio.output.stop` | `{turn_id, reason}`: stop playing this turn now and drop the rest of its audio |
 | ← | `vision.state` | `{enabled, available}` |
 | ← | `vision.frame.status` | `{frame_id, status, detail?}`: `accepted`, `duplicate`, `rate_limited`, `rejected` or `disabled` |
 | ← | `vision.observation` | `{id, timestamp, device_id, description, confidence, tags, source, source_event_id}` |
@@ -476,6 +534,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.capture.request` | `{request_id, reason}`: to `camera` devices: send a fresh `manual` frame now |
 | ← | `attention.state` | `{proactive, quiet, speech_blockers}` |
 | ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
+| ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
 
 A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). v0.1 clients keep working unchanged: they get the default roles, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
@@ -495,7 +554,10 @@ A session can have several devices attached at once. Every device receives the c
 | **Start camera** is greyed out | `vision.enabled: false`, or VLM mode without a vision model (`vlm.provider: none`). |
 | The agent ignores the camera image | Its model does not accept images: check `--mmproj` for llama.cpp and the model's `input` list in OpenClaw. |
 | The first TTS reply takes very long | Irodori warms up on its first request; later sentences take well under a second on a GPU. |
-| Replies take tens of seconds | Usually the agent's prompt processing or reasoning; see [Performance and hardware](#performance-and-hardware). |
+| Replies take tens of seconds | Usually the agent's prompt processing or reasoning; `/v1/metrics` names the slowest stage. See [Performance and hardware](#performance-and-hardware). |
+| The companion stops talking by itself | Its own voice (or a TV) is taken as you cutting in. Raise `realtime.barge_in_min_speech_ms`, use a microphone with echo cancellation, try `realtime.echo.canceller: nlms`, or set `full_duplex = false` on that device. |
+| It answers its own voice | The echo guard missed it: lower `realtime.echo.guard_similarity`, or move the microphone away from the speaker. |
+| Choppy audio from a Bluetooth speaker | Set `output_lead_in_ms = 300`; make sure nothing else holds the bluealsa PCM (only one `aplay` can use it). |
 
 ## Development
 
@@ -511,10 +573,10 @@ CI runs lint and an import check on Windows and Linux.
 ```text
 companion/
   api/         FastAPI app, HTTP routes, WebSocket transport
-  core/        config, runtime, session state machine, sentence splitter, event bus
+  core/        config, runtime, sessions, state machine, cancel tokens, clock sync, metrics
   agent/       Hermes, OpenClaw and direct backends
-  audio/       PCM helpers, VAD, utterance segmentation
-  vision/      image validation, dedup, observations, per-session vision pipeline
+  audio/       PCM helpers, VAD, utterance segmentation, echo guard and canceller
+  vision/      image validation, dedup, change detection, observations, vision pipeline
   attention/   attention policy, scene tracking, proactive-speech guards
   devices/     device processes: IP camera bridge and frame sources
   memory/      transcript stores (in-memory, SQLite)
@@ -533,8 +595,8 @@ personas/      persona definitions
 | **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
 | **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations; v0.2.1 adds multi-device sessions and IP cameras |
 | **v0.3** | Attention engine and controlled proactive conversation |
-| **v0.4** | Portable Linux edge client (camera, mic, speaker) talking to the home server (implemented; awaiting a test on the reference board) |
-| v0.5 | Realtime multimodal interaction: continuous vision, echo-aware audio, barge-in |
+| **v0.4** | Portable Linux edge client (camera, mic, speaker) talking to the home server, tested on a LicheeRV Nano with a Bluetooth speaker |
+| **v0.5** | Realtime multimodal interaction: full-duplex audio with barge-in, echo handling, state machine with recovery, latency metrics, change-driven vision |
 
 ## License
 
