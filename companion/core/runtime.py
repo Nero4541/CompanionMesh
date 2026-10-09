@@ -17,6 +17,7 @@ from companion.core.bus import EventBus
 from companion.core.config import CompanionConfig
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
+from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
 from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
@@ -111,6 +112,7 @@ class CompanionRuntime:
         )
         self._vad_factory = providers.vad_factory or (lambda: create_vad(config.vad))
         self.sessions: dict[str, Session] = {}
+        self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
 
     async def start(self) -> None:
@@ -250,6 +252,9 @@ class CompanionRuntime:
             "version": __version__,
             "uptime_s": round(time.time() - self.started_at, 1),
             "active_sessions": len(self.sessions),
+            "sessions": [
+                {"session_id": s.session_id, "state": s.state.value} for s in self.sessions.values()
+            ],
             "devices": [
                 {"session_id": s.session_id, **d.report()}
                 for s in self.sessions.values()
