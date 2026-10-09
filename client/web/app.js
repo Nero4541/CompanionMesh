@@ -1,4 +1,4 @@
-// Companion dev client: text, half-duplex voice and opt-in camera over /v1/realtime.
+// Companion dev client: text, full-duplex voice (barge-in) and opt-in camera over /v1/realtime.
 const $ = (id) => document.getElementById(id);
 const SESSION_KEY = "companion.session_id";
 const TOKEN_KEY = "companion.token";
@@ -22,6 +22,8 @@ let sessionId = localStorage.getItem(SESSION_KEY) || null;
 let audioCtx = null;
 let mic = null;            // { stream, source, node }
 let micOn = false;
+let micPos = 0;            // 16 kHz samples sent since the mic opened
+let bargeIn = false;       // the server lets us talk over its replies
 let assistantEl = null;    // message element being streamed into
 let cam = null;            // { stream, timer }
 let visionAvailable = false;
@@ -135,6 +137,7 @@ function onEvent(ev) {
   switch (ev.type) {
     case "session.started":
       sessionId = p.session_id;
+      bargeIn = Boolean(p.barge_in);
       localStorage.setItem(SESSION_KEY, sessionId);
       $("session").textContent = `session ${sessionId}${p.resumed ? " (resumed)" : ""} · persona ${p.persona}`;
       $("log").replaceChildren();
@@ -151,6 +154,15 @@ function onEvent(ev) {
       break;
     case "system.state":
       setState(p.state);
+      break;
+    case "system.ping":
+      // Clock sync: answer with our own clock (ms since the epoch).
+      send("system.pong", { ...p, t_device: Date.now() });
+      break;
+    case "audio.output.stop":
+      // The user cut in (or the turn was cancelled): silence now, drop the rest.
+      playback.stopTurn(p.turn_id);
+      send("audio.output.stopped", { turn_id: p.turn_id, reason: p.reason });
       break;
     case "system.error":
       addMsg("error", `${p.code}: ${p.message}`);
@@ -198,6 +210,7 @@ function onEvent(ev) {
       if (assistantEl) {
         if (!assistantEl.textContent) assistantEl.textContent = p.text || "…";
         if (p.cancelled) assistantEl.classList.add("cancelled");
+        if (p.heard_text !== undefined) assistantEl.title = `heard: ${p.heard_text || "(nothing)"}`;
       }
       assistantEl = null;
       toolEls = new Map();
@@ -225,11 +238,17 @@ function onBinary(header, data) {
 
 const playback = {
   turn: null, chain: Promise.resolve(), nextAt: 0, sources: [], ended: false, pending: 0,
+  stopped: new Set(),  // turns the server told us to stop; their late audio is dropped
 
   begin(turnId) { this.stop(); this.turn = turnId; this.ended = false; },
 
+  stopTurn(turnId) {
+    this.stopped.add(turnId);
+    if (turnId === this.turn) { this.stop(); this.turn = null; }
+  },
+
   enqueue(payload, data) {
-    if (payload.turn_id !== this.turn) return;
+    if (payload.turn_id !== this.turn || this.stopped.has(payload.turn_id)) return;
     if (!$("tts").checked) return;
     const ctx = ensureAudio();
     this.pending++;
@@ -244,6 +263,10 @@ const playback = {
         const at = Math.max(ctx.currentTime + 0.02, this.nextAt);
         src.start(at);
         this.nextAt = at + buf.duration;
+        // Tell the server when this clip starts sounding, as a mic position.
+        const progress = { turn_id: payload.turn_id, seq: payload.seq, state: "started" };
+        if (micOn) progress.pos = Math.max(0, Math.round(micPos + (at - ctx.currentTime) * 16000));
+        send("audio.output.progress", progress);
         this.sources.push(src);
         src.onended = () => {
           this.sources = this.sources.filter((s) => s !== src);
@@ -310,9 +333,14 @@ async function startMic() {
   await ctx.audioWorklet.addModule("mic-worklet.js");
   const source = ctx.createMediaStreamSource(stream);
   const node = new AudioWorkletNode(ctx, "mic-capture");
+  micPos = 0;
   node.port.onmessage = (e) => {
     if (e.data instanceof ArrayBuffer) {
-      sendBinary("audio.input.chunk", {}, e.data);
+      const samples = e.data.byteLength / 2;
+      // Position in the mic stream and capture time of the chunk's first sample.
+      const meta = { pos: micPos, t: Math.round(Date.now() - (samples / 16000) * 1000) };
+      micPos += samples;
+      sendBinary("audio.input.chunk", meta, e.data);
     } else if (e.data.level !== undefined) {
       $("meter-bar").style.width = `${Math.min(100, e.data.level * 400)}%`;
     }
@@ -320,7 +348,12 @@ async function startMic() {
   source.connect(node);
   mic = { stream, source, node };
   micOn = true;
-  send("audio.input.start", { sample_rate: 16000, encoding: "pcm_s16le", channels: 1 });
+  // The browser cancels its own speaker's echo (echoCancellation above), so we can
+  // keep the mic open while the companion talks and simply talk over it.
+  send("audio.input.start", {
+    sample_rate: 16000, encoding: "pcm_s16le", channels: 1,
+    full_duplex: bargeIn, aec: "device",
+  });
   $("mic-toggle").textContent = "Stop mic";
   $("mic-toggle").classList.add("active");
   await listMics(); // labels become available after permission is granted
