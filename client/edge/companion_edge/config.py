@@ -15,6 +15,10 @@ class AudioConfig:
     enabled: bool = True
     input_device: str = "default"  # ALSA device for arecord, e.g. "hw:0,0" or "plughw:1,0"
     output_device: str = "default"  # ALSA device for aplay
+    # Silence before speech when the output stream opens: Bluetooth speakers
+    # chop the first audio after their stream starts (~300 ms helps).
+    output_lead_in_ms: int = 0
+    output_hold_s: float = 2.0  # keep the output stream open this long after speech
     codec: str = "opus"  # opus | pcm
     # Who encodes Opus: libopus (ctypes), ffmpeg (its own encoder), or auto
     # (libopus, then ffmpeg, then fall back to PCM).
