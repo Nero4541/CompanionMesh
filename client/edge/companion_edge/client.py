@@ -61,7 +61,11 @@ class EdgeClient:
         self.encoder = encoder
         self.codec = a.codec
         self.mic = microphone or (self._pick_microphone() if a.enabled else None)
-        self.speaker = speaker or (AlsaSpeaker(a.output_device) if a.enabled else None)
+        self.speaker = speaker or (
+            AlsaSpeaker(a.output_device, lead_in_ms=a.output_lead_in_ms, hold_s=a.output_hold_s)
+            if a.enabled
+            else None
+        )
         self.camera = camera or (
             FfmpegCamera(c.device, input_format=c.input_format, size=c.size, quality=c.quality)
             if c.enabled
