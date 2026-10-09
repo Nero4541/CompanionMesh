@@ -42,6 +42,9 @@ class UtteranceSegmenter:
     _candidate_frames: int = 0
     _silence_frames: int = 0
     _triggered: bool = False
+    # (threshold, min_speech_ms) used instead of the config while set: stricter
+    # speech detection while the companion's own voice may reach the microphone.
+    strict: tuple[float, int] | None = None
 
     def __post_init__(self) -> None:
         self._preroll = deque(maxlen=max(1, self.config.speech_pad_ms // _FRAME_MS))
@@ -79,13 +82,14 @@ class UtteranceSegmenter:
 
     def _process_frame(self, frame: np.ndarray) -> SegmenterEvent | None:
         cfg = self.config
-        is_speech = self.vad.speech_prob(frame) >= cfg.threshold
+        threshold, min_speech_ms = self.strict or (cfg.threshold, cfg.min_speech_ms)
+        is_speech = self.vad.speech_prob(frame) >= threshold
 
         if not self._triggered:
             if is_speech:
                 self._speech.append(frame)
                 self._candidate_frames += 1
-                if self._candidate_frames * _FRAME_MS >= cfg.min_speech_ms:
+                if self._candidate_frames * _FRAME_MS >= min_speech_ms:
                     self._triggered = True
                     self._silence_frames = 0
                     self._speech = [*self._preroll, *self._speech]
