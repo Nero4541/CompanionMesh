@@ -89,7 +89,9 @@ class AlsaMicrophone:
 
 
 _ALSA_FORMATS = {1: "U8", 2: "S16_LE", 3: "S24_3LE", 4: "S32_LE"}
-MARGIN_S = 0.15  # play() returns this long before its clip ends, so the next one follows
+# play() returns this long before its clip ends, and silence is topped up this far
+# ahead, so the device never runs dry (aplay moves audio in 125 ms periods).
+MARGIN_S = 0.3
 SILENCE_S = 0.1  # gap filler written while waiting for more speech
 
 
@@ -168,10 +170,13 @@ class AlsaSpeaker:
         assert self._proc is not None and self._proc.stdin is not None
         assert self._format is not None
         rate, channels, width = self._format
-        self._proc.stdin.write(pcm)
-        await self._proc.stdin.drain()
+        # Playback of this audio starts when what is already queued has played,
+        # or now if nothing is. Measured before drain(): drain only returns once
+        # most of a long clip has already been consumed.
         now = asyncio.get_running_loop().time()
         self._ends_at = max(self._ends_at, now) + len(pcm) / (rate * channels * width)
+        self._proc.stdin.write(pcm)
+        await self._proc.stdin.drain()
 
     async def _keep_open(self) -> None:
         """Feed silence until more speech comes or ``hold_s`` passes, then close."""
