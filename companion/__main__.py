@@ -36,7 +36,23 @@ def _parser() -> argparse.ArgumentParser:
     cam.add_argument("--session", help="session id to join (default: the active session)")
     cam.add_argument("--device-id", default="ipcam")
     cam.add_argument(
-        "--interval", type=float, default=5.0, help="seconds between frames; 0 = only on request"
+        "--mode",
+        choices=["change", "periodic"],
+        default="change",
+        help="change: send a frame only when the view changes (default); "
+        "periodic: every --interval",
+    )
+    cam.add_argument(
+        "--interval",
+        type=float,
+        default=5.0,
+        help="periodic mode: seconds between frames; 0 = only on request",
+    )
+    cam.add_argument(
+        "--heartbeat",
+        type=float,
+        default=300.0,
+        help="change mode: send a routine frame at least this often (seconds)",
     )
     cam.add_argument(
         "--no-enable", action="store_true", help="do not switch vision on when joining"
@@ -193,7 +209,9 @@ def main(argv: list[str] | None = None) -> int:
             source_url=args.source,
             session_id=args.session,
             device_id=args.device_id,
+            mode=args.mode,
             interval_s=args.interval,
+            heartbeat_s=args.heartbeat,
             enable=not args.no_enable,
             token=config.server.auth_token(),
         )
