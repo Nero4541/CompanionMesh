@@ -1,6 +1,6 @@
 [project]
 name = "companion-edge"
-version = "0.4.0"
+version = "0.5.0"
 description = "Companion edge device: camera, microphone and speaker on a small Linux board"
 license = "MPL-2.0"
 # Small boards (RISC-V, ARM) often ship an older Python; uv can install 3.13 where available.
