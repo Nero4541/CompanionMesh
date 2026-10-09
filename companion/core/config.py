@@ -253,6 +253,53 @@ class AttentionConfig(_Section):
     debug: bool = False
 
 
+class EchoConfig(_Section):
+    """Keeping the companion's own voice out of its ears (v0.5)."""
+
+    # Server-side echo canceller for microphones whose device has none:
+    # "none" relies on gating and the transcript guard; "nlms" is a reference
+    # adaptive filter driven by the audio the companion sent to the speaker.
+    canceller: Literal["none", "nlms"] = "none"
+    filter_ms: int = Field(default=64, ge=8, le=512)
+    max_delay_ms: int = Field(default=600, ge=0, le=2000)
+    # Drop a transcript that repeats what the companion said moments ago:
+    # its own voice leaking from the speaker into the microphone.
+    guard: bool = True
+    guard_similarity: float = Field(default=0.6, gt=0, le=1)
+    guard_window_s: float = Field(default=20.0, gt=0)
+
+
+class RealtimeConfig(_Section):
+    """Full-duplex conversation: barge-in, state deadlines, clock sync (v0.5)."""
+
+    # Let the user cut in while the companion speaks. Needs a client that keeps
+    # sending microphone audio during playback (full_duplex in audio.input.start).
+    barge_in: bool = True
+    # While audio plays on a device without echo cancellation, speech must be at
+    # least this long and this likely (VAD) to count as the user cutting in.
+    barge_in_min_speech_ms: int = Field(default=600, ge=0)
+    barge_in_threshold: float = Field(default=0.8, gt=0, lt=1)
+    # Watchdog: a state lasting longer than this means a message got lost.
+    transcribe_timeout_s: float = Field(default=60.0, gt=0)
+    interrupt_timeout_s: float = Field(default=3.0, gt=0)
+    # SPEAKING ends this long after the audio sent should have finished playing
+    # if the device never confirms playback.
+    playback_slack_s: float = Field(default=8.0, ge=0)
+    # Round-trip/clock-offset probes to each device (0 = off).
+    ping_interval_s: float = Field(default=10.0, ge=0)
+    echo: EchoConfig = EchoConfig()
+
+
+class MetricsConfig(_Section):
+    """Latency instrumentation: numbers only, never audio, images or text."""
+
+    enabled: bool = True
+    # Samples kept per metric for the percentiles in /v1/metrics.
+    window: int = Field(default=200, ge=10)
+    # Also send per-turn timings to clients as metrics.turn events.
+    emit_turn: bool = False
+
+
 class CompanionConfig(_Section):
     server: ServerConfig = ServerConfig()
     logging: LoggingConfig = LoggingConfig()
@@ -265,6 +312,8 @@ class CompanionConfig(_Section):
     vlm: VLMConfig = VLMConfig()
     vision: VisionConfig = VisionConfig()
     attention: AttentionConfig = AttentionConfig()
+    realtime: RealtimeConfig = RealtimeConfig()
+    metrics: MetricsConfig = MetricsConfig()
     personas_dir: Path = Path("personas")
 
     @field_validator("personas_dir")
