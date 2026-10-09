@@ -3,7 +3,7 @@
 Each device has a small interface so tests (and other boards) can swap them:
 
 * ``Microphone.frames()`` yields 20 ms chunks of 16 kHz mono s16le PCM.
-* ``Speaker.play(audio)`` plays one encoded clip (WAV) to completion.
+* ``Speaker.play(audio)`` plays one encoded clip (WAV), returning about when it ends.
 * ``Camera.latest()`` returns the newest JPEG frame.
 """
 
@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import io
 import logging
 import shutil
+import wave
 from collections.abc import AsyncIterator
 from typing import Protocol
 
@@ -86,19 +88,122 @@ class AlsaMicrophone:
             await self._proc.wait()
 
 
+_ALSA_FORMATS = {1: "U8", 2: "S16_LE", 3: "S24_3LE", 4: "S32_LE"}
+MARGIN_S = 0.15  # play() returns this long before its clip ends, so the next one follows
+SILENCE_S = 0.1  # gap filler written while waiting for more speech
+
+
+def parse_wav(audio: bytes) -> tuple[tuple[int, int, int], bytes] | None:
+    """((rate, channels, sample width), PCM) of a WAV clip, or None if it is not one."""
+    try:
+        with wave.open(io.BytesIO(audio)) as w:
+            fmt = (w.getframerate(), w.getnchannels(), w.getsampwidth())
+            pcm = w.readframes(w.getnframes())
+    except (wave.Error, EOFError):
+        return None
+    return (fmt, pcm) if fmt[2] in _ALSA_FORMATS else None
+
+
 class AlsaSpeaker:
-    def __init__(self, device: str = "default") -> None:
+    """Plays clips through one long-lived ``aplay`` per run of speech.
+
+    Opening an output stream is not free: a Bluetooth (A2DP) speaker has to
+    start its stream and chops the first audio written after each open. So
+    the sentences of a reply are written back to back as raw PCM into one
+    ``aplay``, gaps between them are filled with silence, and the stream
+    closes after ``hold_s`` without speech. ``lead_in_ms`` of silence opens
+    each stream so the speaker is running before the first word.
+    """
+
+    def __init__(self, device: str = "default", *, lead_in_ms: int = 0,
+                 hold_s: float = 2.0) -> None:
         self.device = device
+        self.lead_in_s = lead_in_ms / 1000
+        self.hold_s = hold_s
         self._proc: asyncio.subprocess.Process | None = None
+        self._format: tuple[int, int, int] | None = None
+        self._ends_at = 0.0  # loop time when everything written has played out
+        self._speech_ends_at = 0.0
+        self._keeper: asyncio.Task[None] | None = None
+        self._closing = False  # the keeper is draining and closing the stream
+
+    def _argv(self, rate: int, channels: int, width: int) -> list[str]:
+        return [require("aplay", "alsa-utils"), "-q", "-D", self.device, "-t", "raw",
+                "-f", _ALSA_FORMATS[width], "-r", str(rate), "-c", str(channels), "-"]
 
     async def play(self, audio: bytes) -> None:
+        await self._cancel_keeper()
+        clip = parse_wav(audio)
+        if clip is None:  # not a WAV we can stream: let aplay read it whole
+            await self.close()
+            await self._play_whole(audio)
+            return
+        fmt, pcm = clip
+        if self._format != fmt or self._proc is None or self._proc.returncode is not None:
+            await self.close()
+            await self._open(fmt)
+        await self._write(pcm)
+        self._speech_ends_at = self._ends_at
+        loop = asyncio.get_running_loop()
+        await asyncio.sleep(max(0.0, self._ends_at - loop.time() - MARGIN_S))
+        self._keeper = asyncio.create_task(self._keep_open())
+
+    async def _open(self, fmt: tuple[int, int, int]) -> None:
+        self._proc = await asyncio.create_subprocess_exec(
+            *self._argv(*fmt),
+            stdin=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL,
+        )
+        self._format = fmt
+        self._ends_at = 0.0
+        if self.lead_in_s:
+            await self._write(self._silence(self.lead_in_s))
+
+    def _silence(self, seconds: float) -> bytes:
+        assert self._format is not None
+        rate, channels, width = self._format
+        return (b"\x80" if width == 1 else b"\x00") * (int(rate * seconds) * channels * width)
+
+    async def _write(self, pcm: bytes) -> None:
+        assert self._proc is not None and self._proc.stdin is not None
+        assert self._format is not None
+        rate, channels, width = self._format
+        self._proc.stdin.write(pcm)
+        await self._proc.stdin.drain()
+        now = asyncio.get_running_loop().time()
+        self._ends_at = max(self._ends_at, now) + len(pcm) / (rate * channels * width)
+
+    async def _keep_open(self) -> None:
+        """Feed silence until more speech comes or ``hold_s`` passes, then close."""
+        loop = asyncio.get_running_loop()
+        try:
+            while loop.time() < self._speech_ends_at + self.hold_s:
+                if self._ends_at - loop.time() < MARGIN_S:
+                    await self._write(self._silence(SILENCE_S))
+                await asyncio.sleep(SILENCE_S / 2)
+        except (BrokenPipeError, ConnectionResetError):
+            pass
+        self._closing = True
+        try:
+            await self.close()
+        finally:
+            self._closing = False
+
+    async def _cancel_keeper(self) -> None:
+        keeper, self._keeper = self._keeper, None
+        if keeper is None or keeper is asyncio.current_task():
+            return
+        if self._closing:  # let it finish, so the device is free before a reopen
+            await keeper
+            return
+        keeper.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await keeper
+
+    async def _play_whole(self, audio: bytes) -> None:
         aplay = require("aplay", "alsa-utils")
         self._proc = await asyncio.create_subprocess_exec(
-            aplay,
-            "-q",
-            "-D",
-            self.device,
-            "-",
+            aplay, "-q", "-D", self.device, "-",
             stdin=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
@@ -107,9 +212,28 @@ class AlsaSpeaker:
         finally:
             self._proc = None
 
+    async def close(self) -> None:
+        """Let what was written play out, then end the stream."""
+        await self._cancel_keeper()
+        proc, self._proc, self._format = self._proc, None, None
+        if proc is None or proc.returncode is not None:
+            return
+        assert proc.stdin is not None
+        with contextlib.suppress(BrokenPipeError, ConnectionResetError):
+            proc.stdin.close()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5)
+        except TimeoutError:
+            proc.kill()
+            await proc.wait()
+
     async def stop(self) -> None:
-        if self._proc and self._proc.returncode is None:
-            self._proc.kill()
+        """Cut playback off now (barge-in, cancelled reply)."""
+        await self._cancel_keeper()
+        proc, self._proc, self._format = self._proc, None, None
+        if proc and proc.returncode is None:
+            proc.kill()
+            await proc.wait()
 
 
 class JpegStream:
