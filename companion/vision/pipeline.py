@@ -6,8 +6,15 @@ Flow for a frame::
 
     mode "agent": keep the newest frame; attach it as an image to the user's
                   next message (once), so a multimodal agent sees it directly.
-    mode "vlm":   latest-wins slot -> VLM -> VisualObservation
+    mode "vlm":   priority queue -> VLM -> VisualObservation
                   -> vision.observation event, episodic store, turn context
+                  -> attention engine (for frames sent because something changed)
+
+Frames carry a reason (periodic | change | manual) and, when a detector at the
+camera flagged them, ``event`` metadata ({kind, score, area}). That decides
+their priority: asked-for frames first, then big changes, then routine ones.
+Frames a detector already vetted skip the dedup check and, when important
+enough, the rate limit.
 
 Disabling vision cancels any analysis in flight and discards held frames.
 """
@@ -24,11 +31,13 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
 from companion.attention.engine import AttentionEvent, SceneTracker
+from companion.core.clock import ClockSync, now_ms
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.protocol import Envelope
 from companion.protocol import events as ev
 from companion.vision.image import ImageRejected, decode_image, dhash, hamming, to_jpeg
+from companion.vision.motion import frame_priority
 from companion.vision.observation import VisualObservation, format_for_context
 
 if TYPE_CHECKING:
@@ -38,6 +47,11 @@ log = logging.getLogger(__name__)
 
 FrameStatus = Literal["accepted", "duplicate", "rate_limited", "rejected", "disabled"]
 MANUAL_REASONS = {"manual", "question"}
+# Frames at least this important skip the per-session rate limit.
+URGENT_PRIORITY = 0.7
+# VLM mode: frames waiting for analysis, and how long one stays worth analyzing.
+MAX_QUEUED = 3
+STALE_S = 30.0
 
 
 @dataclass(slots=True)
@@ -46,6 +60,13 @@ class _Pending:
     device_id: str
     frame_id: str
     received_at: datetime
+    priority: float = 0.2
+    event: dict[str, Any] | None = None  # change detected at the camera
+    captured_ms: float | None = None  # capture time on the server's clock
+    manual: bool = False
+
+    def age_s(self) -> float:
+        return (datetime.now(UTC) - self.received_at).total_seconds()
 
 
 @dataclass(slots=True)
@@ -75,7 +96,7 @@ class VisionChannel:
         self._latest: _Pending | None = None  # agent mode: newest unseen frame
         self._last_accept = 0.0
         self._last_hash: int | None = None
-        self._pending: _Pending | None = None
+        self._queue: list[_Pending] = []
         self._wake = asyncio.Event()
         self._idle = asyncio.Event()
         self._idle.set()
@@ -116,7 +137,7 @@ class VisionChannel:
     async def disable(self) -> None:
         """Stop all visual processing immediately."""
         was_enabled, self.enabled = self.enabled, False
-        self._pending = None
+        self._queue = []
         self._latest = None
         self._capture_requested_at = None
         await self._stop_worker()
@@ -135,7 +156,11 @@ class VisionChannel:
         return status
 
     async def submit_frame(
-        self, header: Envelope, data: bytes, sender_id: str | None = None
+        self,
+        header: Envelope,
+        data: bytes,
+        sender_id: str | None = None,
+        clock: ClockSync | None = None,
     ) -> FrameStatus:
         payload = header.payload
         frame_id = str(payload.get("frame_id") or header.id)
@@ -143,8 +168,18 @@ class VisionChannel:
             return await self._status(frame_id, "disabled")
         reason = str(payload.get("reason") or "periodic")
         manual = reason in MANUAL_REASONS
+        raw_event = payload.get("event")
+        event = raw_event if isinstance(raw_event, dict) else None
+        priority = frame_priority(reason, event)
+        captured = payload.get("captured_at")
+        captured_ms = (
+            clock.to_server_ms(float(captured))
+            if isinstance(captured, (int, float)) and clock is not None and clock.synced
+            else now_ms()
+        )
         now = time.monotonic()
-        if not manual and now - self._last_accept < self.config.min_interval_s:
+        urgent = manual or priority >= URGENT_PRIORITY
+        if not urgent and now - self._last_accept < self.config.min_interval_s:
             return await self._status(frame_id, "rate_limited")
         mime = str(payload.get("mime") or "")
         try:
@@ -165,6 +200,7 @@ class VisionChannel:
         if (
             self.config.dedup
             and not manual
+            and event is None  # a detector at the camera already saw a change
             and self._last_hash is not None
             and hamming(frame_hash, self._last_hash) <= self.config.dedup_threshold
         ):
@@ -181,13 +217,20 @@ class VisionChannel:
             device_id=header.device_id or sender_id or self.session.device_id or "camera",
             frame_id=frame_id,
             received_at=datetime.now(UTC),
+            priority=priority,
+            event=event,
+            captured_ms=captured_ms,
+            manual=manual,
         )
         self._capture_requested_at = None
         self._frame_arrived.set()
         if self.mode == "agent":
-            self._latest = frame
+            held = self._latest
+            # Do not let a routine frame displace a more important one still unseen.
+            if held is None or priority >= held.priority or held.age_s() > STALE_S:
+                self._latest = frame
         else:
-            self._pending = frame
+            self._enqueue(frame)
             self._idle.clear()
             self._wake.set()
             if self._worker is None or self._worker.done():
@@ -200,6 +243,8 @@ class VisionChannel:
                 session=self.session.session_id,
                 frame=frame_id,
                 reason=reason,
+                priority=round(priority, 2),
+                change=event.get("kind") if event else None,
                 size=f"{decoded.width}x{decoded.height}",
                 bytes=decoded.size_bytes,
             ),
@@ -208,19 +253,53 @@ class VisionChannel:
         change = self.scene.observe(frame_hash, frame.received_at, frame.device_id)
         if change is not None:
             await self.session.on_attention_event(change)
+        elif event is not None and self.mode == "agent":
+            # No VLM to describe it: the detector's own finding is the event.
+            # (In vlm mode the observation of this frame becomes the event.)
+            await self.session.on_attention_event(self._change_event(frame, None))
         return status
+
+    def _enqueue(self, frame: _Pending) -> None:
+        """Priority queue for the VLM: keep the most important fresh frames."""
+        queue = [f for f in self._queue if f.manual or f.age_s() <= STALE_S]
+        queue.append(frame)
+        queue.sort(key=lambda f: (f.priority, f.received_at), reverse=True)
+        self._queue = queue[:MAX_QUEUED]
+
+    def _change_event(self, frame: _Pending, observation: str | None) -> AttentionEvent:
+        event = frame.event or {}
+        kind = str(event.get("kind") or "change")
+        area = event.get("area")
+        share = f" ({round(float(area) * 100)}% of the view)" if isinstance(area, float) else ""
+        if observation:
+            description = f"The camera noticed a {kind.replace('_', ' ')}: {observation}"
+        elif kind == "scene_change":
+            description = f"The camera view changed and stayed changed{share}."
+        else:
+            description = f"Something moved in front of the camera{share}."
+        # Movement alone is worth remembering at most; what the VLM saw may matter more.
+        salience = frame.priority * (0.9 if observation else 0.6)
+        return AttentionEvent(
+            kind=f"visual_{kind}",
+            description=description[:500],
+            salience=round(min(1.0, salience), 3),
+            source="camera",
+            at=frame.received_at,
+            data={"device": frame.device_id, **{k: v for k, v in event.items() if k != "kind"}},
+        )
 
     async def _run_worker(self) -> None:
         vlm = self.runtime.vlm
         assert vlm is not None
         try:
             while self.enabled:
-                if self._pending is None:
+                self._queue = [f for f in self._queue if f.manual or f.age_s() <= STALE_S]
+                if not self._queue:
                     self._idle.set()
                     self._wake.clear()
                     await self._wake.wait()
                     continue
-                item, self._pending = self._pending, None
+                item = self._queue.pop(0)  # highest priority first
                 started = time.perf_counter()
                 try:
                     result = await vlm.describe(item.jpeg, language=self.runtime.persona.language)
@@ -244,10 +323,17 @@ class VisionChannel:
                     extra=kv(
                         session=self.session.session_id,
                         vlm_s=round(time.perf_counter() - started, 2),
+                        priority=round(item.priority, 2),
                         description=obs.description,
                     ),
                 )
+                if item.captured_ms is not None:
+                    self.session.metrics.record(
+                        "frame_to_observation", (now_ms() - item.captured_ms) / 1000
+                    )
                 await self._record(obs, item.jpeg)
+                if item.event is not None:
+                    await self.session.on_attention_event(self._change_event(item, obs.description))
         finally:
             self._idle.set()
 
@@ -373,6 +459,6 @@ class VisionChannel:
 
     async def close(self) -> None:
         self.enabled = False
-        self._pending = None
+        self._queue = []
         self._latest = None
         await self._stop_worker()
