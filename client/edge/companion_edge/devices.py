@@ -4,7 +4,8 @@ Each device has a small interface so tests (and other boards) can swap them:
 
 * ``Microphone.frames()`` yields 20 ms chunks of 16 kHz mono s16le PCM.
 * ``Speaker.play(audio)`` plays one encoded clip (WAV), returning about when it ends.
-* ``Camera.latest()`` returns the newest JPEG frame.
+* ``Camera.latest()`` returns the newest JPEG frame; cameras that can also
+  offer ``gray_frames()`` (tiny greyscale frames) allow change detection.
 """
 
 from __future__ import annotations
@@ -13,10 +14,16 @@ import asyncio
 import contextlib
 import io
 import logging
+import os
 import shutil
+import time
 import wave
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from typing import Protocol
+
+from companion_edge.motion import FRAME_BYTES as GRAY_BYTES
+from companion_edge.motion import HEIGHT as GRAY_HEIGHT
+from companion_edge.motion import WIDTH as GRAY_WIDTH
 
 log = logging.getLogger(__name__)
 
@@ -133,20 +140,27 @@ class AlsaSpeaker:
         return [require("aplay", "alsa-utils"), "-q", "-D", self.device, "-t", "raw",
                 "-f", _ALSA_FORMATS[width], "-r", str(rate), "-c", str(channels), "-"]
 
-    async def play(self, audio: bytes) -> None:
+    # play() calls on_start with the loop time the clip begins to sound.
+    reports_start = True
+
+    async def play(self, audio: bytes, on_start: Callable[[float], None] | None = None) -> None:
         await self._cancel_keeper()
+        loop = asyncio.get_running_loop()
         clip = parse_wav(audio)
         if clip is None:  # not a WAV we can stream: let aplay read it whole
             await self.close()
+            if on_start is not None:
+                on_start(loop.time())
             await self._play_whole(audio)
             return
         fmt, pcm = clip
         if self._format != fmt or self._proc is None or self._proc.returncode is not None:
             await self.close()
             await self._open(fmt)
+        if on_start is not None:
+            on_start(max(self._ends_at, loop.time()))  # after what is queued before it
         await self._write(pcm)
         self._speech_ends_at = self._ends_at
-        loop = asyncio.get_running_loop()
         await asyncio.sleep(max(0.0, self._ends_at - loop.time() - MARGIN_S))
         self._keeper = asyncio.create_task(self._keep_open())
 
@@ -262,41 +276,81 @@ class JpegStream:
 
 
 class FfmpegCamera:
-    """V4L2 camera decoded by ffmpeg at 1 fps; keeps only the newest JPEG."""
+    """V4L2 camera decoded by ffmpeg; keeps only the newest JPEG.
 
-    def __init__(self, device: str, *, input_format: str, size: str, quality: int) -> None:
+    With ``analysis_fps`` (Linux), the same ffmpeg also writes tiny greyscale
+    frames to a second pipe for local change detection, so the camera is
+    opened once and nothing is decoded twice.
+    """
+
+    def __init__(
+        self,
+        device: str,
+        *,
+        input_format: str,
+        size: str,
+        quality: int,
+        analysis_fps: float = 0.0,
+    ) -> None:
         self.device = device
         self.input_format = input_format
         self.size = size
         self.quality = quality
+        self.analysis_fps = analysis_fps if os.name == "posix" else 0.0
         self._frame: bytes | None = None
+        self.latest_at: float | None = None  # wall clock ms of the newest JPEG
+        self._gray: asyncio.Queue[tuple[bytes, float]] = asyncio.Queue(maxsize=2)
         self._proc: asyncio.subprocess.Process | None = None
-        self._task: asyncio.Task[None] | None = None
+        self._tasks: list[asyncio.Task[None]] = []
 
-    async def start(self) -> None:
-        ffmpeg = require("ffmpeg", "ffmpeg")
+    @property
+    def analysis(self) -> bool:
+        return self.analysis_fps > 0
+
+    def _args(self, ffmpeg: str, gray_fd: int | None) -> list[str]:
         args = [ffmpeg, "-hide_banner", "-loglevel", "error", "-f", "v4l2"]
         if self.input_format:
             args += ["-input_format", self.input_format]
         if self.size:
             args += ["-video_size", self.size]
-        args += [
-            "-i",
-            self.device,
-            "-vf",
-            "fps=1",
-            "-q:v",
-            str(self.quality),
-            "-f",
-            "image2pipe",
-            "-vcodec",
-            "mjpeg",
-            "-",
-        ]
-        self._proc = await asyncio.create_subprocess_exec(
-            *args, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        args += ["-i", self.device]
+        jpeg = ["-q:v", str(self.quality), "-f", "image2pipe", "-vcodec", "mjpeg"]
+        if gray_fd is None:
+            return [*args, "-vf", "fps=1", *jpeg, "-"]
+        graph = (
+            f"[0:v]fps={self.analysis_fps:g},split=2[jpeg][small];"
+            f"[small]scale={GRAY_WIDTH}:{GRAY_HEIGHT},format=gray[gray]"
         )
-        self._task = asyncio.create_task(self._read())
+        return [
+            *args,
+            "-filter_complex",
+            graph,
+            "-map",
+            "[jpeg]",
+            *jpeg,
+            "pipe:1",
+            "-map",
+            "[gray]",
+            "-f",
+            "rawvideo",
+            f"pipe:{gray_fd}",
+        ]
+
+    async def start(self) -> None:
+        ffmpeg = require("ffmpeg", "ffmpeg")
+        read_fd = write_fd = None
+        if self.analysis:
+            read_fd, write_fd = os.pipe()
+        self._proc = await asyncio.create_subprocess_exec(
+            *self._args(ffmpeg, write_fd),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            pass_fds=(write_fd,) if write_fd is not None else (),
+        )
+        self._tasks = [asyncio.create_task(self._read())]
+        if read_fd is not None and write_fd is not None:
+            os.close(write_fd)
+            self._tasks.append(asyncio.create_task(self._read_gray(read_fd)))
 
     async def _read(self) -> None:
         assert self._proc and self._proc.stdout
@@ -304,10 +358,34 @@ class FfmpegCamera:
         while chunk := await self._proc.stdout.read(65536):
             for frame in parser.feed(chunk):
                 self._frame = frame
+                self.latest_at = time.time() * 1000
         err = b""
         if self._proc.stderr:
             err = await self._proc.stderr.read()
         log.warning("camera stopped: %s", err.decode(errors="replace").strip()[-300:])
+
+    async def _read_gray(self, fd: int) -> None:
+        loop = asyncio.get_running_loop()
+        reader = asyncio.StreamReader()
+        transport, _ = await loop.connect_read_pipe(
+            lambda: asyncio.StreamReaderProtocol(reader), os.fdopen(fd, "rb", buffering=0)
+        )
+        try:
+            while True:
+                try:
+                    frame = await reader.readexactly(GRAY_BYTES)
+                except asyncio.IncompleteReadError:
+                    return
+                if self._gray.full():  # analysis fell behind: keep the newest
+                    self._gray.get_nowait()
+                self._gray.put_nowait((frame, loop.time()))
+        finally:
+            transport.close()
+
+    async def gray_frames(self) -> AsyncIterator[tuple[bytes, float]]:
+        """Tiny greyscale frames with their loop time, as ffmpeg produces them."""
+        while True:
+            yield await self._gray.get()
 
     async def latest(self) -> bytes | None:
         return self._frame
@@ -316,10 +394,10 @@ class FfmpegCamera:
         if self._proc and self._proc.returncode is None:
             self._proc.kill()
             await self._proc.wait()
-        if self._task:
-            self._task.cancel()
+        for task in self._tasks:
+            task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
-                await self._task
+                await task
 
 
 class OggPacketReader:
