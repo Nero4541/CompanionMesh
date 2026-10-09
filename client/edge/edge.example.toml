@@ -20,12 +20,20 @@ opus_encoder = "auto"        # libopus (libopus0), ffmpeg (its built-in encoder)
 opus_bitrate = 24000
 packets_per_frame = 5        # 5 x 20 ms Opus packets per message
 buffer_s = 3.0               # microphone audio kept while offline
+full_duplex = true           # keep the mic open while the companion speaks (barge-in)
+aec = "none"                 # "device" if this hardware cancels its own speaker's echo
 
 [camera]
 enabled = true
 device = "/dev/video0"
 input_format = "mjpeg"       # "" if the camera has no MJPEG mode
 size = "640x480"
-min_interval_s = 5           # adaptive: as often as this while the view changes
-max_interval_s = 60          # as rarely as this while it stays the same
+mode = "change"              # change: send frames only when the view changes; or periodic
+analysis_fps = 2             # change mode: tiny greyscale frames checked per second
+heartbeat_s = 300            # change mode: a routine frame at least this often
+motion_threshold = 0.02      # share of pixels that must change to count as motion
+scene_threshold = 0.25       # share differing from the background = scene change
+cooldown_s = 10              # between two change events of the same kind
+min_interval_s = 5           # periodic mode: as often as this while the view changes
+max_interval_s = 60          # periodic mode: as rarely as this while it stays the same
 quality = 5
