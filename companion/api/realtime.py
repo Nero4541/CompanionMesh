@@ -210,7 +210,9 @@ async def realtime(ws: WebSocket) -> None:
                     if event.type == ev.AUDIO_INPUT_CHUNK:
                         await session.audio_chunk(data, device, event.payload)
                     elif event.type == ev.VISION_FRAME:
-                        await session.vision.submit_frame(event, data, device.device_id)
+                        await session.vision.submit_frame(
+                            event, data, device.device_id, device.clock
+                        )
                     continue
                 if message.get("text") is not None:
                     await _dispatch(session, device, parse_text_frame(message["text"]))
