@@ -31,9 +31,12 @@ def binary(header: dict[str, Any], data: bytes) -> bytes:
     return _HEADER.pack(len(raw)) + raw + data
 
 
-def compact_binary(type_: str, data: bytes) -> bytes:
+def compact_binary(type_: str, data: bytes, payload: dict[str, Any] | None = None) -> bytes:
     """A binary frame with the smallest possible header (for 50 Hz audio)."""
-    raw = json.dumps({"type": type_}, separators=(",", ":")).encode()
+    header: dict[str, Any] = {"type": type_}
+    if payload:
+        header["payload"] = payload
+    raw = json.dumps(header, separators=(",", ":")).encode()
     return _HEADER.pack(len(raw)) + raw + data
 
 
