@@ -27,6 +27,12 @@ class AudioConfig:
     opus_bitrate: int = 24000
     packets_per_frame: int = 5  # 20 ms Opus packets batched per WebSocket frame
     buffer_s: float = 3.0  # mic audio kept while disconnected, sent on reconnect
+    # Keep the microphone open while the companion speaks, so the user can cut in
+    # (when the server supports barge-in). False: half duplex, never hear ourselves.
+    full_duplex: bool = True
+    # "device" if this hardware cancels its own speaker's echo (e.g. a USB
+    # speakerphone); the server is then less strict about speech during playback.
+    aec: str = "none"
 
 
 @dataclass
@@ -35,8 +41,16 @@ class CameraConfig:
     device: str = "/dev/video0"
     input_format: str = "mjpeg"  # v4l2 input format; "" lets ffmpeg choose
     size: str = "640x480"
-    min_interval_s: float = 5.0  # adaptive sampling: fastest periodic frame rate
-    max_interval_s: float = 60.0  # backs off to this while the view stays the same
+    # change: watch the camera locally and send frames only when the view changes
+    # (plus one every heartbeat_s); periodic: adaptive interval below.
+    mode: str = "change"
+    analysis_fps: float = 2.0  # change mode: tiny greyscale frames checked per second
+    heartbeat_s: float = 300.0  # change mode: a routine frame at least this often
+    motion_threshold: float = 0.02  # share of pixels that must change to count as motion
+    scene_threshold: float = 0.25  # share differing from the background = scene change
+    cooldown_s: float = 10.0  # between two change events of the same kind
+    min_interval_s: float = 5.0  # periodic mode: fastest frame rate
+    max_interval_s: float = 60.0  # periodic mode: backs off to this while nothing changes
     quality: int = 5  # ffmpeg -q:v (2 = best, 31 = worst)
 
 
