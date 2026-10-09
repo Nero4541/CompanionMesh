@@ -6,11 +6,13 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
 from companion.api.auth import presented_token, token_ok
+from companion.core.clock import now_ms
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.runtime import CompanionRuntime
@@ -83,6 +85,12 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
             await session.audio_stop(device)
         case ev.AUDIO_OUTPUT_PLAYED:
             await session.playback_finished(payload.get("turn_id"))
+        case ev.AUDIO_OUTPUT_PROGRESS:
+            await session.playback_progress(payload)
+        case ev.AUDIO_OUTPUT_STOPPED:
+            await session.playback_stopped(payload)
+        case ev.SYSTEM_PONG:
+            _pong(session, device, payload)
         case ev.VISION_ENABLE:
             await session.vision.enable()
         case ev.VISION_DISABLE:
@@ -99,6 +107,24 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
             log.debug("ignored event", extra=kv(type=event.type))
 
 
+def _pong(session: Session, device: Device, payload: dict[str, object]) -> None:
+    t_server, t_device = payload.get("t_server"), payload.get("t_device")
+    if not isinstance(t_server, (int, float)) or not isinstance(t_device, (int, float)):
+        return
+    sample = device.clock.add(float(t_server), float(t_device), now_ms())
+    session.metrics.record("network_rtt", sample.rtt_ms / 1000)
+
+
+async def _ping_loop(session: Session, device: Device, interval_s: float) -> None:
+    """Probe round trip and clock offset now and then (system.ping/pong)."""
+    while True:
+        await session.emit_to(
+            [device], ev.SYSTEM_PING, {"ping_id": uuid.uuid4().hex[:8], "t_server": now_ms()}
+        )
+        # A few quick probes first so the clock offset is known early.
+        await asyncio.sleep(interval_s if device.clock.synced else min(1.0, interval_s))
+
+
 @router.websocket("/v1/realtime")
 async def realtime(ws: WebSocket) -> None:
     runtime: CompanionRuntime = ws.app.state.runtime
@@ -109,6 +135,7 @@ async def realtime(ws: WebSocket) -> None:
     outbox = WebSocketOutbox(ws)
     session: Session | None = None
     device: Device | None = None
+    pinger: asyncio.Task[None] | None = None
     try:
         # First frame must be session.start (resume by passing session_id,
         # or join the active session with join=true).
@@ -148,6 +175,8 @@ async def realtime(ws: WebSocket) -> None:
                 "vision_enabled": session.vision.enabled,
                 "proactive": runtime.config.attention.proactive,
                 "quiet": session.attention.state.quiet_mode,
+                "barge_in": runtime.config.realtime.barge_in,
+                "server_time_ms": now_ms(),
                 "history": [{"role": m.role, "content": m.content} for m in history],
             },
         )
@@ -158,6 +187,9 @@ async def realtime(ws: WebSocket) -> None:
                 log.info("replayed backlog", extra=kv(session=session.session_id, events=replayed))
         if len(session.devices) > 1:
             await session.announce_devices()
+        interval = runtime.config.realtime.ping_interval_s
+        if interval > 0:
+            pinger = asyncio.create_task(_ping_loop(session, device, interval))
         log.info(
             "realtime connected",
             extra=kv(
@@ -176,7 +208,7 @@ async def realtime(ws: WebSocket) -> None:
                 if message.get("bytes") is not None:
                     event, data = decode_binary_frame(message["bytes"])
                     if event.type == ev.AUDIO_INPUT_CHUNK:
-                        await session.audio_chunk(data, device)
+                        await session.audio_chunk(data, device, event.payload)
                     elif event.type == ev.VISION_FRAME:
                         await session.vision.submit_frame(event, data, device.device_id)
                     continue
@@ -191,6 +223,10 @@ async def realtime(ws: WebSocket) -> None:
     except WebSocketDisconnect:
         pass
     finally:
+        if pinger is not None:
+            pinger.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await pinger
         if session is not None and device is not None:
             await runtime.disconnect(session, device)
             log.info(
