@@ -132,3 +132,28 @@ attention:
   context_threshold: 0.4
   speak_threshold: 0.6
   debug: false              # send each decision and its reasons to clients
+
+# Full-duplex conversation (v0.5). Clients that keep the microphone open while
+# the companion speaks (full_duplex in audio.input.start) can cut in.
+realtime:
+  barge_in: true                # user speech stops the reply and its playback
+  barge_in_min_speech_ms: 600   # while audio plays on a device without echo
+  barge_in_threshold: 0.8       #   cancellation, cutting in needs clearer speech
+  transcribe_timeout_s: 60      # watchdog: longer than this means something got lost
+  interrupt_timeout_s: 3        # wait this long for a device to confirm it stopped
+  playback_slack_s: 8           # SPEAKING ends this long after the audio should have played
+  ping_interval_s: 10           # round-trip and clock-offset probes (0 = off)
+  echo:
+    canceller: none             # none, or nlms (reference server-side echo canceller)
+    filter_ms: 64
+    max_delay_ms: 600           # speaker + room latency the canceller searches
+    guard: true                 # drop transcripts that repeat what the companion just said
+    guard_similarity: 0.6
+    guard_window_s: 20
+
+# Latency per pipeline stage, at GET /v1/metrics. Numbers only: no audio,
+# images or text are recorded.
+metrics:
+  enabled: true
+  window: 200                   # samples kept per stage for percentiles
+  emit_turn: false              # also send per-turn timings to clients (metrics.turn)
