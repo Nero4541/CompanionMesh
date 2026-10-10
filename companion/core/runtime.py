@@ -67,6 +67,10 @@ def build_agent(config: CompanionConfig, store: TranscriptStore) -> AgentBackend
 def build_stt(config: CompanionConfig) -> STTProvider | None:
     if config.stt.provider == "none":
         return None
+    if config.stt.provider == "openai_compatible":
+        from companion.providers.stt.openai_compatible import OpenAICompatibleSTT
+
+        return OpenAICompatibleSTT(config.stt)
     from companion.providers.stt.faster_whisper import FasterWhisperSTT
 
     return FasterWhisperSTT(config.stt)
