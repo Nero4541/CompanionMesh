@@ -1,8 +1,8 @@
 # Companion Server
 
-An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser (and, later, from small edge devices); it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
+An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser or from a small Linux board with a camera, microphone and speaker; it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v0.5.0. This is an early release; the protocol may still change before v1.0.
+**Status:** v1.0.0, the first stable release. The realtime protocol is version 1.0: later 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
@@ -499,7 +499,7 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 
-### Realtime protocol (v0.5)
+### Realtime protocol (1.0)
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -549,7 +549,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
 | ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
 
-A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). v0.1 clients keep working unchanged: they get the default roles, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
+A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). Simple clients stay simple: a client that declares no roles gets `mic` and `speaker`, one that does not ask for `full_duplex` is treated as half duplex, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
 
 ## Troubleshooting
 
@@ -605,11 +605,14 @@ personas/      persona definitions
 
 | Version | Outcome |
 |---|---|
-| **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory ✅ |
+| **v0.1** | Windows-capable server: text and voice conversation, agent adapters, persistent memory |
 | **v0.2** | Image ingestion: frames to a multimodal agent or a VLM, visual observations; v0.2.1 adds multi-device sessions and IP cameras |
 | **v0.3** | Attention engine and controlled proactive conversation |
 | **v0.4** | Portable Linux edge client (camera, mic, speaker) talking to the home server, tested on a LicheeRV Nano with a Bluetooth speaker |
 | **v0.5** | Realtime multimodal interaction: full-duplex audio with barge-in, echo handling, state machine with recovery, latency metrics, change-driven vision |
+| **v1.0** | First stable release: protocol 1.0, speech recognition on another host, several camera images per turn, measured end to end from an edge board through the server and agent and back |
+
+Possible directions after 1.0, not scheduled: several users per server, native mobile clients, a plugin interface for third-party devices and providers, and ready-made hardware.
 
 ## License
 
