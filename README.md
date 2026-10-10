@@ -154,6 +154,19 @@ stt:
 
 The `cuda` extra installs cuBLAS and cuDNN from PyPI, so no separate CUDA toolkit is needed. Voice activity detection uses Silero VAD (bundled with faster-whisper). An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence.
 
+To run speech recognition on another machine, point the companion at any server with the OpenAI `POST /v1/audio/transcriptions` API ([speaches](https://github.com/speaches-ai/speaches), the whisper.cpp server, OpenAI, Groq):
+
+```yaml
+stt:
+  provider: openai_compatible
+  base_url: http://gpu-box:8000/v1
+  model: Systran/faster-whisper-large-v3-turbo   # the server's model name
+  language: yue                                   # Cantonese
+  api_key_env: STT_API_KEY                        # optional
+```
+
+Voice activity detection still runs in the companion; only finished utterances are sent, as 16 kHz WAV.
+
 ### Text-to-speech
 
 Any server implementing OpenAI's `POST /v1/audio/speech` works. Each sentence is synthesized as it completes. Vendor-specific options go in `tts.extra_body` and are merged into every request.
@@ -228,7 +241,7 @@ Cameras send a frame every few seconds (configurable, or only on request). In ad
 
 ### Agent mode (default)
 
-`vision.mode: agent` hands the image straight to the agent: your next message is sent as text plus the newest frame (an OpenAI `image_url` part). The agent's own model does the seeing, and its memory records what it saw. Each frame is sent at most once and only if it is younger than `vision.observation_max_age_s`; the companion keeps no image after the turn.
+`vision.mode: agent` hands the image straight to the agent: your next message is sent as text plus the newest frame (an OpenAI `image_url` part). The agent's own model does the seeing, and its memory records what it saw. With `vision.max_turn_images: N` (default 1) the message carries up to N frames that arrived since the last turn, oldest first; when more arrive, routine frames are dropped before ones a detector or the user asked for. Each frame is sent at most once and only if it is younger than `vision.observation_max_age_s`; the companion keeps no image after the turn.
 
 This needs an agent backend and model that accept images:
 
