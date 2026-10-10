@@ -1,4 +1,4 @@
-"""Event type names of the realtime protocol (v0.5).
+"""Event type names of the realtime protocol (1.0).
 
 Client -> server
     session.start            payload: {session_id?, join?, roles?}
@@ -78,7 +78,7 @@ Server -> client
                              metrics.emit_turn)
 """
 
-PROTOCOL_VERSION = "0.5"
+PROTOCOL_VERSION = "1.0"
 
 # client -> server
 SESSION_START = "session.start"
