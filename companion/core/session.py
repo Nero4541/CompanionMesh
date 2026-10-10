@@ -47,7 +47,7 @@ from companion.core.text import SentenceSplitter
 from companion.protocol import Envelope, make_event
 from companion.protocol import events as ev
 from companion.providers.llm.base import ChatMessage
-from companion.vision.pipeline import VisionChannel
+from companion.vision.pipeline import TurnImage, VisionChannel
 
 if TYPE_CHECKING:
     from companion.core.runtime import CompanionRuntime
@@ -82,6 +82,27 @@ class Outbox(Protocol):
     async def send_binary(self, event: Envelope, data: bytes) -> None: ...
 
     async def close(self) -> None: ...
+
+
+def image_parts(images: list[TurnImage]) -> list[dict[str, Any]]:
+    """Chat-completions content parts for the camera images of one turn."""
+    return [
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(i.jpeg).decode()},
+        }
+        for i in images
+    ]
+
+
+def image_note(images: list[TurnImage]) -> str:
+    first = images[0]
+    if len(images) == 1:
+        return f"(Camera image from {first.device_id}, {round(first.age_s)} s ago)"
+    return (
+        f"({len(images)} camera images from {first.device_id}, oldest first; "
+        f"{round(first.age_s)} s to {round(images[-1].age_s)} s ago)"
+    )
 
 
 def parse_roles(value: object) -> frozenset[str]:
@@ -707,19 +728,18 @@ class Session:
         prefix = "\n\n".join(p for p in (self._take_context_notes(), seen.user_prefix) if p)
         seen.user_prefix = prefix or None
         text = f"{prefix}\n\nUser: {user_text}" if prefix else user_text
-        if seen.image is not None:
-            image_url = "data:image/jpeg;base64," + base64.b64encode(seen.image.jpeg).decode()
-            note = f"(Camera image from {seen.image.device_id}, {round(seen.image.age_s)} s ago)"
+        if seen.images:
             messages[-1] = {
                 "role": "user",
                 "content": [
-                    {"type": "text", "text": f"{note}\n{text}"},
-                    {"type": "image_url", "image_url": {"url": image_url}},
+                    {"type": "text", "text": f"{image_note(seen.images)}\n{text}"},
+                    *image_parts(seen.images),
                 ],
             }
-            await self.emit(
-                ev.VISION_FRAME_USED, {"frame_id": seen.image.frame_id, "turn_id": turn_id}
-            )
+            for image in seen.images:
+                await self.emit(
+                    ev.VISION_FRAME_USED, {"frame_id": image.frame_id, "turn_id": turn_id}
+                )
         elif seen.user_prefix:
             messages[-1] = {"role": "user", "content": text}
 
@@ -965,12 +985,8 @@ class Session:
             prompt = PROACTIVE_PROMPT.format(description=event.description)
             seen = self.vision.context_for_turn()
             content: Any = prompt
-            if seen.image is not None:
-                image_url = "data:image/jpeg;base64," + base64.b64encode(seen.image.jpeg).decode()
-                content = [
-                    {"type": "text", "text": prompt},
-                    {"type": "image_url", "image_url": {"url": image_url}},
-                ]
+            if seen.images:
+                content = [{"type": "text", "text": prompt}, *image_parts(seen.images)]
             messages: list[ChatMessage] = [
                 *({"role": m.role, "content": m.content} for m in history),
                 {"role": "user", "content": content},
