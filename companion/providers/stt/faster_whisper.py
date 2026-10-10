@@ -23,9 +23,14 @@ _dll_dirs_registered = False
 
 
 def register_nvidia_dll_dirs() -> list[Path]:
-    """Expose pip-installed cuBLAS/cuDNN (``cuda`` extra) to CTranslate2 on Windows."""
+    """Expose pip-installed cuBLAS/cuDNN (``cuda`` extra) to CTranslate2.
+
+    Windows: add the DLL directories. Linux: the loader path is fixed at
+    process start, so preload the libraries; CTranslate2's later dlopen by
+    soname then finds them already loaded.
+    """
     global _dll_dirs_registered
-    if _dll_dirs_registered or sys.platform != "win32":
+    if _dll_dirs_registered or sys.platform not in ("win32", "linux"):
         return []
     _dll_dirs_registered = True
     try:
@@ -34,11 +39,34 @@ def register_nvidia_dll_dirs() -> list[Path]:
         return []
     added: list[Path] = []
     for root in map(Path, nvidia.__path__):
-        for bin_dir in root.glob("*/bin"):
-            os.add_dll_directory(str(bin_dir))
-            os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-            added.append(bin_dir)
+        if sys.platform == "win32":
+            for bin_dir in root.glob("*/bin"):
+                os.add_dll_directory(str(bin_dir))
+                os.environ["PATH"] = f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}"
+                added.append(bin_dir)
+        else:
+            added += _preload_linux(root)
     return added
+
+
+def _preload_linux(root: Path) -> list[Path]:
+    import ctypes
+
+    pending = sorted({*root.glob("cublas/lib/libcublas*.so.*"), *root.glob("cudnn/lib/*.so.*")})
+    loaded: list[Path] = []
+    # Load in passes: a library fails until the ones it links against are loaded.
+    while pending:
+        failed = []
+        for lib in pending:
+            try:
+                ctypes.CDLL(str(lib), mode=ctypes.RTLD_GLOBAL)
+                loaded.append(lib)
+            except OSError:
+                failed.append(lib)
+        if len(failed) == len(pending):
+            break
+        pending = failed
+    return loaded
 
 
 class FasterWhisperSTT:
