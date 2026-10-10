@@ -4,8 +4,9 @@ Flow for a frame::
 
     vision.frame -> enabled? -> rate limit -> decode/validate -> dedup -> ...
 
-    mode "agent": keep the newest frame; attach it as an image to the user's
-                  next message (once), so a multimodal agent sees it directly.
+    mode "agent": hold the newest frames (vision.max_turn_images); attach them as
+                  images to the user's next message (once), so a multimodal
+                  agent sees them directly.
     mode "vlm":   priority queue -> VLM -> VisualObservation
                   -> vision.observation event, episodic store, turn context
                   -> attention engine (for frames sent because something changed)
@@ -26,7 +27,7 @@ import contextlib
 import logging
 import time
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
@@ -83,7 +84,7 @@ class TurnVision:
 
     user_prefix: str | None = None
     system_block: str | None = None
-    image: TurnImage | None = None
+    images: list[TurnImage] = field(default_factory=list)
 
 
 class VisionChannel:
@@ -93,7 +94,7 @@ class VisionChannel:
         self.config = session.runtime.config.vision
         self.mode = self.config.mode
         self.enabled = False
-        self._latest: _Pending | None = None  # agent mode: newest unseen frame
+        self._held: list[_Pending] = []  # agent mode: unseen frames, oldest first
         self._last_accept = 0.0
         self._last_hash: int | None = None
         self._queue: list[_Pending] = []
@@ -138,7 +139,7 @@ class VisionChannel:
         """Stop all visual processing immediately."""
         was_enabled, self.enabled = self.enabled, False
         self._queue = []
-        self._latest = None
+        self._held = []
         self._capture_requested_at = None
         await self._stop_worker()
         self._last_hash = None
@@ -225,10 +226,7 @@ class VisionChannel:
         self._capture_requested_at = None
         self._frame_arrived.set()
         if self.mode == "agent":
-            held = self._latest
-            # Do not let a routine frame displace a more important one still unseen.
-            if held is None or priority >= held.priority or held.age_s() > STALE_S:
-                self._latest = frame
+            self._hold(frame)
         else:
             self._enqueue(frame)
             self._idle.clear()
@@ -258,6 +256,15 @@ class VisionChannel:
             # (In vlm mode the observation of this frame becomes the event.)
             await self.session.on_attention_event(self._change_event(frame, None))
         return status
+
+    def _hold(self, frame: _Pending) -> None:
+        """Agent mode: keep the frames for the next turn within max_turn_images."""
+        held = [*self._held, frame]
+        while len(held) > self.config.max_turn_images:
+            # Stale frames go first; a routine frame never displaces a more
+            # important one still unseen.
+            held.remove(min(held, key=lambda f: (f.age_s() <= STALE_S, f.priority, f.received_at)))
+        self._held = held
 
     def _enqueue(self, frame: _Pending) -> None:
         """Priority queue for the VLM: keep the most important fresh frames."""
@@ -425,15 +432,16 @@ class VisionChannel:
             await asyncio.wait_for(self._idle.wait(), timeout=self.config.wait_for_pending_s)
 
     def context_for_turn(self) -> TurnVision:
-        """Observations and/or the newest frame to give the agent on this turn."""
+        """Observations and/or the held frames to give the agent on this turn."""
         cfg = self.config
         now = datetime.now(UTC)
         turn = TurnVision()
-        frame, self._latest = self._latest, None  # each frame is shown once
-        if frame is not None and self.enabled:
-            age = (now - frame.received_at).total_seconds()
-            if age <= cfg.observation_max_age_s:
-                turn.image = TurnImage(frame.jpeg, frame.frame_id, frame.device_id, age)
+        frames, self._held = self._held, []  # each frame is shown once
+        if self.enabled:
+            for frame in frames:
+                age = (now - frame.received_at).total_seconds()
+                if age <= cfg.observation_max_age_s:
+                    turn.images.append(TurnImage(frame.jpeg, frame.frame_id, frame.device_id, age))
         if cfg.max_context_observations == 0:
             return turn
         fresh = [o for o in self._recent if o.age_s(now) <= cfg.observation_max_age_s]
@@ -460,5 +468,5 @@ class VisionChannel:
     async def close(self) -> None:
         self.enabled = False
         self._queue = []
-        self._latest = None
+        self._held = []
         await self._stop_worker()
