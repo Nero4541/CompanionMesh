@@ -51,13 +51,17 @@ llm:
   extra_body: {}            # e.g. {chat_template_kwargs: {enable_thinking: false}}
 
 stt:
-  provider: faster_whisper  # faster_whisper | none
-  model: large-v3-turbo
-  language: ja              # null = auto-detect
+  provider: faster_whisper  # faster_whisper | openai_compatible | none
+  model: large-v3-turbo     # openai_compatible: the server's model name
+  language: ja              # null = auto-detect; yue = Cantonese
   device: auto              # auto | cuda | cpu
   compute_type: auto
   beam_size: 1
   preload: true
+  # openai_compatible: POST {base_url}/audio/transcriptions (speaches,
+  # whisper.cpp server, OpenAI, Groq) instead of a local model.
+  base_url: http://127.0.0.1:8000/v1
+  api_key_env: STT_API_KEY
 
 vad:
   provider: silero          # silero | energy
@@ -96,9 +100,10 @@ vlm:
 # Camera frames from clients. Each session must opt in (vision.enable).
 vision:
   enabled: true             # server-wide switch
-  mode: agent               # agent: attach the newest frame as an image to your next
+  mode: agent               # agent: attach the newest frames as images to your next
                             # message (the agent's model must accept images)
                             # vlm: describe frames with the vlm provider above
+  max_turn_images: 1        # agent mode: frames attached to one turn, oldest first
   max_frame_bytes: 4194304
   min_interval_s: 2.0       # rate limit per session (manual frames excepted)
   dedup: true               # skip frames that look like the last analyzed one
