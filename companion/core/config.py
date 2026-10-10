@@ -116,13 +116,23 @@ class LLMConfig(HttpProviderConfig):
 
 
 class STTConfig(_Section):
-    provider: Literal["faster_whisper", "none"] = "faster_whisper"
+    provider: Literal["faster_whisper", "openai_compatible", "none"] = "faster_whisper"
     model: str = "large-v3-turbo"
     language: str | None = "ja"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     compute_type: str = "auto"
     beam_size: int = Field(default=1, ge=1)
     preload: bool = True
+    # openai_compatible only: POST {base_url}/audio/transcriptions on another host.
+    base_url: str = "http://127.0.0.1:8000/v1"
+    api_key_env: str | None = "STT_API_KEY"
+    connect_timeout: float = Field(default=5.0, gt=0)
+    timeout: float = Field(default=60.0, gt=0)
+
+    def api_key(self) -> str | None:
+        if not self.api_key_env:
+            return None
+        return os.environ.get(self.api_key_env) or None
 
 
 class VADConfig(_Section):
@@ -189,6 +199,9 @@ class VisionConfig(_Section):
     # agents whose model can see. "vlm": describe frames with the vlm provider and
     # pass the descriptions as text.
     mode: Literal["agent", "vlm"] = "agent"
+    # Agent mode: unseen frames attached to one turn, oldest first. When more
+    # arrive, the least important (then oldest) ones are dropped.
+    max_turn_images: int = Field(default=1, ge=1, le=16)
     # "user": prepend new observations to the user's message (keeps the agent's
     # prompt cache intact); "system": add recent ones to the system prompt.
     inject: Literal["user", "system"] = "user"
