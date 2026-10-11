@@ -33,3 +33,29 @@ jobs:
 
       - name: Import check
         run: uv run python -m companion --version
+
+  dashboard:
+    name: dashboard build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client/dashboard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: client/dashboard/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build
+        run: npm run build
+
+      - name: Committed build matches the source
+        run: |
+          git add --intent-to-add --all dist
+          git diff --exit-code --stat -- dist
