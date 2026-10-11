@@ -166,3 +166,12 @@ metrics:
   enabled: true
   window: 200                   # samples kept per stage for percentiles
   emit_turn: false              # also send per-turn timings to clients (metrics.turn)
+
+# IP cameras and phones the server watches itself (or use the dashboard's
+# Cameras page). Logins come from .env, never from the URL.
+cameras: []
+#  - id: livingroom
+#    url: http://192.168.1.20:8080/shot.jpg   # snapshot, MJPEG (/video) or rtsp://
+#    username_env: CAMERA_USERNAME
+#    password_env: CAMERA_PASSWORD
+#    mode: change                             # change | periodic (with interval_s)
