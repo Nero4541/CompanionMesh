@@ -45,7 +45,7 @@ export class ApiError extends Error {
   }
 }
 
-export async function api(path, options = {}) {
+async function request(path, options) {
   const headers = { ...(options.headers || {}) };
   const token = getToken();
   if (token) headers.Authorization = `Bearer ${token}`;
@@ -64,5 +64,15 @@ export async function api(path, options = {}) {
     }
     throw new ApiError(res.status, detail);
   }
-  return res.json();
+  return res;
+}
+
+export async function api(path, options = {}) {
+  return (await request(path, options)).json();
+}
+
+// For images (camera frames): an object URL the caller revokes when done.
+export async function apiImage(path, options = {}) {
+  const blob = await (await request(path, options)).blob();
+  return URL.createObjectURL(blob);
 }
