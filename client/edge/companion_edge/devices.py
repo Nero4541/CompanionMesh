@@ -124,8 +124,9 @@ class AlsaSpeaker:
     each stream so the speaker is running before the first word.
     """
 
-    def __init__(self, device: str = "default", *, lead_in_ms: int = 0,
-                 hold_s: float = 2.0) -> None:
+    def __init__(
+        self, device: str = "default", *, lead_in_ms: int = 0, hold_s: float = 2.0
+    ) -> None:
         self.device = device
         self.lead_in_s = lead_in_ms / 1000
         self.hold_s = hold_s
@@ -137,8 +138,21 @@ class AlsaSpeaker:
         self._closing = False  # the keeper is draining and closing the stream
 
     def _argv(self, rate: int, channels: int, width: int) -> list[str]:
-        return [require("aplay", "alsa-utils"), "-q", "-D", self.device, "-t", "raw",
-                "-f", _ALSA_FORMATS[width], "-r", str(rate), "-c", str(channels), "-"]
+        return [
+            require("aplay", "alsa-utils"),
+            "-q",
+            "-D",
+            self.device,
+            "-t",
+            "raw",
+            "-f",
+            _ALSA_FORMATS[width],
+            "-r",
+            str(rate),
+            "-c",
+            str(channels),
+            "-",
+        ]
 
     # play() calls on_start with the loop time the clip begins to sound.
     reports_start = True
@@ -236,7 +250,11 @@ class AlsaSpeaker:
     async def _play_whole(self, audio: bytes) -> None:
         aplay = require("aplay", "alsa-utils")
         self._proc = await asyncio.create_subprocess_exec(
-            aplay, "-q", "-D", self.device, "-",
+            aplay,
+            "-q",
+            "-D",
+            self.device,
+            "-",
             stdin=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.DEVNULL,
         )
