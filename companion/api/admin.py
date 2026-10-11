@@ -26,6 +26,16 @@ from companion.core.config import (
 )
 from companion.core.config_edit import ConfigEditError, save_settings
 from companion.core.logging import kv
+from companion.core.persona import (
+    Persona,
+    delete_persona,
+    is_builtin,
+    list_personas,
+    load_persona,
+    persona_path,
+    save_persona,
+    valid_name,
+)
 from companion.core.runtime import CompanionRuntime
 
 log = logging.getLogger(__name__)
@@ -115,29 +125,165 @@ class SaveRequest(BaseModel):
     config: dict[str, Any]
 
 
-@router.put("/config")
-async def save_config(request: Request, body: SaveRequest) -> dict[str, Any]:
-    runtime = _runtime(request)
+def _require_source(request: Request) -> ConfigSource:
     source = _source(request)
     if source is None:
         raise HTTPException(
             status_code=501, detail="this server was not started from a config file"
         )
+    return source
+
+
+def _unprocessable(message: str, path: str = "") -> HTTPException:
+    return HTTPException(status_code=422, detail={"errors": [{"path": path, "message": message}]})
+
+
+def _save(
+    runtime: CompanionRuntime, source: ConfigSource, desired: dict[str, Any]
+) -> dict[str, Any]:
+    """Save settings, apply the live ones, report what waits for a restart."""
     try:
-        written = save_settings(source, body.config)
+        written = save_settings(source, desired)
         next_config = source.load()
     except ConfigEditError as exc:
         raise HTTPException(status_code=422, detail={"errors": exc.errors}) from exc
     except ConfigError as exc:
-        raise HTTPException(
-            status_code=422, detail={"errors": [{"path": "", "message": str(exc)}]}
-        ) from exc
+        raise _unprocessable(str(exc)) from exc
     applied, _ = runtime.reconfigure(next_config)
     pending = [p for p in _pending(runtime, source) if needs_restart(p)]
     log.info(
         "settings saved", extra=kv(file=str(written), applied=len(applied), pending=len(pending))
     )
     return {"file": str(written), "applied": applied, "pending_restart": pending}
+
+
+@router.put("/config")
+async def save_config(request: Request, body: SaveRequest) -> dict[str, Any]:
+    return _save(_runtime(request), _require_source(request), body.config)
+
+
+# --- personas ---------------------------------------------------------------
+
+
+def _persona_summary(runtime: CompanionRuntime, name: str) -> dict[str, Any]:
+    out: dict[str, Any] = {
+        "name": name,
+        "builtin": is_builtin(name),
+        "active": name == runtime.config.agent.persona,
+        "display_name": None,
+        "language": None,
+        "error": None,
+    }
+    try:
+        persona = load_persona(runtime.config.personas_dir, name)
+        out["display_name"] = persona.display_name
+        out["language"] = persona.language
+    except ConfigError as exc:
+        out["error"] = str(exc)
+    return out
+
+
+@router.get("/personas")
+async def personas(request: Request) -> dict[str, Any]:
+    runtime = _runtime(request)
+    names = list_personas(runtime.config.personas_dir)
+    return {
+        "directory": str(runtime.config.personas_dir),
+        "active": runtime.config.agent.persona,
+        "can_activate": _source(request) is not None,
+        "personas": [_persona_summary(runtime, n) for n in names],
+    }
+
+
+@router.get("/personas/{name}")
+async def persona(request: Request, name: str) -> dict[str, Any]:
+    runtime = _runtime(request)
+    try:
+        loaded = load_persona(runtime.config.personas_dir, name)
+    except ConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return {
+        **_persona_summary(runtime, name),
+        "persona": loaded.model_dump(exclude={"name"}),
+    }
+
+
+class PersonaBody(BaseModel):
+    display_name: str | None = None
+    language: str | None = None
+    voice: str | None = None
+    system_prompt: str
+
+
+@router.put("/personas/{name}")
+async def save_persona_route(
+    request: Request, name: str, body: PersonaBody, create: bool = False
+) -> dict[str, Any]:
+    """Create (``?create=true``, refused if it exists) or replace a persona."""
+    runtime = _runtime(request)
+    directory = runtime.config.personas_dir
+    if not valid_name(name):
+        raise _unprocessable("use letters, digits, - and _ (up to 64)", "name")
+    if is_builtin(name):
+        raise HTTPException(
+            status_code=409, detail=f"{name!r} ships with the project; save a copy instead"
+        )
+    exists = persona_path(directory, name).is_file()
+    if create and (exists or name in list_personas(directory)):
+        raise HTTPException(status_code=409, detail=f"a persona named {name!r} already exists")
+    if not create and not exists:
+        raise HTTPException(status_code=404, detail=f"persona not found: {name}")
+    if not body.system_prompt.strip():
+        raise _unprocessable("must not be empty", "system_prompt")
+    saved = Persona(name=name, **body.model_dump())
+    try:
+        path = save_persona(directory, saved)
+    except ConfigError as exc:
+        raise _unprocessable(str(exc)) from exc
+    applied = name == runtime.config.agent.persona
+    if applied:
+        runtime.persona = saved
+    log.info("persona saved", extra=kv(persona=name, active=applied))
+    return {"file": str(path), "applied": applied}
+
+
+@router.delete("/personas/{name}")
+async def delete_persona_route(request: Request, name: str) -> dict[str, Any]:
+    runtime = _runtime(request)
+    if name == runtime.config.agent.persona:
+        raise HTTPException(
+            status_code=409, detail="this persona is in use; switch to another first"
+        )
+    if is_builtin(name):
+        raise HTTPException(status_code=409, detail=f"{name!r} ships with the project")
+    source = _source(request)
+    if source is not None:
+        try:
+            if source.saved().agent.persona == name:
+                raise HTTPException(
+                    status_code=409, detail="the saved settings use this persona after a restart"
+                )
+        except ConfigError:
+            pass
+    try:
+        delete_persona(runtime.config.personas_dir, name)
+    except ConfigError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    log.info("persona deleted", extra=kv(persona=name))
+    return {"deleted": name}
+
+
+@router.post("/personas/{name}/activate")
+async def activate_persona(request: Request, name: str) -> dict[str, Any]:
+    """Make ``name`` the persona in use: saved as agent.persona, applied at once."""
+    runtime = _runtime(request)
+    source = _require_source(request)
+    try:
+        desired = source.saved().model_dump(mode="json")
+    except ConfigError as exc:
+        raise _unprocessable(str(exc)) from exc
+    desired["agent"]["persona"] = name
+    return _save(runtime, source, desired)
 
 
 @router.post("/restart", status_code=202)
