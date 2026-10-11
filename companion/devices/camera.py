@@ -71,6 +71,12 @@ class CameraDevice:
         self.frames_analyzed = 0
         self.detector = MotionDetector()
         self._last_sent = 0.0
+        # What it is doing, for status pages: opening, unavailable, connecting,
+        # waiting (no conversation), joined, disconnected.
+        self.state = "opening"
+        self.error: str | None = None
+        self.session_id: str | None = None
+        self.last_frame_at: float | None = None  # wall clock, ms
 
     async def _grab(self) -> tuple[bytes, float] | None:
         assert self.source is not None
@@ -105,6 +111,7 @@ class CameraDevice:
         header = make_event(ev.VISION_FRAME, payload, device_id=self.options.device_id)
         await ws.send(encode_binary_frame(header, jpeg))
         self.frames_sent += 1
+        self.last_frame_at = captured_at
         self._last_sent = asyncio.get_running_loop().time()
 
     async def _periodic(self, ws: ClientConnection) -> None:
@@ -162,6 +169,8 @@ class CameraDevice:
                 payload = event.payload
                 if event.type == ev.SESSION_STARTED:
                     self.vision_enabled = bool(payload.get("vision_enabled"))
+                    self.state = "joined"
+                    self.session_id = str(payload.get("session_id") or "") or None
                     log.info(
                         "camera joined session",
                         extra=kv(
@@ -214,16 +223,19 @@ class CameraDevice:
                 self.source = await open_source(self.options.source_url)
             except CompanionError as exc:
                 # A phone app may simply not be running yet; keep trying.
+                self.state, self.error = "unavailable", str(exc)
                 if not warned:
                     log.warning("camera unavailable; retrying every 5 s", extra=kv(error=str(exc)))
                     warned = True
                 await asyncio.sleep(5.0)
         log.info("camera source ready", extra=kv(source=self.source.description))
+        self.error = None
         backoff = 1.0
         waiting_logged = False
         try:
             while True:
                 outcome = "error"
+                self.state = "connecting"
                 try:
                     headers = (
                         {"Authorization": f"Bearer {self.options.token}"}
@@ -237,14 +249,19 @@ class CameraDevice:
                         outcome = await self._session(ws)
                 except (OSError, websockets.WebSocketException) as exc:
                     log.warning("server connection lost", extra=kv(error=str(exc)))
+                    self.error = str(exc)
+                self.session_id = None
+                self.vision_enabled = False
                 if outcome in ("no_session", "ended"):
                     # Server is fine; wait for someone to start a conversation.
+                    self.state, self.error = "waiting", None
                     if not waiting_logged:
                         log.info("no active session yet; retrying every 2 s")
                         waiting_logged = True
                     await asyncio.sleep(2.0)
                     continue
                 waiting_logged = False
+                self.state = "disconnected"
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
         finally:
