@@ -9,11 +9,14 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from companion import __version__
-from companion.api import http, realtime
+from companion.api import admin, http, realtime
 from companion.core.config import CompanionConfig
 from companion.core.runtime import CompanionRuntime, Providers
 
-WEB_CLIENT_DIR = Path(__file__).resolve().parents[2] / "client" / "web"
+CLIENT_DIR = Path(__file__).resolve().parents[2] / "client"
+WEB_CLIENT_DIR = CLIENT_DIR / "web"
+# Built by `npm run build` in client/dashboard; committed, so no Node is needed.
+DASHBOARD_DIR = CLIENT_DIR / "dashboard" / "dist"
 
 
 def create_app(config: CompanionConfig, providers: Providers | None = None) -> FastAPI:
@@ -32,6 +35,10 @@ def create_app(config: CompanionConfig, providers: Providers | None = None) -> F
     app.include_router(http.router)
     app.include_router(http.protected)
     app.include_router(realtime.router)
+    app.include_router(admin.router)
+
+    if config.server.dashboard and DASHBOARD_DIR.is_dir():
+        app.mount("/admin", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
 
     if config.server.dev_client and WEB_CLIENT_DIR.is_dir():
         app.mount("/dev", StaticFiles(directory=WEB_CLIENT_DIR, html=True), name="dev-client")
