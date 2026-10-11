@@ -3,11 +3,13 @@
   import Config from "./pages/Config.svelte";
   import Metrics from "./pages/Metrics.svelte";
   import Overview from "./pages/Overview.svelte";
+  import Personas from "./pages/Personas.svelte";
 
   const PAGES = [
     { id: "overview", label: "Overview", component: Overview },
     { id: "metrics", label: "Latency", component: Metrics },
     { id: "config", label: "Configuration", component: Config },
+    { id: "personas", label: "Personas", component: Personas },
   ];
 
   function current() {
