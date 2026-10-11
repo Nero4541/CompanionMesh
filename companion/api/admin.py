@@ -7,24 +7,30 @@ token. Secrets are reported only as set/unset, by environment-variable name.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
+import os
+import re
 from collections.abc import Callable
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from pydantic import BaseModel, ValidationError
 
 from companion import __version__
 from companion.api.auth import require_admin
 from companion.core.config import (
+    CameraConfig,
     CompanionConfig,
     ConfigError,
     ConfigSource,
     changed_settings,
     needs_restart,
     secret_status,
+    validation_errors,
 )
 from companion.core.config_edit import ConfigEditError, save_settings
+from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.persona import (
     Persona,
@@ -37,6 +43,7 @@ from companion.core.persona import (
     valid_name,
 )
 from companion.core.runtime import CompanionRuntime
+from companion.devices.manager import probe as probe_camera
 
 log = logging.getLogger(__name__)
 
@@ -284,6 +291,80 @@ async def activate_persona(request: Request, name: str) -> dict[str, Any]:
         raise _unprocessable(str(exc)) from exc
     desired["agent"]["persona"] = name
     return _save(runtime, source, desired)
+
+
+# --- cameras ----------------------------------------------------------------
+
+
+_ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]{0,127}$")
+
+
+@router.get("/cameras")
+async def cameras(
+    request: Request, env: Annotated[list[str] | None, Query()] = None
+) -> dict[str, Any]:
+    """``?env=NAME`` (repeatable) also reports whether those variables are set,
+    for names typed into a camera form before saving."""
+    runtime = _runtime(request)
+    source = _source(request)
+    configured = [c.model_dump(mode="json") for c in runtime.config.cameras]
+    editable = False
+    if source is not None:
+        with contextlib.suppress(ConfigError):
+            configured = [c.model_dump(mode="json") for c in source.saved().cameras]
+            editable = source.path.is_file()
+    return {
+        "cameras": configured,
+        "status": runtime.cameras.status(),
+        "editable": editable,
+        "secrets": {
+            **secret_status({"cameras": configured}),
+            **{n: bool(os.environ.get(n)) for n in (env or [])[:8] if _ENV_NAME.match(n)},
+        },
+    }
+
+
+class CamerasBody(BaseModel):
+    cameras: list[dict[str, Any]]
+
+
+@router.put("/cameras")
+async def save_cameras(request: Request, body: CamerasBody) -> dict[str, Any]:
+    """Replace the camera list; cameras start, stop or restart at once."""
+    source = _require_source(request)
+    try:
+        desired = source.saved().model_dump(mode="json")
+    except ConfigError as exc:
+        raise _unprocessable(str(exc)) from exc
+    desired["cameras"] = body.cameras
+    return _save(_runtime(request), source, desired)
+
+
+def _jpeg(data: bytes) -> Response:
+    return Response(content=data, media_type="image/jpeg", headers={"Cache-Control": "no-store"})
+
+
+@router.post("/cameras/test")
+async def test_camera(body: dict[str, Any]) -> Response:
+    """Grab one frame with these camera settings (saved or not)."""
+    try:
+        camera = CameraConfig.model_validate({"id": "test", **body, "enabled": True})
+    except ValidationError as exc:
+        raise HTTPException(status_code=422, detail={"errors": validation_errors(exc)}) from exc
+    try:
+        return _jpeg(await probe_camera(camera))
+    except CompanionError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@router.get("/cameras/{camera_id}/snapshot")
+async def camera_snapshot(request: Request, camera_id: str) -> Response:
+    try:
+        return _jpeg(await _runtime(request).cameras.snapshot(camera_id))
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="the camera sent no frame in time") from exc
+    except CompanionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 
 @router.post("/restart", status_code=202)
