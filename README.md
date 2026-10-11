@@ -474,7 +474,8 @@ The companion server itself needs a GPU only for STT. STT can stay on the machin
 | `configs/companion.yaml` | Defaults (non-secret) | yes |
 | `configs/companion.local.yaml` | Your overrides, deep-merged over the defaults | no (git-ignored) |
 | `.env` | Secrets: API keys and tokens | no (git-ignored) |
-| `personas/<name>.yaml` | System prompt, language, voice (`agent.persona`) | yes |
+| `personas/default.yaml` | The bundled persona: system prompt, language, voice | yes |
+| `personas/<name>.yaml` | Your own personas (`agent.persona`) | no (git-ignored) |
 
 The config refers to secrets by environment-variable *name* (`api_key_env`), never by value. `extra_body` on `agent.hermes`, `agent.openclaw`, `llm` and `tts` adds backend-specific fields to every request; core fields such as `model`, `messages` and `stream` cannot be overridden on the agent backends. Example `configs/companion.local.yaml`:
 
@@ -500,6 +501,8 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 - An override can add or change keys of a mapping such as `extra_body` but cannot remove one that `companion.yaml` sets; the page says so, and that change has to be made in `companion.yaml`.
 - Secrets never appear: settings that name an environment variable show only "set in .env" or "not set". Edit `.env` itself to change them.
 
+The **Personas** page lists the personas in `personas_dir` and edits their display name, language, TTS voice and system prompt. **Use this persona** switches at once (from the next reply) and saves `agent.persona`; editing the persona in use also applies from the next reply. The bundled `default` persona is not edited in place, so updates to the project cannot conflict with your changes: **Save a copy** makes your own, which git ignores. A persona in use, now or after a restart, cannot be deleted.
+
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
 - With `COMPANION_ADMIN_TOKEN` unset, they answer only this machine (open `http://127.0.0.1:8765/admin/` on the server itself).
@@ -522,6 +525,10 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `GET /v1/admin/config` | Running and saved settings, their JSON schema, which need a restart or wait for one, which secrets are set (admin token) |
 | `PUT /v1/admin/config` | Save every setting (`{"config": {...}}`, as `saved` above); applies the live ones, returns `applied` and `pending_restart` (admin token) |
 | `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
+| `GET /v1/admin/personas`, `GET /v1/admin/personas/{name}` | List personas; read one (admin token) |
+| `PUT /v1/admin/personas/{name}` | Replace a persona, or create it with `?create=true` (admin token) |
+| `DELETE /v1/admin/personas/{name}` | Delete a persona not in use (admin token) |
+| `POST /v1/admin/personas/{name}/activate` | Use this persona now and after restarts (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
 ### Realtime protocol (1.0)
