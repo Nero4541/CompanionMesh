@@ -42,6 +42,7 @@ from companion.vision.motion import frame_priority
 from companion.vision.observation import VisualObservation, format_for_context
 
 if TYPE_CHECKING:
+    from companion.core.config import CompanionConfig
     from companion.core.session import Session
 
 log = logging.getLogger(__name__)
@@ -122,6 +123,11 @@ class VisionChannel:
         await self.session.emit(
             ev.VISION_STATE, {"enabled": self.enabled, "available": self.available}
         )
+
+    def reconfigure(self, config: CompanionConfig) -> None:
+        """Follow live setting changes; the mode stays until a restart."""
+        self.config = config.vision
+        self.scene.config = config.attention
 
     async def enable(self) -> None:
         if not self.config.enabled:
