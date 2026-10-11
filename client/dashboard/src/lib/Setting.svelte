@@ -34,7 +34,7 @@
   function undo() {
     text = format(desc, saved);
     ctx.setError(path, null);
-    ctx.set(path, structuredClone(saved));
+    ctx.set(path, $state.snapshot(saved));
   }
 </script>
 
