@@ -10,6 +10,10 @@ server:
   # when host is not loopback, e.g. 0.0.0.0 or a Tailscale address for edge devices.
   auth_token_env: COMPANION_TOKEN
   session_linger_s: 60      # keep a session this long so a dropped device can resume
+  dashboard: true           # serve the admin dashboard at /admin/
+  # Admin token (from .env) for the dashboard and /v1/admin/*. While it is unset,
+  # they only answer this machine; the device token above never grants access.
+  admin_token_env: COMPANION_ADMIN_TOKEN
 
 logging:
   level: INFO               # DEBUG | INFO | WARNING | ERROR
