@@ -117,6 +117,10 @@ button.small {
   color: var(--muted);
   font-size: 13px;
 }
+.head .muted {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
 .error {
   color: var(--err);
   border: 1px solid var(--err);
