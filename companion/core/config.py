@@ -371,6 +371,7 @@ class CompanionConfig(_Section):
 # section covers everything inside it and the longest matching path wins.
 _LIVE_SETTINGS = {
     "vad": True,
+    "agent.persona": True,  # read on every turn
     "vision": True,
     "vision.mode": False,  # the VLM and frames held for the agent are set up per mode
     "vision.max_frame_bytes": False,  # sizes the WebSocket limit at startup
