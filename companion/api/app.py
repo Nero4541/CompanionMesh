@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from companion import __version__
 from companion.api import admin, http, realtime
-from companion.core.config import CompanionConfig
+from companion.core.config import CompanionConfig, ConfigSource
 from companion.core.runtime import CompanionRuntime, Providers
 
 CLIENT_DIR = Path(__file__).resolve().parents[2] / "client"
@@ -19,7 +19,15 @@ WEB_CLIENT_DIR = CLIENT_DIR / "web"
 DASHBOARD_DIR = CLIENT_DIR / "dashboard" / "dist"
 
 
-def create_app(config: CompanionConfig, providers: Providers | None = None) -> FastAPI:
+def create_app(
+    config: CompanionConfig,
+    providers: Providers | None = None,
+    *,
+    source: ConfigSource | None = None,
+    restart: Callable[[], None] | None = None,
+) -> FastAPI:
+    """``source`` lets the dashboard edit the config files; ``restart`` lets it
+    restart the server (both optional: without them those features are off)."""
     runtime = CompanionRuntime(config, providers)
 
     @asynccontextmanager
@@ -32,6 +40,8 @@ def create_app(config: CompanionConfig, providers: Providers | None = None) -> F
 
     app = FastAPI(title="Companion Server", version=__version__, lifespan=lifespan)
     app.state.runtime = runtime
+    app.state.config_source = source
+    app.state.request_restart = restart
     app.include_router(http.router)
     app.include_router(http.protected)
     app.include_router(realtime.router)
