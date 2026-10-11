@@ -267,7 +267,10 @@ class CompanionRuntime:
         if applied:
             for path in applied:
                 set_setting(running, path, get_setting(target, path))
-            self.config = CompanionConfig.model_validate(running)
+            config = CompanionConfig.model_validate(running)
+            if "agent.persona" in applied:
+                self.persona = load_persona(config.personas_dir, config.agent.persona)
+            self.config = config
             for session in self.sessions.values():
                 session.reconfigure(self.config)
             log.info("settings applied", extra=kv(settings=",".join(applied)))
