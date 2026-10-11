@@ -65,6 +65,8 @@ uv run companion
 
 Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see. This needs a multimodal LLM behind the agent, or `vision.mode: vlm` with a vision model configured (see [Vision](#vision)).
 
+**http://127.0.0.1:8765/admin/** is the admin dashboard: server status, connected devices, latency per pipeline stage and every setting (see [Admin dashboard](#admin-dashboard)).
+
 On Linux, use `cp .env.example .env` instead of `Copy-Item`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
 `uv run companion check` prints one line per component (config, persona, agent, STT, VAD, TTS) and exits non-zero if anything is unreachable. Run it first whenever something does not work.
@@ -487,6 +489,17 @@ stt:
 
 Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`, or the `COMPANION_CONFIG` environment variable.
 
+### Admin dashboard
+
+`/admin/` shows the server's status, connected devices with their round-trip time and last reported status, latency per pipeline stage, and every setting with its effective value. Each setting is marked **live** (vad, vision, attention, realtime: these are the ones the running server will take without a restart) or **restart**; secrets appear only by variable name with "set in .env" or "not set". The page is read-only for now.
+
+The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
+
+- With `COMPANION_ADMIN_TOKEN` unset, they answer only this machine (open `http://127.0.0.1:8765/admin/` on the server itself).
+- With `COMPANION_ADMIN_TOKEN=<a long random string>` in `.env`, any address works once you enter the token (or open the page once as `/admin/?token=…`).
+
+`server.dashboard: false` turns the page off. The built page is committed in `client/dashboard/dist/`, so running the server needs no Node; to change it, see [Development](#development).
+
 ## API
 
 | Endpoint | Description |
@@ -498,6 +511,9 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 | `POST /v1/chat` | One text turn: `{"text": "...", "session_id": "optional"}` → `{"session_id", "text"}` |
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
+| `GET /admin/` | Admin dashboard |
+| `GET /v1/admin/config` | Effective config, its JSON schema, which settings need a restart, which secrets are set (admin token) |
+| `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
 ### Realtime protocol (1.0)
 
@@ -562,6 +578,7 @@ A session can have several devices attached at once. Every device receives the c
 | `provider_auth` | The key in `.env` does not match the agent's `API_SERVER_KEY` or gateway token. |
 | `server.host is '0.0.0.0' but no token is set` | Set `COMPANION_TOKEN` in `.env` before listening beyond localhost. |
 | Dev client says the server needs a token | Open it once as `/dev/?token=<COMPANION_TOKEN>`. |
+| Dashboard says it only answers this machine | Open it on the server as `http://127.0.0.1:…/admin/`, or set `COMPANION_ADMIN_TOKEN` in `.env` and restart. |
 | STT runs on the CPU although you have a GPU | Install with `--extra cuda`; `check` prints the device it actually loaded. |
 | The microphone or camera does not work from another device | Browsers allow them only on `localhost` or HTTPS. |
 | **Start camera** is greyed out | `vision.enabled: false`, or VLM mode without a vision model (`vlm.provider: none`). |
@@ -581,7 +598,16 @@ uv run ruff format .
 uv run companion check      # validate config and reach every provider
 ```
 
-CI runs lint and an import check on Windows and Linux.
+CI runs lint and an import check on Windows and Linux, and rebuilds the dashboard to check that the committed build matches its source.
+
+The dashboard is a Svelte app in `client/dashboard/` (Node 22 or newer). After changing it, rebuild and commit `dist/` along with the source:
+
+```powershell
+cd client/dashboard
+npm ci
+npm run dev      # http://localhost:5173/admin/, API proxied to a server on :8765
+npm run build    # writes dist/
+```
 
 ```text
 companion/
@@ -596,6 +622,7 @@ companion/
   protocol/    envelope and binary frame codec, event names
   providers/   llm / stt / tts / vlm implementations
 client/web/    browser development client
+client/dashboard/  admin dashboard (Svelte; built output in dist/)
 client/edge/   edge device client (separate uv project, websockets only)
 configs/       default configuration
 personas/      persona definitions
