@@ -4,13 +4,13 @@
   import { describe } from "./schema.js";
 
   // A group of settings; nested groups (e.g. agent.hermes) render inside it.
-  let { root, path, desc, value, restartRequired, secrets, nested = false } = $props();
+  let { path, desc, ctx, nested = false } = $props();
 
   const entries = $derived(
     Object.entries(desc.properties).map(([name, raw]) => ({
       name,
       path: `${path}.${name}`,
-      desc: describe(root, raw),
+      desc: describe(ctx.schema, raw),
     })),
   );
   const leaves = $derived(entries.filter((e) => e.desc.kind !== "section"));
@@ -20,25 +20,10 @@
 <section class:nested id={nested ? undefined : `s-${path}`}>
   <h3><code>{path}</code></h3>
   {#each leaves as e (e.path)}
-    <Setting
-      path={e.path}
-      name={e.name}
-      desc={e.desc}
-      value={value?.[e.name]}
-      restart={restartRequired[e.path] ?? true}
-      {secrets}
-    />
+    <Setting path={e.path} name={e.name} desc={e.desc} {ctx} />
   {/each}
   {#each groups as g (g.path)}
-    <Section
-      {root}
-      path={g.path}
-      desc={g.desc}
-      value={value?.[g.name]}
-      {restartRequired}
-      {secrets}
-      nested
-    />
+    <Section path={g.path} desc={g.desc} {ctx} nested />
   {/each}
 </section>
 
