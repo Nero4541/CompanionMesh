@@ -42,6 +42,11 @@ __pycache__/
 .venv/
 build/
 dist/
+# The dashboard's build output is committed, so `uv run` needs no Node.
+!/client/dashboard/dist/
+
+# Node (client/dashboard)
+node_modules/
 
 # Tooling caches
 .pytest_cache/
