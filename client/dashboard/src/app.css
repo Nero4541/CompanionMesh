@@ -1,0 +1,175 @@
+/* Same palette as the dev client (client/web/style.css). */
+:root {
+  --bg: #f7f7f5;
+  --panel: #ffffff;
+  --fg: #1d1d1f;
+  --muted: #6b6b70;
+  --line: #e2e2de;
+  --accent: #2f6fec;
+  --on-accent: #ffffff;
+  --err: #c23a3a;
+  --ok: #2c8a4b;
+  --warn: #a8660b;
+  --warn-bg: #fdf3e2;
+  color-scheme: light;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #161618;
+    --panel: #1f1f22;
+    --fg: #ececec;
+    --muted: #9a9aa0;
+    --line: #2c2c30;
+    --accent: #5a8cf0;
+    --err: #e06666;
+    --ok: #5cbf7a;
+    --warn: #e0a345;
+    --warn-bg: #2e2516;
+    color-scheme: dark;
+  }
+}
+:root[data-theme="dark"] {
+  --bg: #161618;
+  --panel: #1f1f22;
+  --fg: #ececec;
+  --muted: #9a9aa0;
+  --line: #2c2c30;
+  --accent: #5a8cf0;
+  --err: #e06666;
+  --ok: #5cbf7a;
+  --warn: #e0a345;
+  --warn-bg: #2e2516;
+  color-scheme: dark;
+}
+
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0 auto;
+  max-width: 1100px;
+  padding: 0 16px 32px;
+  background: var(--bg);
+  color: var(--fg);
+  font: 15px/1.5 system-ui, "Segoe UI", "Hiragino Sans", "Yu Gothic UI", sans-serif;
+}
+h2 {
+  font-size: 18px;
+  margin: 0;
+}
+h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+code {
+  font-family: ui-monospace, Consolas, monospace;
+  font-size: 13px;
+}
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  color: inherit;
+}
+input,
+select,
+textarea {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 8px;
+}
+input:read-only,
+select:disabled,
+textarea:read-only {
+  background: var(--bg);
+}
+button {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+button.small {
+  padding: 2px 10px;
+  font-size: 13px;
+}
+
+.head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-bottom: 12px;
+}
+.muted {
+  color: var(--muted);
+  font-size: 13px;
+}
+.error {
+  color: var(--err);
+  border: 1px solid var(--err);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+.card {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px 16px;
+}
+.pill {
+  display: inline-block;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.pill.ok,
+.pill.live {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+.pill.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.scroll {
+  overflow-x: auto;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 14px;
+}
+th,
+td {
+  text-align: left;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--line);
+  white-space: nowrap;
+}
+tbody tr:last-child td {
+  border-bottom: none;
+}
+th {
+  color: var(--muted);
+  font-weight: 600;
+  font-size: 13px;
+}
+.num {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
