@@ -20,6 +20,7 @@ from pydantic import ValidationError
 
 from companion.core.config import (
     CompanionConfig,
+    ConfigError,
     ConfigSource,
     changed_settings,
     deep_merge,
@@ -125,10 +126,22 @@ def write_override(source: ConfigSource, override: dict[str, Any]) -> Path:
     return local
 
 
+def _check_persona(source: ConfigSource, desired: dict[str, Any]) -> None:
+    from companion.core.persona import load_persona
+
+    config = CompanionConfig.model_validate(desired).resolve_paths(source.project_root)
+    try:
+        load_persona(config.personas_dir, config.agent.persona)
+    except ConfigError as exc:
+        raise ConfigEditError([{"path": "agent.persona", "message": str(exc)}]) from exc
+
+
 def save_settings(source: ConfigSource, desired: dict[str, Any]) -> Path:
     """Validate ``desired`` (unresolved settings, no command-line overrides) and save it."""
     if not source.path.is_file():
         raise ConfigEditError(
             [{"path": "", "message": f"{source.path} does not exist; create it to save settings"}]
         )
-    return write_override(source, build_override(source, desired))
+    override = build_override(source, desired)
+    _check_persona(source, desired)
+    return write_override(source, override)
