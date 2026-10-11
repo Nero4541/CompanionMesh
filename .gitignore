@@ -65,6 +65,10 @@ htmlcov/
 *.local.yaml
 *.local.yml
 
+# Personas you add (e.g. in the dashboard) stay yours; only the bundled one is published.
+/personas/*
+!/personas/default.yaml
+
 # Logs & OS/editor noise
 *.log
 .DS_Store
