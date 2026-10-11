@@ -68,6 +68,16 @@ def split_credentials(url: str) -> tuple[str, httpx.Auth | None]:
     return clean, AutoAuth(username, password or "")
 
 
+def add_credentials(url: str, username: str | None, password: str | None) -> str:
+    """Put credentials into a URL that has none (kept in memory, never written)."""
+    parts = urlsplit(url)
+    if parts.username or not username:
+        return url
+    secret = quote(password or "", safe="")
+    netloc = f"{quote(username, safe='')}:{secret}@{parts.netloc}"
+    return urlunsplit((parts.scheme, netloc, parts.path, parts.query, parts.fragment))
+
+
 def with_credentials(url: str) -> str:
     """For ffmpeg: put CAMERA_* credentials into the URL if it has none."""
     parts = urlsplit(url)
