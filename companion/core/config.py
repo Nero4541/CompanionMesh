@@ -9,6 +9,7 @@ them by environment-variable *name* (``api_key_env``), never by value.
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
@@ -371,6 +372,7 @@ class CompanionConfig(_Section):
 _LIVE_SETTINGS = {
     "vad": True,
     "vision": True,
+    "vision.mode": False,  # the VLM and frames held for the agent are set up per mode
     "vision.max_frame_bytes": False,  # sizes the WebSocket limit at startup
     "vision.store_images": False,
     "vision.retention_days": False,
@@ -405,6 +407,29 @@ def secret_status(value: Any) -> dict[str, bool]:
     return found
 
 
+def changed_settings(old: Any, new: Any, prefix: str = "") -> list[str]:
+    """Dotted paths whose values differ between two config dumps."""
+    if isinstance(old, dict) and isinstance(new, dict):
+        paths: list[str] = []
+        for key in dict.fromkeys([*old, *new]):
+            paths.extend(changed_settings(old.get(key), new.get(key), f"{prefix}{key}."))
+        return paths
+    return [] if old == new else [prefix.rstrip(".")]
+
+
+def get_setting(data: dict[str, Any], path: str) -> Any:
+    for part in path.split("."):
+        data = data[part]
+    return data
+
+
+def set_setting(data: dict[str, Any], path: str, value: Any) -> None:
+    *parents, last = path.split(".")
+    for part in parents:
+        data = data.setdefault(part, {})
+    data[last] = value
+
+
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     merged = dict(base)
     for key, value in override.items():
@@ -429,14 +454,66 @@ def local_override_path(path: Path) -> Path:
     return path.with_name(f"{path.stem}.local{path.suffix}")
 
 
-def load_config(
+def validation_errors(exc: ValidationError) -> list[dict[str, str]]:
+    """Pydantic errors as ``{"path": "vad.threshold", "message": ...}``."""
+    return [{"path": ".".join(map(str, e["loc"])), "message": e["msg"]} for e in exc.errors()]
+
+
+def _validate(data: dict[str, Any], where: Path) -> CompanionConfig:
+    try:
+        return CompanionConfig.model_validate(data)
+    except ValidationError as exc:
+        lines = [f"  {e['path']}: {e['message']}" for e in validation_errors(exc)]
+        raise ConfigError(f"invalid configuration ({where}):\n" + "\n".join(lines)) from exc
+
+
+@dataclass(frozen=True)
+class ConfigSource:
+    """Where a configuration comes from, so it can be read again and edited.
+
+    The effective config is ``path`` deep-merged with its ``*.local.yaml``
+    sibling, then with ``overrides`` (command-line flags), and finally paths
+    resolved against ``project_root``.
+    """
+
+    path: Path
+    project_root: Path
+    overrides: dict[str, Any] = field(default_factory=dict)
+    local_override: bool = True
+
+    @property
+    def local_path(self) -> Path:
+        return local_override_path(self.path)
+
+    def read_base(self) -> dict[str, Any]:
+        return _read_yaml(self.path) if self.path.is_file() else {}
+
+    def read_local(self) -> dict[str, Any]:
+        if self.local_override and self.path.is_file() and self.local_path.is_file():
+            return _read_yaml(self.local_path)
+        return {}
+
+    def saved(self) -> CompanionConfig:
+        """The files' settings as written: no command-line overrides, paths unresolved."""
+        return _validate(deep_merge(self.read_base(), self.read_local()), self.path)
+
+    def load(self) -> CompanionConfig:
+        """The config a (re)started server runs with."""
+        data = deep_merge(self.read_base(), self.read_local())
+        if self.overrides:
+            data = deep_merge(data, self.overrides)
+        return _validate(data, self.path).resolve_paths(self.project_root)
+
+
+def config_source(
     path: Path | None = None,
     *,
     project_root: Path | None = None,
     env_file: Path | None = None,
     overrides: dict[str, Any] | None = None,
     local_override: bool = True,
-) -> CompanionConfig:
+) -> ConfigSource:
+    """Locate the config files (and load ``.env``) without validating anything yet."""
     root = (project_root or Path.cwd()).resolve()
     env_path = env_file or root / ".env"
     if env_path.is_file():
@@ -445,22 +522,28 @@ def load_config(
     if path is None:
         env_cfg = os.environ.get("COMPANION_CONFIG")
         path = Path(env_cfg) if env_cfg else root / "configs" / "companion.yaml"
-
-    data: dict[str, Any] = {}
-    if path.is_file():
-        data = _read_yaml(path)
-        local = local_override_path(path)
-        if local_override and local.is_file():
-            data = deep_merge(data, _read_yaml(local))
-    elif path != root / "configs" / "companion.yaml":
+    if not path.is_file() and path != root / "configs" / "companion.yaml":
         raise ConfigError(f"config file not found: {path}")
+    return ConfigSource(
+        path=path,
+        project_root=root,
+        overrides=dict(overrides or {}),
+        local_override=local_override,
+    )
 
-    if overrides:
-        data = deep_merge(data, overrides)
 
-    try:
-        config = CompanionConfig.model_validate(data)
-    except ValidationError as exc:
-        lines = [f"  {'.'.join(map(str, e['loc']))}: {e['msg']}" for e in exc.errors()]
-        raise ConfigError(f"invalid configuration ({path}):\n" + "\n".join(lines)) from exc
-    return config.resolve_paths(root)
+def load_config(
+    path: Path | None = None,
+    *,
+    project_root: Path | None = None,
+    env_file: Path | None = None,
+    overrides: dict[str, Any] | None = None,
+    local_override: bool = True,
+) -> CompanionConfig:
+    return config_source(
+        path,
+        project_root=project_root,
+        env_file=env_file,
+        overrides=overrides,
+        local_override=local_override,
+    ).load()
