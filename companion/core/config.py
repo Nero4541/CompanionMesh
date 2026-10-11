@@ -34,11 +34,21 @@ class ServerConfig(_Section):
     # Keep a session this long after its last mic/speaker device drops, so a
     # device that reconnects (e.g. after a Wi-Fi hiccup) resumes it.
     session_linger_s: float = Field(default=60.0, ge=0)
+    # Serve the admin dashboard at /admin/.
+    dashboard: bool = True
+    # Token for the admin API (/v1/admin/*). The device token never grants admin
+    # access; while this is unset, the admin API only answers this machine.
+    admin_token_env: str | None = "COMPANION_ADMIN_TOKEN"
 
     def auth_token(self) -> str | None:
         if not self.auth_token_env:
             return None
         return os.environ.get(self.auth_token_env) or None
+
+    def admin_token(self) -> str | None:
+        if not self.admin_token_env:
+            return None
+        return os.environ.get(self.admin_token_env) or None
 
 
 class LoggingConfig(_Section):
@@ -47,7 +57,9 @@ class LoggingConfig(_Section):
 
 
 class StorageConfig(_Section):
-    data_dir: Path = Path("data")
+    # String defaults (validated into Path) keep the JSON schema's defaults
+    # serializable; pydantic cannot encode a WindowsPath default.
+    data_dir: Path = Field(default="data", validate_default=True)
 
 
 class HttpProviderConfig(_Section):
@@ -327,7 +339,7 @@ class CompanionConfig(_Section):
     attention: AttentionConfig = AttentionConfig()
     realtime: RealtimeConfig = RealtimeConfig()
     metrics: MetricsConfig = MetricsConfig()
-    personas_dir: Path = Path("personas")
+    personas_dir: Path = Field(default="personas", validate_default=True)
 
     @field_validator("personas_dir")
     @classmethod
@@ -352,6 +364,45 @@ class CompanionConfig(_Section):
     def public_view(self) -> dict[str, Any]:
         """Config safe to expose over HTTP (env var names only, never values)."""
         return self.model_dump(mode="json")
+
+
+# Settings a running server can take without a restart, as dotted paths; a
+# section covers everything inside it and the longest matching path wins.
+_LIVE_SETTINGS = {
+    "vad": True,
+    "vision": True,
+    "vision.max_frame_bytes": False,  # sizes the WebSocket limit at startup
+    "vision.store_images": False,
+    "vision.retention_days": False,
+    "attention": True,
+    "realtime": True,
+    "metrics.emit_turn": True,
+}
+
+
+def needs_restart(path: str) -> bool:
+    """Whether changing the setting at dotted ``path`` takes a server restart."""
+    parts = path.split(".")
+    for end in range(len(parts), 0, -1):
+        live = _LIVE_SETTINGS.get(".".join(parts[:end]))
+        if live is not None:
+            return not live
+    return True
+
+
+def secret_status(value: Any) -> dict[str, bool]:
+    """Every ``*_env`` setting in a config dump: variable name -> whether it is set."""
+    found: dict[str, bool] = {}
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key.endswith("_env") and isinstance(item, str) and item:
+                found[item] = bool(os.environ.get(item))
+            else:
+                found.update(secret_status(item))
+    elif isinstance(value, list):
+        for item in value:
+            found.update(secret_status(item))
+    return found
 
 
 def deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
