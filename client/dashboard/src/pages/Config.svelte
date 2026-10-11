@@ -68,7 +68,7 @@
   async function load() {
     try {
       data = await api("/config");
-      draft = structuredClone($state.snapshot(data.saved ?? data.running));
+      draft = $state.snapshot(data.saved ?? data.running);
       errors = {};
       formKey += 1;
       loadError = null;
@@ -92,7 +92,7 @@
   });
 
   function discard() {
-    draft = structuredClone($state.snapshot(saved));
+    draft = $state.snapshot(saved);
     errors = {};
     formKey += 1;
   }
