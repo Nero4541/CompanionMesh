@@ -26,6 +26,7 @@ from companion.core.logging import kv
 from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
 from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
+from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
 from companion.providers.stt.base import STTProvider
 from companion.providers.tts.base import TTSProvider
@@ -44,6 +45,7 @@ class Providers:
     tts: TTSProvider | None = None
     vlm: VLMProvider | None = None
     vad_factory: Any = None  # Callable[[], VAD]
+    camera_factory: Any = None  # companion.devices.manager.DeviceFactory
     disabled: set[str] = field(default_factory=set)
 
 
@@ -123,6 +125,7 @@ class CompanionRuntime:
         # Reads self.config at call time, so new utterances follow live VAD changes.
         self._vad_factory = providers.vad_factory or (lambda: create_vad(self.config.vad))
         self.sessions: dict[str, Session] = {}
+        self.cameras = CameraManager(providers.camera_factory)
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
 
@@ -145,6 +148,7 @@ class CompanionRuntime:
         if self.stt is not None and self.config.stt.preload:
             # Load in the background so the HTTP server comes up immediately.
             self._warmup = asyncio.create_task(self._warm_stt())
+        self.cameras.apply(self.config, delay=START_DELAY_S)
 
     async def _warm_stt(self) -> None:
         assert self.stt is not None
@@ -154,6 +158,7 @@ class CompanionRuntime:
             log.error("stt warmup failed", extra=kv(error=str(exc)))
 
     async def stop(self) -> None:
+        await self.cameras.stop()
         for session in list(self.sessions.values()):
             if session.linger is not None:
                 session.linger.cancel()
@@ -273,6 +278,8 @@ class CompanionRuntime:
             self.config = config
             for session in self.sessions.values():
                 session.reconfigure(self.config)
+            if "cameras" in applied:
+                self.cameras.apply(self.config)
             log.info("settings applied", extra=kv(settings=",".join(applied)))
         return applied, pending
 
