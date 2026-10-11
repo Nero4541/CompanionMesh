@@ -14,7 +14,13 @@ from companion.agent.base import AgentBackend
 from companion.audio.segmenter import UtteranceSegmenter
 from companion.audio.vad import VAD, create_vad
 from companion.core.bus import EventBus
-from companion.core.config import CompanionConfig
+from companion.core.config import (
+    CompanionConfig,
+    changed_settings,
+    get_setting,
+    needs_restart,
+    set_setting,
+)
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.metrics import Metrics
@@ -114,7 +120,8 @@ class CompanionRuntime:
             if config.vision.store_images
             else None
         )
-        self._vad_factory = providers.vad_factory or (lambda: create_vad(config.vad))
+        # Reads self.config at call time, so new utterances follow live VAD changes.
+        self._vad_factory = providers.vad_factory or (lambda: create_vad(self.config.vad))
         self.sessions: dict[str, Session] = {}
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
@@ -245,6 +252,26 @@ class CompanionRuntime:
         if current is None or current is session:
             # Not persistent: the transcript lives only as long as its connection.
             await self.store.forget(session.session_id)
+
+    def reconfigure(self, new: CompanionConfig) -> tuple[list[str], list[str]]:
+        """Take the live settings of ``new`` now; return (applied, needing a restart).
+
+        ``new`` is a fully loaded (path-resolved) config. Settings that need a
+        restart keep their running values until then.
+        """
+        running = self.config.model_dump(mode="json")
+        target = new.model_dump(mode="json")
+        changed = changed_settings(running, target)
+        applied = [p for p in changed if not needs_restart(p)]
+        pending = [p for p in changed if needs_restart(p)]
+        if applied:
+            for path in applied:
+                set_setting(running, path, get_setting(target, path))
+            self.config = CompanionConfig.model_validate(running)
+            for session in self.sessions.values():
+                session.reconfigure(self.config)
+            log.info("settings applied", extra=kv(settings=",".join(applied)))
+        return applied, pending
 
     def storage_description(self) -> str:
         if isinstance(self.store, SQLiteStore):
