@@ -283,6 +283,21 @@ CAMERA_PASSWORD=…
 
 The bridge is meant to run for a long time. Start it whenever you like: it waits for the camera to come up (retrying every 5 s), waits for a conversation to join, and when a conversation ends it joins the next one.
 
+**Cameras the server runs itself.** Instead of a separate `companion camera` process per camera, list them under `cameras:` (or add them on the dashboard's **Cameras** page, which can also test a camera and show its current view). The server runs the same bridge for each enabled camera, and starts, stops or replaces them as soon as the list changes:
+
+```yaml
+cameras:
+  - id: livingroom                      # also its device id
+    url: http://192.168.1.20:8080/shot.jpg
+    username_env: CAMERA_USERNAME       # login from .env (the default names)
+    password_env: CAMERA_PASSWORD
+    mode: change                        # or periodic, with interval_s
+    heartbeat_s: 300
+    enabled: true
+```
+
+Each camera names its own login variables, so cameras with different logins work side by side. Credentials in a camera's `url` are refused here, because the URL is shown on the dashboard and in `/v1/config`.
+
 **Visual events.** Frames sent because something changed carry what the camera's detector saw (`event: {kind, score, area}`). They are prioritized: frames you asked for come first, then big changes, then routine frames. Vetted change frames skip the duplicate check, and important ones skip the rate limit. In VLM mode, frames wait in a small priority queue, and stale routine frames are dropped when the model is busy. Changes become events for the [attention engine](#proactive-behavior): in VLM mode with the model's description of the frame, in agent mode as "something moved" (worth remembering, rarely worth speaking about).
 
 In both modes, clients that detect things themselves, such as an edge device with an accelerator, can send `vision.event` with a description; it becomes an observation without any model call.
@@ -529,6 +544,10 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `PUT /v1/admin/personas/{name}` | Replace a persona, or create it with `?create=true` (admin token) |
 | `DELETE /v1/admin/personas/{name}` | Delete a persona not in use (admin token) |
 | `POST /v1/admin/personas/{name}/activate` | Use this persona now and after restarts (admin token) |
+| `GET /v1/admin/cameras` | Configured cameras and what each is doing (admin token) |
+| `PUT /v1/admin/cameras` | Replace the camera list (`{"cameras": [...]}`); applied at once (admin token) |
+| `POST /v1/admin/cameras/test` | One JPEG frame from camera settings, saved or not (admin token) |
+| `GET /v1/admin/cameras/{id}/snapshot` | The current view of a running camera, as JPEG (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
 ### Realtime protocol (1.0)
