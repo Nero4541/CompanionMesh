@@ -50,6 +50,7 @@ from companion.providers.llm.base import ChatMessage
 from companion.vision.pipeline import TurnImage, VisionChannel
 
 if TYPE_CHECKING:
+    from companion.core.config import CompanionConfig
     from companion.core.runtime import CompanionRuntime
 
 __all__ = ["DEFAULT_ROLES", "Device", "Outbox", "Session", "State", "parse_roles"]
@@ -225,6 +226,14 @@ class Session:
     @property
     def state(self) -> State:
         return self.sm.state
+
+    def reconfigure(self, config: CompanionConfig) -> None:
+        """Follow live setting changes (realtime, attention, vision)."""
+        self.realtime = config.realtime
+        self.echo_guard.similarity = config.realtime.echo.guard_similarity
+        self.echo_guard.window_s = config.realtime.echo.guard_window_s
+        self.attention.config = config.attention
+        self.vision.reconfigure(config)
 
     def _spawn(self, coro: Any) -> None:
         """Run ``coro`` detached from the caller (kept referenced until done)."""
