@@ -1,5 +1,6 @@
 <script>
   import { getToken, setToken } from "./lib/api.js";
+  import Cameras from "./pages/Cameras.svelte";
   import Config from "./pages/Config.svelte";
   import Metrics from "./pages/Metrics.svelte";
   import Overview from "./pages/Overview.svelte";
@@ -10,6 +11,7 @@
     { id: "metrics", label: "Latency", component: Metrics },
     { id: "config", label: "Configuration", component: Config },
     { id: "personas", label: "Personas", component: Personas },
+    { id: "cameras", label: "Cameras", component: Cameras },
   ];
 
   function current() {
