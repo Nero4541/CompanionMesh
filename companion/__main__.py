@@ -92,7 +92,12 @@ def serve(config: CompanionConfig) -> int:
         return 2
     app = create_app(config)
     log.info(
-        "listening", extra=kv(url=f"http://{host}:{port}", dev_client=f"http://{host}:{port}/dev/")
+        "listening",
+        extra=kv(
+            url=f"http://{host}:{port}",
+            dev_client=f"http://{host}:{port}/dev/",
+            dashboard=f"http://{host}:{port}/admin/",
+        ),
     )
     uvicorn.run(
         app,
