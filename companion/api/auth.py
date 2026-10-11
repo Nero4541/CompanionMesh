@@ -6,6 +6,9 @@ present that token. ``/health`` and the static dev client stay open.
 
 Clients send it as ``Authorization: Bearer <token>`` or, where headers are not
 available (browser WebSockets), as a ``?token=`` query parameter.
+
+The admin API has its own token (``server.admin_token_env``), so a device
+token cannot change the server. Without it, only this machine is admitted.
 """
 
 from __future__ import annotations
@@ -40,6 +43,45 @@ async def require_token(request: Request) -> None:
         raise HTTPException(
             status_code=401,
             detail="missing or wrong token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+
+def _hostname(host_header: str) -> str:
+    if host_header.startswith("["):
+        return host_header[1 : host_header.find("]")]
+    return host_header.rsplit(":", 1)[0]
+
+
+def from_this_machine(conn: Request | WebSocket) -> bool:
+    """A loopback peer that also addressed us by a loopback name.
+
+    Checking the Host header as well keeps a web page that rebinds its own
+    domain name to 127.0.0.1 from reading the admin API through the browser.
+    """
+    peer = conn.client.host if conn.client else ""
+    return peer in LOOPBACK_HOSTS and _hostname(conn.headers.get("host", "")) in LOOPBACK_HOSTS
+
+
+async def require_admin(request: Request) -> None:
+    """FastAPI dependency for the admin API (/v1/admin/*)."""
+    config: ServerConfig = request.app.state.runtime.config.server
+    expected = config.admin_token()
+    if expected is None:
+        if from_this_machine(request):
+            return
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                "the admin API only answers this machine until "
+                f"{config.admin_token_env or 'COMPANION_ADMIN_TOKEN'} is set in .env"
+            ),
+        )
+    provided = presented_token(request)
+    if provided is None or not secrets.compare_digest(provided, expected):
+        raise HTTPException(
+            status_code=401,
+            detail="missing or wrong admin token",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
