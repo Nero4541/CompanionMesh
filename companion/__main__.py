@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 from companion import __version__
-from companion.core.config import CompanionConfig, ConfigError, load_config
+from companion.core.config import CompanionConfig, ConfigError, ConfigSource, config_source
 from companion.core.errors import CompanionError
 from companion.core.logging import kv, setup_logging
 
@@ -79,18 +79,33 @@ def _check_port(host: str, port: int) -> str | None:
     return None
 
 
-def serve(config: CompanionConfig) -> int:
+def _run_server(config: CompanionConfig, source: ConfigSource | None) -> bool:
+    """Serve until stopped; True if the dashboard asked for a restart."""
     import uvicorn
 
     from companion.api.app import create_app
-    from companion.api.auth import exposure_problem
 
     host, port = config.server.host, config.server.port
-    problem = exposure_problem(config.server) or _check_port(host, port)
-    if problem:
-        log.error(problem)
-        return 2
-    app = create_app(config)
+    restart = False
+    server: uvicorn.Server | None = None
+
+    def request_restart() -> None:
+        nonlocal restart
+        restart = True
+        if server is not None:
+            server.should_exit = True
+
+    app = create_app(config, source=source, restart=request_restart if source else None)
+    server = uvicorn.Server(
+        uvicorn.Config(
+            app,
+            host=host,
+            port=port,
+            log_config=None,
+            timeout_graceful_shutdown=5,
+            ws_max_size=config.vision.max_frame_bytes + 64 * 1024,
+        )
+    )
     log.info(
         "listening",
         extra=kv(
@@ -99,15 +114,43 @@ def serve(config: CompanionConfig) -> int:
             dashboard=f"http://{host}:{port}/admin/",
         ),
     )
-    uvicorn.run(
-        app,
-        host=host,
-        port=port,
-        log_config=None,
-        timeout_graceful_shutdown=5,
-        ws_max_size=config.vision.max_frame_bytes + 64 * 1024,
-    )
-    return 0
+    server.run()
+    return restart
+
+
+def serve(config: CompanionConfig, source: ConfigSource | None = None) -> int:
+    """Run the server; with a config ``source`` it can restart itself (dashboard).
+
+    A restart stops the server, reads the config files again and starts it
+    anew in this process. If the new settings cannot start, the previous ones
+    are used.
+    """
+    from companion.api.auth import exposure_problem
+
+    previous: CompanionConfig | None = None
+    while True:
+        problem = exposure_problem(config.server) or _check_port(
+            config.server.host, config.server.port
+        )
+        if problem:
+            log.error(problem)
+            if previous is None:
+                return 2
+            log.warning("starting again with the previous settings")
+            config, previous = previous, None
+            continue
+
+        if not _run_server(config, source) or source is None:
+            return 0
+
+        log.info("restarting")
+        previous = config
+        try:
+            config = source.load()
+        except ConfigError as exc:
+            log.error("cannot load the saved settings; keeping the previous ones: %s", exc)
+            config = previous
+        setup_logging(config.logging.level, config.logging.format)
 
 
 async def _check(config: CompanionConfig) -> int:
@@ -201,7 +244,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.port:
         overrides.setdefault("server", {})["port"] = args.port
     try:
-        config = load_config(args.config, overrides=overrides)
+        source = config_source(args.config, overrides=overrides)
+        config = source.load()
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -230,7 +274,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "check":
         return asyncio.run(_check(config))
     try:
-        return serve(config)
+        return serve(config, source)
     except KeyboardInterrupt:
         return 0
 
