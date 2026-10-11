@@ -491,7 +491,14 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 
 ### Admin dashboard
 
-`/admin/` shows the server's status, connected devices with their round-trip time and last reported status, latency per pipeline stage, and every setting with its effective value. Each setting is marked **live** (vad, vision, attention, realtime: these are the ones the running server will take without a restart) or **restart**; secrets appear only by variable name with "set in .env" or "not set". The page is read-only for now.
+`/admin/` shows the server's status, connected devices with their round-trip time and last reported status, latency per pipeline stage, and every setting, which you can change there.
+
+- Each setting is marked **live** or **restart**. Live settings (vad, attention, realtime, most of vision, `metrics.emit_turn`) apply as soon as you save, also to conversations already open; the rest wait for a restart, which the page offers to do. The server then stops, reads its config files again and starts in the same process; if the new settings cannot start (say the port is taken), it starts again with the previous ones.
+- Values are checked before saving, and invalid ones are marked at the setting.
+- Saving writes only what differs from `configs/companion.yaml` into `configs/companion.local.yaml`; `companion.yaml` is never changed. The version before each save is kept as `companion.previous.local.yaml`, and a file you wrote by hand (with your comments) as `companion.original.local.yaml`, once.
+- `--host`/`--port` on the command line win over the file; such settings are marked.
+- An override can add or change keys of a mapping such as `extra_body` but cannot remove one that `companion.yaml` sets; the page says so, and that change has to be made in `companion.yaml`.
+- Secrets never appear: settings that name an environment variable show only "set in .env" or "not set". Edit `.env` itself to change them.
 
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
@@ -512,7 +519,9 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `WS /v1/realtime` | Streaming text and voice (below) |
 | `GET /dev/` | Browser development client |
 | `GET /admin/` | Admin dashboard |
-| `GET /v1/admin/config` | Effective config, its JSON schema, which settings need a restart, which secrets are set (admin token) |
+| `GET /v1/admin/config` | Running and saved settings, their JSON schema, which need a restart or wait for one, which secrets are set (admin token) |
+| `PUT /v1/admin/config` | Save every setting (`{"config": {...}}`, as `saved` above); applies the live ones, returns `applied` and `pending_restart` (admin token) |
+| `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
 ### Realtime protocol (1.0)
