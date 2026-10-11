@@ -316,6 +316,47 @@ class RealtimeConfig(_Section):
     echo: EchoConfig = EchoConfig()
 
 
+class CameraConfig(_Section):
+    """An IP camera or phone the server watches itself (instead of ``companion camera``).
+
+    It joins the active conversation as a camera device. Credentials come from
+    ``.env`` through ``username_env``/``password_env``, never from the URL.
+    """
+
+    id: str = Field(pattern=r"^[A-Za-z0-9_-]{1,64}$")
+    # HTTP snapshot (.../shot.jpg), MJPEG stream (.../video) or rtsp://
+    url: str = Field(min_length=1)
+    enabled: bool = True
+    username_env: str | None = "CAMERA_USERNAME"
+    password_env: str | None = "CAMERA_PASSWORD"
+    # change: send a frame when the view changes; periodic: every interval_s.
+    mode: Literal["change", "periodic"] = "change"
+    interval_s: float = Field(default=5.0, ge=0)
+    heartbeat_s: float = Field(default=300.0, gt=0)
+    analysis_interval_s: float = Field(default=1.0, gt=0)
+    # Join this session instead of the most recently started one.
+    session_id: str | None = None
+    # Switch vision on in the session it joins.
+    enable_vision: bool = True
+
+    @field_validator("url")
+    @classmethod
+    def _no_secret_in_url(cls, v: str) -> str:
+        from urllib.parse import urlsplit
+
+        parts = urlsplit(v)
+        if parts.password is not None or parts.username is not None:
+            raise ValueError(
+                "do not put credentials in the URL; set username_env/password_env and .env"
+            )
+        return v
+
+    def credentials(self) -> tuple[str | None, str | None]:
+        username = os.environ.get(self.username_env) if self.username_env else None
+        password = os.environ.get(self.password_env) if self.password_env else None
+        return username or None, password or None
+
+
 class MetricsConfig(_Section):
     """Latency instrumentation: numbers only, never audio, images or text."""
 
@@ -340,7 +381,18 @@ class CompanionConfig(_Section):
     attention: AttentionConfig = AttentionConfig()
     realtime: RealtimeConfig = RealtimeConfig()
     metrics: MetricsConfig = MetricsConfig()
+    cameras: list[CameraConfig] = Field(default_factory=list)
     personas_dir: Path = Field(default="personas", validate_default=True)
+
+    @field_validator("cameras")
+    @classmethod
+    def _unique_cameras(cls, v: list[CameraConfig]) -> list[CameraConfig]:
+        seen: set[str] = set()
+        for camera in v:
+            if camera.id.lower() in seen:
+                raise ValueError(f"camera id {camera.id!r} is used twice")
+            seen.add(camera.id.lower())
+        return v
 
     @field_validator("personas_dir")
     @classmethod
@@ -380,6 +432,7 @@ _LIVE_SETTINGS = {
     "attention": True,
     "realtime": True,
     "metrics.emit_turn": True,
+    "cameras": True,  # started, stopped and replaced while running
 }
 
 
@@ -457,7 +510,10 @@ def local_override_path(path: Path) -> Path:
 
 def validation_errors(exc: ValidationError) -> list[dict[str, str]]:
     """Pydantic errors as ``{"path": "vad.threshold", "message": ...}``."""
-    return [{"path": ".".join(map(str, e["loc"])), "message": e["msg"]} for e in exc.errors()]
+    return [
+        {"path": ".".join(map(str, e["loc"])), "message": e["msg"].removeprefix("Value error, ")}
+        for e in exc.errors()
+    ]
 
 
 def _validate(data: dict[str, Any], where: Path) -> CompanionConfig:
