@@ -358,6 +358,19 @@ uv run companion-edge --config edge.toml
 
 `client/edge/systemd/companion-edge.service` is an example unit for running it at boot.
 
+**Hardware profiles.** `client/edge/profiles/` has ready-made configs to copy instead of `edge.example.toml`; each explains the hardware it assumes and what to check:
+
+| Profile | For |
+|---|---|
+| `licheerv-nano.toml` | Sipeed LicheeRV Nano with Sipeed's Buildroot image: onboard microphone and speaker, Opus through ffmpeg (no libopus), half duplex |
+| `raspberry-pi.toml` | Raspberry Pi with a USB speakerphone (hardware echo cancellation, so you can interrupt) and a USB webcam |
+| `bluetooth-speaker.toml` | Any board playing through a Bluetooth speaker with bluez-alsa (lead-in and a longer hold for the speaker's wake-up) |
+| `speaker-only.toml` | A speaker without microphone or camera, e.g. for proactive remarks while a microphone is too noisy |
+
+For a camera on its own, use `cameras:` on the server (see [IP cameras and phones](#ip-cameras-and-phones)) rather than an edge device.
+
+**Your own device.** `client/template/device.py` is a minimal device in one file (only `websockets`) with the whole protocol a device needs and its hardware in four methods to replace. [`client/template/README.md`](client/template/README.md) explains porting it, for example to a microcontroller or another language.
+
 What the edge client does:
 
 - **Microphone:** 16 kHz audio, Opus-encoded at ~24 kbps (about a tenth of raw PCM) and sent in batches of 20 ms packets. Without `libopus` it uses ffmpeg's Opus encoder, or falls back to PCM. Each batch carries its position in the microphone stream and its capture time. The mic keeps streaming while the companion speaks, so you can interrupt it (`full_duplex = true`). Set `aec = "device"` if your microphone cancels its own speaker's echo.
@@ -658,7 +671,8 @@ companion/
   providers/   llm / stt / tts / vlm implementations
 client/web/    browser development client
 client/dashboard/  admin dashboard (Svelte; built output in dist/)
-client/edge/   edge device client (separate uv project, websockets only)
+client/edge/   edge device client (separate uv project, websockets only); profiles/ per hardware
+client/template/   a minimal device to port to other hardware or languages
 configs/       default configuration
 personas/      persona definitions
 ```
