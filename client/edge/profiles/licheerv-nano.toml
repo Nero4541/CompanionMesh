@@ -1,0 +1,49 @@
+# Profile: Sipeed LicheeRV Nano (SG2002, RISC-V, Sipeed's Buildroot image).
+#
+# Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+# Checked against the stock Sipeed Buildroot image (Python 3.11, ffmpeg 4.4
+# with its own Opus encoder, no libopus, no systemd, everything runs as root).
+#
+#   arecord -l / aplay -l   list the sound cards. On the stock image card 0 is
+#   the codec's microphone input (ADC) and card 1 its speaker output (DAC).
+
+server = "ws://192.168.1.10:8765/v1/realtime"   # your server (LAN or Tailscale address)
+token_env = "COMPANION_TOKEN"
+# device_id = "licheerv"                          # default: the hostname
+heartbeat_s = 30
+state_file = "/root/companion-edge/state.json"    # Buildroot: no ~/.local, runs as root
+
+[audio]
+enabled = true
+input_enabled = true
+input_device = "hw:0,0"          # onboard microphone input
+output_device = "plughw:1,0"     # onboard speaker output; for a Bluetooth speaker see
+                                 # bluetooth-speaker.toml (output_device + lead-in)
+output_lead_in_ms = 0
+output_hold_s = 2.0
+codec = "opus"
+opus_encoder = "auto"            # no libopus on the stock image: uses ffmpeg's encoder
+opus_bitrate = 24000
+packets_per_frame = 5            # fewer, larger WebSocket messages for the single core
+buffer_s = 3.0
+# The bare onboard microphone hears the speaker and the room; half duplex keeps
+# the companion from taking its own voice (or a TV) for you cutting in. Set
+# true if you add a microphone with echo cancellation.
+full_duplex = false
+aec = "none"
+
+[camera]
+# Off unless the board has a camera that shows up as /dev/video* (v4l2).
+enabled = false
+device = "/dev/video0"
+input_format = "mjpeg"
+size = "640x480"
+mode = "change"
+analysis_fps = 1                 # the single core is busy enough with audio
+heartbeat_s = 300
+motion_threshold = 0.02
+scene_threshold = 0.25
+cooldown_s = 10
+min_interval_s = 5
+max_interval_s = 60
+quality = 5
