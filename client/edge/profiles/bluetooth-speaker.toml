@@ -1,0 +1,40 @@
+# Profile: any Linux board playing through a Bluetooth speaker (bluez-alsa).
+#
+# Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+# Pair the speaker once (bluetoothctl: pair, trust, connect), run
+# `bluealsa -p a2dp-source`, and give the speaker an ALSA name, e.g. in ~/.asoundrc:
+#
+#   pcm.speaker {
+#     type plug
+#     slave.pcm { type bluealsa device "XX:XX:XX:XX:XX:XX" profile "a2dp" }
+#   }
+#
+# Bluetooth speakers drop the first fraction of a second after their stream
+# starts and add ~0.2 s of latency; the settings below allow for both. Only one
+# program can play to a bluealsa device at a time.
+
+server = "ws://192.168.1.10:8765/v1/realtime"   # your server (LAN or Tailscale address)
+token_env = "COMPANION_TOKEN"
+# device_id = "bt-speaker"                        # default: the hostname
+heartbeat_s = 30
+state_file = "~/.local/state/companion-edge/state.json"
+
+[audio]
+enabled = true
+input_enabled = true
+input_device = "default"         # the board's or a USB microphone: arecord -l
+output_device = "speaker"        # the ALSA name from ~/.asoundrc above
+output_lead_in_ms = 300          # silence first, so the speaker's wake-up eats that
+output_hold_s = 5.0              # keep the stream open between sentences
+codec = "opus"
+opus_encoder = "auto"
+opus_bitrate = 24000
+packets_per_frame = 5
+buffer_s = 3.0
+# A loudspeaker in the room plus a plain microphone: listen only between
+# replies, so the companion does not hear itself.
+full_duplex = false
+aec = "none"
+
+[camera]
+enabled = false
