@@ -1,0 +1,23 @@
+# Profile: a speaker without a microphone or camera.
+#
+# Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+#
+# The device speaks what the companion says in its session, such as proactive
+# remarks (see "Proactive behavior" in the README), including replies to other
+# clients that joined that session. Useful while a microphone is too noisy.
+
+server = "ws://192.168.1.10:8765/v1/realtime"   # your server (LAN or Tailscale address)
+token_env = "COMPANION_TOKEN"
+# device_id = "kitchen-speaker"                   # default: the hostname
+heartbeat_s = 30
+state_file = "~/.local/state/companion-edge/state.json"
+
+[audio]
+enabled = true
+input_enabled = false            # no microphone: the device only plays
+output_device = "default"        # aplay -l
+output_lead_in_ms = 0            # ~300 for a Bluetooth speaker
+output_hold_s = 2.0
+
+[camera]
+enabled = false
