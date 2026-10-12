@@ -1,0 +1,47 @@
+# Profile: Raspberry Pi 4/5 (Raspberry Pi OS) with a USB speakerphone and a USB webcam.
+#
+# Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+#   sudo apt install alsa-utils ffmpeg libopus0
+#
+# A USB speakerphone (Jabra Speak, Anker PowerConf, eMeet and similar) cancels
+# its own speaker's echo in hardware, so the microphone can stay open while the
+# companion talks and you can simply interrupt it.
+#
+#   arecord -l / aplay -l   find the speakerphone's card; the names below
+#   (CARD=...) are stabler than numbers, which change with plugging order.
+
+server = "ws://192.168.1.10:8765/v1/realtime"   # your server (LAN or Tailscale address)
+token_env = "COMPANION_TOKEN"
+# device_id = "livingroom-pi"                     # default: the hostname
+heartbeat_s = 30
+state_file = "~/.local/state/companion-edge/state.json"
+
+[audio]
+enabled = true
+input_enabled = true
+input_device = "plughw:CARD=Speakerphone,DEV=0"   # see `arecord -L | grep CARD=`
+output_device = "plughw:CARD=Speakerphone,DEV=0"
+output_lead_in_ms = 0
+output_hold_s = 2.0
+codec = "opus"
+opus_encoder = "libopus"         # libopus0 from apt
+opus_bitrate = 24000
+packets_per_frame = 5
+buffer_s = 3.0
+full_duplex = true               # keep listening while it speaks (barge-in)
+aec = "device"                   # the speakerphone cancels its own echo
+
+[camera]
+enabled = true
+device = "/dev/video0"           # v4l2-ctl --list-devices
+input_format = "mjpeg"           # most USB webcams; "" if yours has no MJPEG mode
+size = "1280x720"
+mode = "change"                  # send frames only when the view changes
+analysis_fps = 2
+heartbeat_s = 300
+motion_threshold = 0.02
+scene_threshold = 0.25
+cooldown_s = 10
+min_interval_s = 5
+max_interval_s = 60
+quality = 5
