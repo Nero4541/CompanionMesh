@@ -366,8 +366,9 @@ uv run companion-edge --config edge.toml
 | `raspberry-pi.toml` | Raspberry Pi with a USB speakerphone (hardware echo cancellation, so you can interrupt) and a USB webcam |
 | `bluetooth-speaker.toml` | Any board playing through a Bluetooth speaker with bluez-alsa (lead-in and a longer hold for the speaker's wake-up) |
 | `speaker-only.toml` | A speaker without microphone or camera, e.g. for proactive remarks while a microphone is too noisy |
+| `camera-only.toml` | A board with only a camera: it joins whichever conversation was started last and waits for the next one when that ends |
 
-For a camera on its own, use `cameras:` on the server (see [IP cameras and phones](#ip-cameras-and-phones)) rather than an edge device.
+Network cameras and phones need no board: list them under `cameras:` on the server instead (see [IP cameras and phones](#ip-cameras-and-phones)).
 
 **Your own device.** `client/template/device.py` is a minimal device in one file (only `websockets`) with the whole protocol a device needs and its hardware in four methods to replace. [`client/template/README.md`](client/template/README.md) explains porting it, for example to a microcontroller or another language.
 
