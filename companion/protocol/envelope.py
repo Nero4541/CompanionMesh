@@ -18,7 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
-NAMESPACES = ("conversation", "audio", "vision", "memory", "agent", "system", "session")
+NAMESPACES = ("conversation", "audio", "vision", "memory", "agent", "system", "session", "device")
 
 _HEADER_LEN = struct.Struct(">I")
 MAX_HEADER_BYTES = 64 * 1024
