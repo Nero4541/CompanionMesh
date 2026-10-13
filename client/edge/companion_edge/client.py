@@ -46,6 +46,7 @@ log = logging.getLogger("companion_edge")
 PACKET_S = 0.02
 SAMPLE_RATE = 16000
 PACKET_SAMPLES = int(PACKET_S * SAMPLE_RATE)
+JOIN_RETRY_S = 2.0  # camera-only devices: how often to look for a conversation to join
 
 
 @dataclass
@@ -167,6 +168,10 @@ class EdgeClient:
         tmp.replace(path)
 
     # --- roles -----------------------------------------------------------------
+
+    @property
+    def camera_only(self) -> bool:
+        return self.mic is None and self.speaker is None and self.camera is not None
 
     def roles(self) -> list[str]:
         roles = []
@@ -442,8 +447,14 @@ class EdgeClient:
         elif kind == "system.ping":
             await ws.send(protocol.text("system.pong", {**p, "t_device": time.time() * 1000}))
         elif kind == "session.ended":
+            # Sent to cameras when the conversation is over; the next is a new one.
+            self.session_id = None
+            self.vision_enabled = False
+            self.vision_user_disabled = False
             return "ended"
         elif kind == "system.error":
+            if p.get("code") == "no_session":
+                return "no_session"
             log.warning("server: %s: %s", p.get("code"), p.get("message"))
         return None
 
@@ -451,7 +462,11 @@ class EdgeClient:
         self.ws = ws
         self.streaming = False
         start: dict[str, Any] = {"roles": self.roles()}
-        if self.session_id:
+        if self.camera_only:
+            # A camera alone does not start conversations: it joins the one
+            # started most recently, and the next one after that ends.
+            start["join"] = True
+        elif self.session_id:
             start["session_id"] = self.session_id
         await ws.send(protocol.text("session.start", start, device_id=self.config.device_id))
         try:
@@ -489,15 +504,26 @@ class EdgeClient:
             await self.camera.start()
             tasks.append(asyncio.create_task(self._camera_loop()))
         backoff = 1.0
+        waiting_logged = False
         try:
             while True:
+                outcome = "error"
                 try:
                     async with websockets.connect(self._url(), max_size=None) as ws:
                         backoff = 1.0
                         outcome = await self._connection(ws)
-                        log.info("connection ended (%s)", outcome)
                 except (OSError, websockets.WebSocketException) as exc:
                     log.warning("server unreachable: %s (retrying in %.0f s)", exc, backoff)
+                if outcome in ("no_session", "ended"):
+                    # The server is fine; a camera waits for someone to start talking.
+                    if not waiting_logged:
+                        log.info("no conversation to join yet; checking every 2 s")
+                        waiting_logged = True
+                    await asyncio.sleep(JOIN_RETRY_S)
+                    continue
+                if outcome != "error":
+                    log.info("connection ended (%s)", outcome)
+                waiting_logged = False
                 self.stats.reconnects += 1
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
