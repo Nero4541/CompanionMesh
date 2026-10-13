@@ -2,7 +2,7 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser or from a small Linux board with a camera, microphone and speaker; it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v1.0.0, the first stable release. The realtime protocol is version 1.0: later 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
+**Status:** v1.1.0. The realtime protocol is version 1.1: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
@@ -698,8 +698,9 @@ personas/      persona definitions
 | **v0.4** | Portable Linux edge client (camera, mic, speaker) talking to the home server, tested on a LicheeRV Nano with a Bluetooth speaker |
 | **v0.5** | Realtime multimodal interaction: full-duplex audio with barge-in, echo handling, state machine with recovery, latency metrics, change-driven vision |
 | **v1.0** | First stable release: protocol 1.0, speech recognition on another host, several camera images per turn, measured end to end from an edge board through the server and agent and back |
+| **v1.1** | Admin dashboard: status, latency, every setting (applied live where possible, in-process restart otherwise), personas, cameras run by the server, edge devices set up remotely (protocol 1.1, edge client 1.1) from hardware profiles; a one-file device template |
 
-Possible directions after 1.0, not scheduled: several users per server, native mobile clients, a plugin interface for third-party devices and providers, and ready-made hardware.
+Possible directions, not scheduled: several users per server, native mobile clients, a plugin interface for third-party devices and providers, and ready-made hardware.
 
 ## License
 
