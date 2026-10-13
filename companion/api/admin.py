@@ -11,7 +11,9 @@ import contextlib
 import logging
 import os
 import re
+import tomllib
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
@@ -365,6 +367,77 @@ async def camera_snapshot(request: Request, camera_id: str) -> Response:
         raise HTTPException(status_code=504, detail="the camera sent no frame in time") from exc
     except CompanionError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+# --- edge devices -------------------------------------------------------------
+
+EDGE_PROFILES_DIR = Path(__file__).resolve().parents[2] / "client" / "edge" / "profiles"
+_SETTING_ERROR = re.compile(r"^([a-z_]+(?:\.[a-z_]+)?): (.+)$")
+
+
+@router.get("/devices")
+async def devices(request: Request) -> dict[str, Any]:
+    """Connected devices, with the settings of those that offer them (device.config)."""
+    runtime = _runtime(request)
+    return {
+        "devices": [
+            {"session_id": session.session_id, **device.report(), "settings": device.settings}
+            for session in runtime.sessions.values()
+            for device in session.devices
+        ]
+    }
+
+
+class DeviceConfigBody(BaseModel):
+    config: dict[str, Any]
+
+
+@router.put("/devices/{device_id}/config")
+async def configure_device(
+    request: Request, device_id: str, body: DeviceConfigBody
+) -> dict[str, Any]:
+    """Send settings to a device. It checks and saves them, then restarts with them."""
+    try:
+        result = await _runtime(request).configure_device(device_id, body.config)
+    except TimeoutError as exc:
+        raise HTTPException(status_code=504, detail="the device did not answer in time") from exc
+    except CompanionError as exc:
+        status = 404 if exc.code == "not_connected" else 409
+        raise HTTPException(status_code=status, detail=str(exc)) from exc
+    if not result.get("ok"):
+        message = str(result.get("error") or "the device refused the settings")
+        match = _SETTING_ERROR.match(message)
+        path, text = (match[1], match[2]) if match else ("", message)
+        raise HTTPException(status_code=422, detail={"errors": [{"path": path, "message": text}]})
+    return {"restarting": bool(result.get("restarting"))}
+
+
+def _profile(path: Path) -> dict[str, Any]:
+    """A profile's settings plus the comment block at its top, as notes."""
+    text = path.read_text(encoding="utf-8")
+    notes: list[str] = []
+    for line in text.splitlines():
+        if not line.startswith("#"):
+            break
+        notes.append(line[1:].removeprefix(" "))
+    title = notes[0].removeprefix("Profile:").strip() if notes else path.stem
+    # Paragraphs about copying the file by hand do not apply on the dashboard.
+    paragraphs = "\n".join(notes[1:]).strip().split("\n\n")
+    body = "\n\n".join(p for p in paragraphs if not p.startswith("Copy to edge.toml"))
+    return {
+        "name": path.stem,
+        "title": title[:1].upper() + title[1:],
+        "notes": body,
+        "config": tomllib.loads(text),
+    }
+
+
+@router.get("/edge-profiles")
+async def edge_profiles() -> dict[str, Any]:
+    """Ready-made edge settings for common hardware (client/edge/profiles)."""
+    if not EDGE_PROFILES_DIR.is_dir():
+        return {"profiles": []}
+    return {"profiles": [_profile(p) for p in sorted(EDGE_PROFILES_DIR.glob("*.toml"))]}
 
 
 @router.post("/restart", status_code=202)
