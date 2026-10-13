@@ -290,8 +290,10 @@ class VisionChannel:
             description = f"The camera view changed and stayed changed{share}."
         else:
             description = f"Something moved in front of the camera{share}."
-        # Movement alone is worth remembering at most; what the VLM saw may matter more.
-        salience = frame.priority * (0.9 if observation else 0.6)
+        # Someone looks at the picture before anything is said: the VLM already
+        # did (observation), or in agent mode the agent gets it with the
+        # proactive prompt. So a clear change may lead to a proactive turn.
+        salience = frame.priority * 0.9
         return AttentionEvent(
             kind=f"visual_{kind}",
             description=description[:500],
