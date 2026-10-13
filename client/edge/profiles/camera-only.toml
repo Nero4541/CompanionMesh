@@ -1,0 +1,32 @@
+# Profile: a board with a camera only (no microphone or speaker).
+#
+# Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+#
+# A camera does not start conversations of its own: it joins the one started
+# most recently (by the browser, another edge device, ...), switches vision on,
+# and when that conversation ends it waits for the next one. For network
+# cameras and phones that need no board, use `cameras:` on the server instead.
+
+server = "ws://192.168.1.10:8765/v1/realtime"   # your server (LAN or Tailscale address)
+token_env = "COMPANION_TOKEN"
+# device_id = "hallway-camera"                    # default: the hostname
+heartbeat_s = 30
+state_file = "~/.local/state/companion-edge/state.json"
+
+[audio]
+enabled = false
+
+[camera]
+enabled = true
+device = "/dev/video0"           # v4l2-ctl --list-devices
+input_format = "mjpeg"           # "" if the camera has no MJPEG mode
+size = "640x480"
+mode = "change"                  # send frames only when the view changes
+analysis_fps = 2
+heartbeat_s = 300                # plus a routine frame this often
+motion_threshold = 0.02
+scene_threshold = 0.25
+cooldown_s = 10
+min_interval_s = 5
+max_interval_s = 60
+quality = 5
