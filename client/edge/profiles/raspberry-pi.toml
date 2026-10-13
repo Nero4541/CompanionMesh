@@ -1,6 +1,7 @@
 # Profile: Raspberry Pi 4/5 (Raspberry Pi OS) with a USB speakerphone and a USB webcam.
 #
 # Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+#
 #   sudo apt install alsa-utils ffmpeg libopus0
 #
 # A USB speakerphone (Jabra Speak, Anker PowerConf, eMeet and similar) cancels
