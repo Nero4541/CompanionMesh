@@ -27,7 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 
 from companion.agent.base import AgentContext, SessionRef
-from companion.attention.engine import AttentionEngine, AttentionEvent, Decision
+from companion.attention.engine import IDLE_KIND, AttentionEngine, AttentionEvent, Decision
 from companion.audio.echo import (
     EchoCanceller,
     EchoGuard,
@@ -62,6 +62,7 @@ MIN_UTTERANCE_S = 0.3
 PLAYBACK_ACK_TIMEOUT_S = 90.0
 CONTEXT_NOTE_MAX_AGE_S = 1800.0
 WATCHDOG_INTERVAL_S = 0.5
+IDLE_CHECK_S = 15.0  # how often the idle check-in timer is looked at
 SILENT = "[SILENT]"
 
 PROACTIVE_PROMPT = (
@@ -227,6 +228,7 @@ class Session:
         self._tasks: set[asyncio.Task[Any]] = set()
         with contextlib.suppress(RuntimeError):  # no loop: built outside asyncio (tests)
             self._watchdog = asyncio.get_running_loop().create_task(self._watch())
+            self._spawn(self._idle_loop())
 
     @property
     def state(self) -> State:
@@ -983,6 +985,17 @@ class Session:
                 pass
         return record.decision
 
+    async def _idle_loop(self) -> None:
+        """Idle check-ins (attention.idle): a chance to speak after a long quiet spell."""
+        while True:
+            await asyncio.sleep(IDLE_CHECK_S)
+            if not self.with_role("speaker"):
+                continue
+            busy = self.busy or self.state not in (State.IDLE, State.LISTENING)
+            event = self.attention.idle_event(busy=busy)
+            if event is not None:
+                await self.on_attention_event(event)
+
     async def _proactive_turn(self, event: AttentionEvent) -> None:
         """Offer the agent a chance to remark on an event; it may stay silent."""
         rt = self.runtime
@@ -997,7 +1010,14 @@ class Session:
             limit = rt.config.agent.history_turns * 2
             history = await rt.store.history(self.session_id, limit=limit) if limit else []
             prompt = PROACTIVE_PROMPT.format(description=event.description)
+            if event.kind == IDLE_KIND and self.vision.enabled:
+                # Nothing on camera prompted this one: let the agent see the room now.
+                await self.vision.request_capture("idle")
+                await self.vision.wait_for_capture()
+                await self.vision.wait_pending()
             seen = self.vision.context_for_turn()
+            if event.kind == IDLE_KIND and seen.user_prefix:  # vlm mode: what it saw
+                prompt = f"{prompt}\n\n{seen.user_prefix}"
             content: Any = prompt
             if seen.images:
                 content = [{"type": "text", "text": prompt}, *image_parts(seen.images)]
