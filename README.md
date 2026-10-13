@@ -532,6 +532,8 @@ Other options: `uv run companion --config path\to\file.yaml`, `--host`, `--port`
 
 The **Personas** page lists the personas in `personas_dir` and edits their display name, language, TTS voice and system prompt. **Use this persona** switches at once (from the next reply) and saves `agent.persona`; editing the persona in use also applies from the next reply. The bundled `default` persona is not edited in place, so updates to the project cannot conflict with your changes: **Save a copy** makes your own, which git ignores. A persona in use, now or after a restart, cannot be deleted.
 
+The **Devices** page lists the connected devices with their last reported status. Edge devices running companion-edge 1.1 or newer started with `--config` show their settings there, and can be changed, or set up from one of the [hardware profiles](#edge-devices): the device checks the new settings, writes the changed lines into its TOML file (keeping the previous file as `edge.toml.bak`) and restarts with them in the same process, so no service manager is needed. `server`, `token_env`, `device_id` and `state_file` can only be changed on the device, as a mistake there would cut it off.
+
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
 - With `COMPANION_ADMIN_TOKEN` unset, they answer only this machine (open `http://127.0.0.1:8765/admin/` on the server itself).
@@ -562,9 +564,14 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `PUT /v1/admin/cameras` | Replace the camera list (`{"cameras": [...]}`); applied at once (admin token) |
 | `POST /v1/admin/cameras/test` | One JPEG frame from camera settings, saved or not (admin token) |
 | `GET /v1/admin/cameras/{id}/snapshot` | The current view of a running camera, as JPEG (admin token) |
+| `GET /v1/admin/devices` | Connected devices, with the settings of those that offer them (admin token) |
+| `PUT /v1/admin/devices/{id}/config` | Send settings to an edge device (`{"config": {...}}`); it saves them and restarts (admin token) |
+| `GET /v1/admin/edge-profiles` | The hardware profiles in `client/edge/profiles` (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
-### Realtime protocol (1.0)
+### Realtime protocol (1.1)
+
+1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them.
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -584,6 +591,8 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `audio.input.start` / `audio.input.stop` | `{sample_rate: 16000, encoding: "pcm_s16le" or "opus", channels: 1, full_duplex?, aec?}`; `full_duplex: true` keeps the mic open during replies (barge-in); `aec: "device"` if the device cancels its own echo |
 | → | `audio.input.chunk` (binary) | PCM s16le mono 16 kHz; for `opus`, one or more packets each prefixed with a big-endian uint16 length. Optional payload `{pos, t}`: first sample's index in the mic stream and its capture time (device clock, ms since the epoch) |
 | → | `device.status` | free-form device health, e.g. `{cpu_temp_c, mem_free_mb, wifi_signal_dbm, uptime_s}` |
+| → | `device.config` | `{config, schema, editable, file?}`: the device's settings, after `session.started`, from devices that can be set up remotely; `schema`: `{path: {type, editable, choices?}}` (1.1) |
+| → | `device.config.result` | `{request_id, ok, restarting, error?}`: answer to `device.config.set` (1.1) |
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
 | → | `audio.output.progress` | `{turn_id, seq, state: "started", pos?}`: a clip began playing; `pos` = mic stream position at that moment |
 | → | `audio.output.stopped` | `{turn_id, reason?}`: answer to `audio.output.stop` |
@@ -613,8 +622,9 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `attention.state` | `{proactive, quiet, speech_blockers}` |
 | ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
 | ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
+| ← | `device.config.set` | `{request_id, config}`: new settings from the admin dashboard; check them, save them and answer `device.config.result` (1.1) |
 
-A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). Simple clients stay simple: a client that declares no roles gets `mic` and `speaker`, one that does not ask for `full_duplex` is treated as half duplex, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*` and `session.*` are reserved.
+A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). Simple clients stay simple: a client that declares no roles gets `mic` and `speaker`, one that does not ask for `full_duplex` is treated as half duplex, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*`, `session.*` and `device.*` are reserved.
 
 ## Troubleshooting
 
