@@ -1,6 +1,7 @@
 # Profile: any Linux board playing through a Bluetooth speaker (bluez-alsa).
 #
 # Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+#
 # Pair the speaker once (bluetoothctl: pair, trust, connect), run
 # `bluealsa -p a2dp-source`, and give the speaker an ALSA name, e.g. in ~/.asoundrc:
 #
