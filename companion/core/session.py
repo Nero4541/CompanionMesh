@@ -123,6 +123,10 @@ class Device:
     status: dict[str, Any] = field(default_factory=dict)  # last device.status
     status_at: float | None = None
     clock: ClockSync = field(default_factory=ClockSync)
+    # Remote settings (device.config); None if the device does not offer them.
+    settings: dict[str, Any] | None = None
+    # device.config.set requests waiting for their device.config.result.
+    settings_requests: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
 
     def describe(self) -> dict[str, Any]:
         return {"device_id": self.device_id, "roles": sorted(self.roles)}
@@ -136,6 +140,7 @@ class Device:
             "status_age_s": round(time.time() - self.status_at) if self.status_at else None,
             "rtt_ms": round(best.rtt_ms, 1) if best else None,
             "clock_offset_ms": round(best.offset_ms, 1) if best else None,
+            "configurable": self.settings is not None,
         }
 
 
