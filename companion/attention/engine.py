@@ -10,6 +10,7 @@ still decide to stay silent).
 
 from __future__ import annotations
 
+import random
 from collections import deque
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -21,6 +22,10 @@ from zoneinfo import ZoneInfo
 from companion.core.config import AttentionConfig, QuietHoursConfig
 
 Clock = Callable[[], datetime]
+
+IDLE_KIND = "idle"
+# Idle check-ins are asked for in the config, so they clear the default speak threshold.
+IDLE_SALIENCE = 0.7
 
 
 def utc_now() -> datetime:
@@ -68,6 +73,9 @@ class AttentionState:
     proactive_turns: deque[datetime] = field(default_factory=deque)
     quiet_mode: bool = False  # manual do-not-disturb
     last_event_at: dict[str, datetime] = field(default_factory=dict)
+    # Idle check-ins: when the quiet spell being timed began, and how long it must last.
+    quiet_since: datetime | None = None
+    idle_wait_s: float | None = None
 
 
 def resolve_zone(name: str | None) -> tzinfo:
@@ -92,10 +100,16 @@ def in_quiet_hours(cfg: QuietHoursConfig, now: datetime) -> bool:
 
 
 class AttentionEngine:
-    def __init__(self, config: AttentionConfig, clock: Clock = utc_now) -> None:
+    def __init__(
+        self,
+        config: AttentionConfig,
+        clock: Clock = utc_now,
+        rng: Callable[[], float] = random.random,
+    ) -> None:
         self.config = config
         self.clock = clock
-        self.state = AttentionState()
+        self.rng = rng
+        self.state = AttentionState(quiet_since=clock())
 
     # --- activity notes -----------------------------------------------------
 
@@ -167,6 +181,48 @@ class AttentionEngine:
         if blockers:
             return DecisionRecord(event, Decision.CONTEXT_ONLY, [*reasons, *blockers])
         return DecisionRecord(event, Decision.SPEAK, [*reasons, "all guards passed"])
+
+    # --- idle check-ins --------------------------------------------------------
+
+    def idle_event(self, *, busy: bool = False) -> AttentionEvent | None:
+        """An event once nobody has spoken for a random while (attention.idle).
+
+        The wait is drawn between ``idle_min_s`` and ``idle_max_s`` and starts
+        over whenever anyone speaks. If speech is not allowed when it runs out
+        (quiet hours, cooldown, ...), it starts over silently instead of piling
+        up as context.
+        """
+        cfg, st = self.config, self.state
+        if not cfg.idle or busy:
+            return None
+        now = self.clock()
+        last = [t for t in (st.last_user_turn_at, st.last_agent_speech_at) if t]
+        if st.proactive_turns:
+            last.append(st.proactive_turns[-1])
+        if st.quiet_since is None or any(t > st.quiet_since for t in last):
+            st.quiet_since = max(last, default=now)
+            st.idle_wait_s = None
+        if st.idle_wait_s is None:
+            low = cfg.idle_min_s
+            st.idle_wait_s = low + (max(low, cfg.idle_max_s) - low) * self.rng()
+        quiet_for = (now - st.quiet_since).total_seconds()
+        if quiet_for < st.idle_wait_s:
+            return None
+        st.quiet_since, st.idle_wait_s = now, None
+        if self.speech_blockers(now):
+            return None
+        minutes = max(1, round(quiet_for / 60))
+        return AttentionEvent(
+            kind=IDLE_KIND,
+            description=(
+                f"Nobody has said anything for about {minutes} minutes. You could check in "
+                "on the user or start a little conversation."
+            ),
+            salience=IDLE_SALIENCE,
+            source="timer",
+            at=now,
+            data={"quiet_for_s": round(quiet_for)},
+        )
 
 
 class SceneTracker:
