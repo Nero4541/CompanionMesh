@@ -1,4 +1,4 @@
-"""Event type names of the realtime protocol (1.0).
+"""Event type names of the realtime protocol (1.1).
 
 Client -> server
     session.start            payload: {session_id?, join?, roles?}
@@ -38,6 +38,12 @@ Client -> server
     attention.quiet          payload: {enabled}  (do-not-disturb: no proactive speech)
     device.status            payload: free-form health, e.g. {cpu_temp_c, mem_free_mb,
                              wifi_signal_dbm, uptime_s, audio_buffer_ms}
+    device.config            payload: {config, schema, editable, file?}  (the device's
+                             settings, sent after session.started by devices that
+                             can be configured remotely; schema: {path: {type,
+                             editable, choices?}})
+    device.config.result     payload: {request_id, ok, restarting, error?}  (answer
+                             to device.config.set)
 
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
@@ -76,9 +82,12 @@ Server -> client
                              decision, reasons}  (only with attention.debug)
     metrics.turn             payload: {turn_id, <stage>: seconds, ...}  (only with
                              metrics.emit_turn)
+    device.config.set        payload: {request_id, config}  (new settings for this
+                             device, from the admin dashboard; answer
+                             device.config.result)
 """
 
-PROTOCOL_VERSION = "1.0"
+PROTOCOL_VERSION = "1.1"
 
 # client -> server
 SESSION_START = "session.start"
@@ -97,6 +106,8 @@ VISION_FRAME = "vision.frame"
 VISION_EVENT = "vision.event"
 ATTENTION_QUIET = "attention.quiet"
 DEVICE_STATUS = "device.status"
+DEVICE_CONFIG = "device.config"
+DEVICE_CONFIG_RESULT = "device.config.result"
 
 # server -> client
 SESSION_STARTED = "session.started"
@@ -122,3 +133,4 @@ VISION_CAPTURE_REQUEST = "vision.capture.request"
 ATTENTION_STATE = "attention.state"
 ATTENTION_DECISION = "attention.decision"
 METRICS_TURN = "metrics.turn"
+DEVICE_CONFIG_SET = "device.config.set"
