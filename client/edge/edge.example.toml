@@ -1,6 +1,6 @@
 # companion-edge configuration. Copy to edge.toml and adjust.
 # profiles/ has ready-made versions for common hardware (LicheeRV Nano,
-# Raspberry Pi with a speakerphone, Bluetooth speakers, speaker only).
+# Raspberry Pi with a speakerphone, Bluetooth speakers, speaker only, camera only).
 # The token is read from the environment (COMPANION_TOKEN), not from this file.
 
 # The Companion Server's realtime endpoint, e.g. its Tailscale address.
