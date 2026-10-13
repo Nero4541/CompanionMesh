@@ -136,6 +136,9 @@ attention:
   grace_after_activity_s: 120   # stay quiet this long after anyone spoke
   scene_change_threshold: 20    # frame-hash bits that count as a scene change
   absence_s: 1200               # a change after this long counts as "activity resumed"
+  idle: false                   # idle check-ins: speak up after a quiet spell of
+  idle_min_s: 1800              #   a random length between these two
+  idle_max_s: 3600
   event_dedup_s: 120
   remember_threshold: 0.2
   context_threshold: 0.4
