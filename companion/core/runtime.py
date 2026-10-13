@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import time
+import uuid
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -28,12 +29,16 @@ from companion.core.persona import Persona, load_persona
 from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
+from companion.protocol import events as ev
 from companion.providers.stt.base import STTProvider
 from companion.providers.tts.base import TTSProvider
 from companion.providers.vlm.base import VLMProvider
 from companion.vision.archive import ImageArchive
 
 log = logging.getLogger(__name__)
+
+# How long a device may take to check and save settings sent to it.
+DEVICE_CONFIG_TIMEOUT_S = 15.0
 
 
 @dataclass
@@ -282,6 +287,42 @@ class CompanionRuntime:
                 self.cameras.apply(self.config)
             log.info("settings applied", extra=kv(settings=",".join(applied)))
         return applied, pending
+
+    def find_device(self, device_id: str) -> tuple[Session, Device] | None:
+        for session in self.sessions.values():
+            for device in session.devices:
+                if device.device_id == device_id:
+                    return session, device
+        return None
+
+    async def configure_device(self, device_id: str, config: dict[str, Any]) -> dict[str, Any]:
+        """Send new settings to a connected device; return its device.config.result.
+
+        Raises TimeoutError if the device does not answer in DEVICE_CONFIG_TIMEOUT_S.
+        """
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        if device.settings is None:
+            raise CompanionError(
+                f"device {device_id!r} does not offer remote settings", code="not_configurable"
+            )
+        request_id = uuid.uuid4().hex[:12]
+        answer: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        device.settings_requests[request_id] = answer
+        try:
+            await session.emit_to(
+                [device], ev.DEVICE_CONFIG_SET, {"request_id": request_id, "config": config}
+            )
+            result = await asyncio.wait_for(answer, DEVICE_CONFIG_TIMEOUT_S)
+        finally:
+            device.settings_requests.pop(request_id, None)
+        log.info(
+            "device settings sent",
+            extra=kv(device=device_id, ok=result.get("ok"), restarting=result.get("restarting")),
+        )
+        return result
 
     def storage_description(self) -> str:
         if isinstance(self.store, SQLiteStore):
