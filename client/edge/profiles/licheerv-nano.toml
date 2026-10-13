@@ -1,6 +1,7 @@
 # Profile: Sipeed LicheeRV Nano (SG2002, RISC-V, Sipeed's Buildroot image).
 #
 # Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
+#
 # Checked against the stock Sipeed Buildroot image (Python 3.11, ffmpeg 4.4
 # with its own Opus encoder, no libopus, no systemd, everything runs as root).
 #
