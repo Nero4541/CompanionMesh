@@ -26,7 +26,7 @@ from typing import Any
 
 import websockets
 
-from companion_edge import protocol, status
+from companion_edge import protocol, settings, status
 from companion_edge.config import EdgeConfig
 from companion_edge.devices import (
     AlsaMicrophone,
@@ -66,8 +66,12 @@ class EdgeClient:
         speaker: Speaker | None = None,
         camera: Camera | None = None,
         encoder: Any = None,
+        config_path: Path | None = None,
     ) -> None:
         self.config = config
+        # The TOML file the settings came from; the server may change them there.
+        self.config_path = config_path
+        self.restart_requested = False
         a, c = config.audio, config.camera
         self.encoder = encoder
         self.codec = a.codec
@@ -400,6 +404,10 @@ class EdgeClient:
                 ",".join(p.get("roles", [])),
             )
             self.server_barge_in = bool(p.get("barge_in"))
+            # What can be changed from the server's dashboard (protocol 1.1).
+            await ws.send(
+                protocol.text("device.config", settings.describe(self.config, self.config_path))
+            )
             if self.mic is not None:
                 encoding = "opus" if self.codec == "opus" else "pcm_s16le"
                 await ws.send(
@@ -446,6 +454,10 @@ class EdgeClient:
                 await self._stop_playback()
         elif kind == "system.ping":
             await ws.send(protocol.text("system.pong", {**p, "t_device": time.time() * 1000}))
+        elif kind == "device.config.set":
+            await self._apply_settings(p)
+            if self.restart_requested:
+                return "restart"
         elif kind == "session.ended":
             # Sent to cameras when the conversation is over; the next is a new one.
             self.session_id = None
@@ -457,6 +469,31 @@ class EdgeClient:
                 return "no_session"
             log.warning("server: %s: %s", p.get("code"), p.get("message"))
         return None
+
+    async def _apply_settings(self, p: dict[str, Any]) -> None:
+        """Save settings sent from the dashboard; restart with them if anything changed."""
+        assert self.ws is not None
+        result: dict[str, Any] = {
+            "request_id": p.get("request_id"),
+            "ok": True,
+            "restarting": False,
+        }
+        try:
+            if self.config_path is None:
+                raise ValueError("started without --config, so there is no file to save to")
+            update = p.get("config")
+            if not isinstance(update, dict):
+                raise ValueError("config must be a table of settings")
+            new = settings.apply_update(self.config, update)
+            if settings.to_dict(new) != settings.to_dict(self.config):
+                await asyncio.to_thread(settings.save, self.config_path, self.config, new)
+                result["restarting"] = True
+                self.restart_requested = True
+                log.info("settings changed from the server; restarting with them")
+        except (ValueError, OSError) as exc:
+            result.update(ok=False, error=str(exc))
+            log.warning("settings from the server refused: %s", exc)
+        await self.ws.send(protocol.text("device.config.result", result))
 
     async def _connection(self, ws: Any) -> str:
         self.ws = ws
@@ -494,7 +531,8 @@ class EdgeClient:
         sep = "&" if "?" in self.config.server else "?"
         return f"{self.config.server}{sep}token={token}"
 
-    async def run(self) -> None:
+    async def run(self) -> str:
+        """Serve until cancelled, or until new settings need a restart ("restart")."""
         tasks: list[asyncio.Task[None]] = [asyncio.create_task(self._heartbeat_loop())]
         if self.mic is not None:
             tasks.append(asyncio.create_task(self._mic_loop()))
@@ -514,6 +552,8 @@ class EdgeClient:
                         outcome = await self._connection(ws)
                 except (OSError, websockets.WebSocketException) as exc:
                     log.warning("server unreachable: %s (retrying in %.0f s)", exc, backoff)
+                if self.restart_requested:
+                    return "restart"
                 if outcome in ("no_session", "ended"):
                     # The server is fine; a camera waits for someone to start talking.
                     if not waiting_logged:
