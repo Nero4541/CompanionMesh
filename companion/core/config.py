@@ -269,6 +269,11 @@ class AttentionConfig(_Section):
     # and how long a quiet scene must last before a change means "activity resumed".
     scene_change_threshold: int = Field(default=20, ge=1, le=64)
     absence_s: float = Field(default=1200.0, gt=0)
+    # Idle check-ins: after a random wait between idle_min_s and idle_max_s
+    # without anyone speaking, the agent may say something on its own.
+    idle: bool = False
+    idle_min_s: float = Field(default=1800.0, gt=0)
+    idle_max_s: float = Field(default=3600.0, gt=0)
     # Repeats of the same kind of event within this window are ignored.
     event_dedup_s: float = Field(default=120.0, ge=0)
     # Salience thresholds (0-1) for REMEMBER, CONTEXT_ONLY and SPEAK.
