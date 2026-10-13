@@ -298,7 +298,7 @@ cameras:
 
 Each camera names its own login variables, so cameras with different logins work side by side. Credentials in a camera's `url` are refused here, because the URL is shown on the dashboard and in `/v1/config`.
 
-**Visual events.** Frames sent because something changed carry what the camera's detector saw (`event: {kind, score, area}`). They are prioritized: frames you asked for come first, then big changes, then routine frames. Vetted change frames skip the duplicate check, and important ones skip the rate limit. In VLM mode, frames wait in a small priority queue, and stale routine frames are dropped when the model is busy. Changes become events for the [attention engine](#proactive-behavior): in VLM mode with the model's description of the frame, in agent mode as "something moved" (worth remembering, rarely worth speaking about).
+**Visual events.** Frames sent because something changed carry what the camera's detector saw (`event: {kind, score, area}`). They are prioritized: frames you asked for come first, then big changes, then routine frames. Vetted change frames skip the duplicate check, and important ones skip the rate limit. In VLM mode, frames wait in a small priority queue, and stale routine frames are dropped when the model is busy. Changes become events for the [attention engine](#proactive-behavior): in VLM mode with the model's description of the frame, in agent mode as "something moved", with the frame itself handed to the agent if it comes to a proactive turn. A clear change can lead to one; small movements stay context.
 
 In both modes, clients that detect things themselves, such as an edge device with an accelerator, can send `vision.event` with a description; it becomes an observation without any model call.
 
@@ -415,6 +415,7 @@ Events come from the camera and from clients:
 - **Scene change:** the camera view changes a lot (`attention.scene_change_threshold`, in difference-hash bits). Bigger changes score higher; a moderate change is context only.
 - **Activity resumed:** a big change after the view stayed still for `attention.absence_s` (20 minutes by default), e.g. you came back to your desk. Scores high enough to speak.
 - **Client events:** `vision.event` with an optional `salience` (0–1), for devices that detect things themselves.
+- **Idle check-ins** (off by default): with `attention.idle: true`, once nobody has spoken for a random while between `attention.idle_min_s` and `attention.idle_max_s` (30–60 minutes by default), the agent may start a conversation. It is shown a fresh camera frame if vision is on. If the guards below block speech at that moment, the wait simply starts over.
 
 The rules that keep it polite are deterministic; no model can override them:
 
