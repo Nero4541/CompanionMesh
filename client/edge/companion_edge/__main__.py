@@ -72,8 +72,14 @@ def main(argv: list[str] | None = None) -> int:
 
     from companion_edge.client import EdgeClient
 
+    # Settings changed from the server's dashboard are saved to --config and
+    # taken by starting over in this process (no service manager needed).
     try:
-        asyncio.run(EdgeClient(config).run())
+        while asyncio.run(EdgeClient(config, config_path=args.config).run()) == "restart":
+            config = load(args.config)
+            if args.server:
+                config.server = args.server
+            logging.getLogger("companion_edge").info("restarted with the new settings")
     except KeyboardInterrupt:
         pass
     return 0
