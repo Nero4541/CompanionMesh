@@ -23,6 +23,7 @@
 !/uv.lock
 !/.env.example
 !/start-companion.bat
+!/start-companion.sh
 
 # --- Source ----------------------------------------------------------
 !/companion/
