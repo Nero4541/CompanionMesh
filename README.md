@@ -67,9 +67,11 @@ Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a me
 
 **http://127.0.0.1:8765/admin/** is the admin dashboard: server status, connected devices, latency per pipeline stage and every setting (see [Admin dashboard](#admin-dashboard)).
 
-After the first setup, double-click **`start-companion.bat`** in the project folder: it starts the server in its own window (or finds it already running) and opens the dashboard once the server answers.
+After the first setup, double-click **`start-companion.bat`** in the project folder (on Linux, run `./start-companion.sh`): it starts the server (or finds it already running) and opens the dashboard once the server answers.
 
-On Linux, use `cp .env.example .env` instead of `Copy-Item`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
+Instead of `git clone`, you can download a release from the [Releases](https://github.com/Nero4541/CompanionMesh/releases) page: `companion-server-<version>-windows.zip` or `companion-server-<version>-linux.tar.gz`. Unpack it and continue with `uv python install 3.13` above; `SHA256SUMS` lists the checksums.
+
+On Linux, use `cp .env.example .env` instead of `Copy-Item` and `./start-companion.sh` instead of the `.bat`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
 `uv run companion check` prints one line per component (config, persona, agent, STT, VAD, TTS) and exits non-zero if anything is unreachable. Run it first whenever something does not work.
 
@@ -347,7 +349,7 @@ uv sync --extra stt --extra cuda --extra opus   # opus: decode compressed edge a
 
 The server refuses to listen beyond localhost without a token. With a token set, every client must present it: the dev client as `/dev/?token=…` (opened once; the browser remembers it), `companion camera` and the edge client from `COMPANION_TOKEN` in their environment.
 
-**On the board** (Debian/Ubuntu-based images):
+**On the board** (Debian/Ubuntu-based images). Without git, use `companion-edge-<version>.tar.gz` from the [Releases](https://github.com/Nero4541/CompanionMesh/releases) page instead of the clone; it unpacks to the same files as `client/edge`, profiles included.
 
 ```bash
 sudo apt install alsa-utils ffmpeg libopus0
@@ -670,6 +672,8 @@ npm ci
 npm run dev      # http://localhost:5173/admin/, API proxied to a server on :8765
 npm run build    # writes dist/
 ```
+
+Release packages are built from a tag: `uv run python scripts/package_release.py v1.1.0` writes the Windows and Linux server packages, the edge client package and `SHA256SUMS` to `build/release/`. They hold the committed files of that tag without CI settings and dashboard sources, and the same tag always gives the same files.
 
 ```text
 companion/
