@@ -22,6 +22,7 @@
 !/pyproject.toml
 !/uv.lock
 !/.env.example
+!/start-companion.bat
 
 # --- Source ----------------------------------------------------------
 !/companion/
