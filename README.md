@@ -67,6 +67,8 @@ Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a me
 
 **http://127.0.0.1:8765/admin/** is the admin dashboard: server status, connected devices, latency per pipeline stage and every setting (see [Admin dashboard](#admin-dashboard)).
 
+After the first setup, double-click **`start-companion.bat`** in the project folder: it starts the server in its own window (or finds it already running) and opens the dashboard once the server answers.
+
 On Linux, use `cp .env.example .env` instead of `Copy-Item`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
 `uv run companion check` prints one line per component (config, persona, agent, STT, VAD, TTS) and exits non-zero if anything is unreachable. Run it first whenever something does not work.
