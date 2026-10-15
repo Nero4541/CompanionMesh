@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
 from companion.api.auth import require_token
@@ -32,6 +32,20 @@ async def status(request: Request, probe: bool = False) -> dict[str, Any]:
 async def metrics(request: Request) -> dict[str, Any]:
     """Latency per pipeline stage (seconds) and counters; no media or text."""
     return _runtime(request).metrics.summary()
+
+
+def edge_package_response(name: str) -> Response:
+    """This server's edge client as ``<version>.tar.gz`` (for device.update)."""
+    from companion import edge_install
+
+    if name != f"{edge_install.edge_version()}.tar.gz":
+        raise HTTPException(status_code=404, detail="this server has another version")
+    return Response(edge_install.edge_package(), media_type="application/gzip")
+
+
+@protected.get("/v1/edge/package/{name}")
+async def edge_package(name: str) -> Response:
+    return edge_package_response(name)
 
 
 @protected.get("/v1/config")
