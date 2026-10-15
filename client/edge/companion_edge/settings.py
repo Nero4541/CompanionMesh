@@ -4,7 +4,8 @@ The server's dashboard sees what ``describe`` reports and sends back a whole
 config; ``apply_update`` checks it, ``save`` writes it into the TOML file,
 changing only the lines whose values changed (comment lines stay), and keeps
 the previous file as ``<name>.bak``. Settings that could lock the device out or
-change who it is (server, token_env, device_id, state_file) are read-only.
+change who it is (server, servers, server_cert, token_env, device_id,
+state_file) are read-only.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any
 
 from companion_edge.config import AudioConfig, CameraConfig, EdgeConfig, load
 
-READ_ONLY = frozenset({"server", "token_env", "device_id", "state_file"})
+READ_ONLY = frozenset({"server", "servers", "server_cert", "token_env", "device_id", "state_file"})
 SECTIONS = {"audio": AudioConfig, "camera": CameraConfig}
 CHOICES = {
     "audio.codec": ["opus", "pcm"],
@@ -50,6 +51,8 @@ def _kind(value: Any) -> str:
         return "int"
     if isinstance(value, float):
         return "float"
+    if isinstance(value, list):
+        return "list"
     return "str"
 
 
