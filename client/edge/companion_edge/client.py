@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import os
 import ssl
 import time
 import uuid
@@ -27,7 +28,16 @@ from typing import Any
 
 import websockets
 
-from companion_edge import diagnostics, logship, protocol, settings, status
+from companion_edge import (
+    __version__,
+    diagnostics,
+    logship,
+    protocol,
+    settings,
+    status,
+    update,
+    wifi,
+)
 from companion_edge.config import EdgeConfig
 from companion_edge.cvi import CviCamera
 from companion_edge.devices import (
@@ -51,6 +61,8 @@ PACKET_SAMPLES = int(PACKET_S * SAMPLE_RATE)
 JOIN_RETRY_S = 2.0  # camera-only devices: how often to look for a conversation to join
 LOG_SHIP_S = 2.0  # how often new log lines go to the server
 CONNECT_TIMEOUT_S = 10.0  # per address, so the next one is tried soon
+UNREACHABLE_LOG_S = 600.0  # the same "server unreachable" is logged this rarely
+UPDATE_CONNECT_S = 120.0  # a new version that cannot connect this long exits (see update.py)
 # websockets 14 renamed the argument for request headers.
 HEADERS_ARG = (
     "additional_headers" if int(websockets.__version__.split(".")[0]) >= 14 else "extra_headers"
@@ -86,6 +98,7 @@ class EdgeClient:
         self.logs = logs or logship.BUFFER
         self._logs_sent = -1  # seq of the newest line the server has
         self.route: str | None = None  # the server address that worked last
+        self.exit_requested = False  # stop for good: the service starts us (or a new version)
         self.restart_requested = False
         a, c = config.audio, config.camera
         self.encoder = encoder
@@ -404,6 +417,7 @@ class EdgeClient:
         while True:
             if self.ws is not None:
                 payload = status.snapshot(
+                    version=__version__,
                     codec=self.codec,
                     audio_buffer_ms=round(len(self._pending) * PACKET_S * 1000),
                     reconnects=self.stats.reconnects,
@@ -425,6 +439,7 @@ class EdgeClient:
             self.session_id = p["session_id"]
             self._save_state()
             self._spawn(self._ship_logs(self.ws))
+            self._spawn(self._confirm_update(self.ws))
             log.info(
                 "joined session %s (resumed=%s, roles=%s)",
                 self.session_id,
@@ -484,6 +499,16 @@ class EdgeClient:
             await ws.send(protocol.text("system.pong", {**p, "t_device": time.time() * 1000}))
         elif kind == "device.diagnostics.request":
             self._spawn(self._send_diagnostics(self.ws, str(p.get("request_id") or "")))
+        elif kind == "device.update":
+            await self._update(p)
+            if self.exit_requested:
+                return "exit"
+        elif kind == "device.restart":
+            await self._restart(p)
+            if self.exit_requested:
+                return "exit"
+        elif kind == "device.wifi.set":
+            self._spawn(self._change_wifi(self.ws, p))
         elif kind == "device.config.set":
             await self._apply_settings(p)
             if self.restart_requested:
@@ -515,6 +540,94 @@ class EdgeClient:
                 if len(lines) == logship.BATCH:
                     continue  # more waiting (e.g. after a long time offline)
             await asyncio.sleep(LOG_SHIP_S)
+
+    async def _update(self, p: dict[str, Any]) -> None:
+        """Install the version the server offers, then exit so the service starts it."""
+        assert self.ws is not None
+        version = str(p.get("version") or "")
+        result: dict[str, Any] = {
+            "request_id": p.get("request_id"),
+            "ok": False,
+            "version": version,
+        }
+        where = update.layout()
+        try:
+            if where is None:
+                raise update.UpdateError(
+                    "this client was not set up by the server's installer; update it by hand"
+                )
+            if version == __version__:
+                result.update(ok=True, restarting=False)
+            else:
+                base, _ = where
+                assert self.route is not None
+                log.info("updating to companion-edge %s", version)
+                data = await asyncio.to_thread(
+                    update.download,
+                    update.package_url(self.route, version),
+                    self.config.token(),
+                    self._ssl_context(self.route),
+                )
+                await asyncio.to_thread(update.install, data, str(p.get("sha256")), version, base)
+                update.switch(base, version, previous=__version__)
+                result.update(ok=True, restarting=True)
+                self.exit_requested = True
+                log.info("companion-edge %s installed; restarting with it", version)
+        except (update.UpdateError, OSError, ValueError) as exc:
+            result["error"] = str(exc)
+            log.warning("update to %s failed: %s", version, exc)
+        await self.ws.send(protocol.text("device.update.result", result))
+
+    async def _confirm_update(self, ws: Any) -> None:
+        """Connected after an update: it worked; tell the server."""
+        where = update.layout()
+        previous = update.confirm(where[0]) if where else None
+        if previous is None:
+            return
+        log.info("updated from companion-edge %s to %s", previous, __version__)
+        with contextlib.suppress(websockets.WebSocketException):
+            await ws.send(
+                protocol.text(
+                    "device.update.result",
+                    {"ok": True, "version": __version__, "previous": previous, "connected": True},
+                )
+            )
+
+    async def _update_watchdog(self) -> None:
+        """A new version that cannot connect exits; the service goes back after a few tries."""
+        await asyncio.sleep(UPDATE_CONNECT_S)
+        if self.session_id is None or self.ws is None:
+            log.error("not connected %.0f s after an update; exiting", UPDATE_CONNECT_S)
+            logging.shutdown()
+            os._exit(3)
+
+    async def _restart(self, p: dict[str, Any]) -> None:
+        assert self.ws is not None
+        what = str(p.get("what") or "client")
+        await self.ws.send(
+            protocol.text("device.restart.result", {"request_id": p.get("request_id"), "ok": True})
+        )
+        if what == "board":
+            log.info("rebooting the board, as asked by the server")
+            await asyncio.create_subprocess_exec("reboot")
+        else:
+            log.info("restarting, as asked by the server")
+        self.exit_requested = True
+
+    async def _change_wifi(self, ws: Any, p: dict[str, Any]) -> None:
+        result: dict[str, Any] = {"request_id": p.get("request_id"), "ok": True}
+        add, remove = p.get("add") or [], p.get("remove") or []
+        try:
+            if add or remove:
+                state = await asyncio.to_thread(wifi.change, list(add), [str(r) for r in remove])
+                log.info("Wi-Fi networks changed from the server")
+            else:
+                state = await asyncio.to_thread(wifi.state)
+            result.update(state)
+        except (wifi.WifiError, OSError, KeyError) as exc:
+            result.update(ok=False, error=str(exc))
+        with contextlib.suppress(websockets.WebSocketException):
+            await ws.send(protocol.text("device.wifi.result", result))
 
     async def _send_diagnostics(self, ws: Any, request_id: str) -> None:
         sections = await diagnostics.collect(self.config, self.config_path, self.log_file)
@@ -629,6 +742,9 @@ class EdgeClient:
     async def run(self) -> str:
         """Serve until cancelled, or until new settings need a restart ("restart")."""
         tasks: list[asyncio.Task[None]] = [asyncio.create_task(self._heartbeat_loop())]
+        where = update.layout()
+        if where is not None and update.pending(where[0]):
+            tasks.append(asyncio.create_task(self._update_watchdog()))
         if self.mic is not None:
             tasks.append(asyncio.create_task(self._mic_loop()))
         if self.speaker is not None:
@@ -638,6 +754,7 @@ class EdgeClient:
             tasks.append(asyncio.create_task(self._camera_loop()))
         backoff = 1.0
         waiting_logged = False
+        last_reason, last_logged = "", 0.0
         try:
             while True:
                 outcome = "error"
@@ -649,8 +766,16 @@ class EdgeClient:
                     finally:
                         await ws.close()
                 except (OSError, TimeoutError, ssl.SSLError, websockets.WebSocketException) as exc:
-                    reason = exc or type(exc).__name__
-                    log.warning("server unreachable: %s (retrying in %.0f s)", reason, backoff)
+                    reason = str(exc) or type(exc).__name__
+                    # Offline for hours: one line per new reason or ten minutes, not every try.
+                    now = time.monotonic()
+                    if reason != last_reason or now - last_logged >= UNREACHABLE_LOG_S:
+                        log.warning("server unreachable: %s (retrying in %.0f s)", reason, backoff)
+                        last_reason, last_logged = reason, now
+                    else:
+                        log.debug("server unreachable: %s", reason)
+                if self.exit_requested:
+                    return "exit"
                 if self.restart_requested:
                     return "restart"
                 if outcome in ("no_session", "ended"):
