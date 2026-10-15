@@ -16,11 +16,20 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
+from fastapi import (
+    APIRouter,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+)
 from pydantic import BaseModel, ValidationError
 
 from companion import __version__
-from companion.api.auth import require_admin
+from companion.api.auth import admin_refusal, require_admin
 from companion.core.config import (
     CameraConfig,
     CompanionConfig,
@@ -147,7 +156,7 @@ def _unprocessable(message: str, path: str = "") -> HTTPException:
     return HTTPException(status_code=422, detail={"errors": [{"path": path, "message": message}]})
 
 
-def _save(
+async def _save(
     runtime: CompanionRuntime, source: ConfigSource, desired: dict[str, Any]
 ) -> dict[str, Any]:
     """Save settings, apply the live ones, report what waits for a restart."""
@@ -160,6 +169,7 @@ def _save(
         raise _unprocessable(str(exc)) from exc
     applied, _ = runtime.reconfigure(next_config)
     pending = [p for p in _pending(runtime, source) if needs_restart(p)]
+    await runtime.notice("settings_saved", {"applied": applied, "pending_restart": pending})
     log.info(
         "settings saved", extra=kv(file=str(written), applied=len(applied), pending=len(pending))
     )
@@ -168,7 +178,7 @@ def _save(
 
 @router.put("/config")
 async def save_config(request: Request, body: SaveRequest) -> dict[str, Any]:
-    return _save(_runtime(request), _require_source(request), body.config)
+    return await _save(_runtime(request), _require_source(request), body.config)
 
 
 # --- personas ---------------------------------------------------------------
@@ -292,7 +302,7 @@ async def activate_persona(request: Request, name: str) -> dict[str, Any]:
     except ConfigError as exc:
         raise _unprocessable(str(exc)) from exc
     desired["agent"]["persona"] = name
-    return _save(runtime, source, desired)
+    return await _save(runtime, source, desired)
 
 
 # --- cameras ----------------------------------------------------------------
@@ -339,7 +349,7 @@ async def save_cameras(request: Request, body: CamerasBody) -> dict[str, Any]:
     except ConfigError as exc:
         raise _unprocessable(str(exc)) from exc
     desired["cameras"] = body.cameras
-    return _save(_runtime(request), source, desired)
+    return await _save(_runtime(request), source, desired)
 
 
 def _jpeg(data: bytes) -> Response:
@@ -459,6 +469,35 @@ async def restart(request: Request) -> dict[str, Any]:
     log.info("restart requested from the dashboard")
     asyncio.get_running_loop().call_later(RESTART_DELAY_S, request_restart)
     return {"host": next_config.server.host, "port": next_config.server.port}
+
+
+# --- live events --------------------------------------------------------------
+
+# Not under ``router``: a WebSocket cannot answer with an HTTP error, so it
+# checks admin access itself and says why it closes.
+events_router = APIRouter()
+
+
+@events_router.websocket("/v1/admin/events")
+async def admin_events(ws: WebSocket) -> None:
+    """The dashboard's live events: first {"recent": [...]}, then {"event": {...}} each."""
+    refusal = admin_refusal(ws)
+    await ws.accept()
+    if refusal is not None:
+        status, reason = refusal
+        await ws.send_json({"error": reason, "status": status})
+        await ws.close(code=4000 + status)
+        return
+    feed = _runtime(ws).feed  # type: ignore[arg-type]
+    queue = feed.watch()
+    try:
+        await ws.send_json({"recent": feed.recent()})
+        while True:
+            await ws.send_json({"event": await queue.get()})
+    except (WebSocketDisconnect, RuntimeError):
+        pass  # the page was closed
+    finally:
+        feed.unwatch(queue)
 
 
 @router.get("/status")
