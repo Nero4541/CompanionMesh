@@ -15,6 +15,14 @@ server:
   # they only answer this machine; the device token above never grants access.
   admin_token_env: COMPANION_ADMIN_TOKEN
   dashboard_conversation: false  # show transcripts and replies on the dashboard
+  # For boards outside this network (router port forward or IPv6): a second
+  # listener with TLS that serves only devices with their own tokens, never the
+  # dashboard. See README, "Reaching the server from outside".
+  public:
+    enabled: false
+    hosts: ["0.0.0.0", "::"]
+    port: 8766
+    url: null               # e.g. wss://home.example.net:8766/v1/realtime
 
 logging:
   level: INFO               # DEBUG | INFO | WARNING | ERROR
