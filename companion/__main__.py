@@ -32,6 +32,10 @@ def _parser() -> argparse.ArgumentParser:
     edge = sub.add_parser("edge", help="set up a board (edge device) over SSH")
     edge_sub = edge.add_subparsers(dest="edge_command", required=True)
     edge_sub.add_parser("discover", help="list boards connected to this computer by USB")
+    doc = edge_sub.add_parser(
+        "doctor", help="show what a board connected by USB says about itself (log, Wi-Fi, check)"
+    )
+    doc.add_argument("--host", help="the board's address (default: the board found on USB)")
     inst = edge_sub.add_parser(
         "install", help="install the edge client on a board and connect it to this server"
     )
