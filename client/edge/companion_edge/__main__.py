@@ -13,7 +13,7 @@ import signal
 import sys
 from pathlib import Path
 
-from companion_edge import __version__
+from companion_edge import __version__, logship
 from companion_edge.config import EdgeConfig, load
 
 # A board's SD card should not fill up with logs.
@@ -99,6 +99,7 @@ def main(argv: list[str] | None = None) -> int:
         datefmt="%Y-%m-%d %H:%M:%S" if args.log_file else "%H:%M:%S",
         handlers=[handler],
     )
+    logging.getLogger().addHandler(logship.BUFFER)  # sent to the server (device.log)
     try:
         config = load(args.config)
     except (OSError, ValueError) as exc:
@@ -114,7 +115,10 @@ def main(argv: list[str] | None = None) -> int:
     # Settings changed from the server's dashboard are saved to --config and
     # taken by starting over in this process (no service manager needed).
     try:
-        while asyncio.run(_serve(EdgeClient(config, config_path=args.config))) == "restart":
+        while (
+            asyncio.run(_serve(EdgeClient(config, config_path=args.config, log_file=args.log_file)))
+            == "restart"
+        ):
             config = load(args.config)
             if args.server:
                 config.server = args.server
