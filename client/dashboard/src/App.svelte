@@ -3,6 +3,7 @@
   import Cameras from "./pages/Cameras.svelte";
   import Config from "./pages/Config.svelte";
   import Devices from "./pages/Devices.svelte";
+  import Events from "./pages/Events.svelte";
   import Metrics from "./pages/Metrics.svelte";
   import Overview from "./pages/Overview.svelte";
   import Personas from "./pages/Personas.svelte";
@@ -14,6 +15,7 @@
     { id: "personas", label: "Personas", component: Personas },
     { id: "cameras", label: "Cameras", component: Cameras },
     { id: "devices", label: "Devices", component: Devices },
+    { id: "events", label: "Events", component: Events },
   ];
 
   function current() {
