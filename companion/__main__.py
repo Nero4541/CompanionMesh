@@ -1,4 +1,4 @@
-"""Command line entry point: ``uv run companion [serve|check]``."""
+"""Command line entry point: ``uv run companion [serve|check|setup|camera]``."""
 
 from __future__ import annotations
 
@@ -27,6 +27,7 @@ def _parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="command")
     sub.add_parser("serve", help="run the server (default)")
     sub.add_parser("check", help="validate config and probe providers, then exit")
+    sub.add_parser("setup", help="first-run questions: agent, speech, tokens (.env + local config)")
     cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
     cam.add_argument(
         "source",
@@ -245,6 +246,10 @@ def main(argv: list[str] | None = None) -> int:
         overrides.setdefault("server", {})["port"] = args.port
     try:
         source = config_source(args.config, overrides=overrides)
+        if args.command == "setup":
+            from companion import setup
+
+            return setup.run(source)
         config = source.load()
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
