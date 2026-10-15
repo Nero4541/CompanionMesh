@@ -11,7 +11,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from companion.api.auth import presented_token, token_ok
+from companion.api.auth import authenticate
 from companion.core.clock import now_ms
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
@@ -135,7 +135,8 @@ async def _ping_loop(session: Session, device: Device, interval_s: float) -> Non
 @router.websocket("/v1/realtime")
 async def realtime(ws: WebSocket) -> None:
     runtime: CompanionRuntime = ws.app.state.runtime
-    if not token_ok(runtime.config.server, presented_token(ws)):
+    identity = authenticate(runtime.config.server, runtime.devices, ws)
+    if identity is None:
         await ws.close(code=1008, reason="missing or wrong token")
         return
     await ws.accept()
@@ -150,6 +151,14 @@ async def realtime(ws: WebSocket) -> None:
         if start.type != ev.SESSION_START:
             await _send_error(outbox, "protocol", "first event must be session.start")
             await ws.close(code=1002)
+            return
+        if identity.device_id is not None and start.device_id != identity.device_id:
+            await _send_error(
+                outbox,
+                "wrong_device",
+                f"this token belongs to device {identity.device_id!r}; set device_id to it",
+            )
+            await ws.close(code=1008)
             return
         requested = start.payload.get("session_id") or start.session_id
         try:
@@ -197,6 +206,8 @@ async def realtime(ws: WebSocket) -> None:
         interval = runtime.config.realtime.ping_interval_s
         if interval > 0:
             pinger = asyncio.create_task(_ping_loop(session, device, interval))
+        if identity.device_id is not None:
+            runtime.devices.seen(identity.device_id)
         await runtime.notice(
             "device_connected",
             {"device_id": start.device_id, "roles": sorted(device.roles), "resumed": resumed},
