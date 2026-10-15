@@ -38,7 +38,10 @@ class AudioConfig:
 @dataclass
 class CameraConfig:
     enabled: bool = True
-    device: str = "/dev/video0"
+    # v4l2: a camera ffmpeg can open (USB webcams, most boards); cvi: a MIPI
+    # CSI camera on CVITEK boards without V4L2 (LicheeRV Nano), see cvi.py.
+    driver: str = "v4l2"
+    device: str = "/dev/video0"  # v4l2 only
     input_format: str = "mjpeg"  # v4l2 input format; "" lets ffmpeg choose
     size: str = "640x480"
     # change: watch the camera locally and send frames only when the view changes
@@ -52,6 +55,7 @@ class CameraConfig:
     min_interval_s: float = 5.0  # periodic mode: fastest frame rate
     max_interval_s: float = 60.0  # periodic mode: backs off to this while nothing changes
     quality: int = 5  # ffmpeg -q:v (2 = best, 31 = worst)
+    rotate: int = 0  # degrees clockwise (0, 90, 180, 270) for a camera mounted turned
 
 
 @dataclass
