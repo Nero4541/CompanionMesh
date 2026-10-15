@@ -27,7 +27,9 @@ aec = "none"                 # "device" if this hardware cancels its own speaker
 
 [camera]
 enabled = true
-device = "/dev/video0"
+driver = "v4l2"              # v4l2 (ffmpeg); cvi for the MIPI camera of CVITEK boards (LicheeRV Nano)
+device = "/dev/video0"       # v4l2 only
+rotate = 0                   # degrees clockwise (0, 90, 180, 270) if the camera is mounted turned
 input_format = "mjpeg"       # "" if the camera has no MJPEG mode
 size = "640x480"
 mode = "change"              # change: send frames only when the view changes; or periodic
