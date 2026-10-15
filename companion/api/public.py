@@ -1,7 +1,8 @@
 """The public listener (``server.public``): what devices outside this network may reach.
 
-Only ``/health`` and ``/v1/realtime``. Compared with the main listener it is
-stricter, because anyone on the Internet can knock:
+Only ``/health``, ``/v1/realtime`` and the edge client package for updates.
+Compared with the main listener it is stricter, because anyone on the Internet
+can knock:
 
 - only enrolled devices' own tokens (``companion edge install``), never the
   shared ``COMPANION_TOKEN``, and only in the ``Authorization`` header (a
@@ -19,12 +20,13 @@ import logging
 import time
 from collections import defaultdict, deque
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, HTTPException, Request, Response, WebSocket
 from fastapi.responses import JSONResponse
 
 from companion import __version__
 from companion.api import realtime
 from companion.api.auth import Identity
+from companion.api.http import edge_package_response
 from companion.core.config import PublicListenerConfig
 from companion.core.logging import kv
 from companion.core.runtime import CompanionRuntime
@@ -80,8 +82,8 @@ def client_address(ws: WebSocket, config: PublicListenerConfig) -> str:
     return ws.client.host if ws.client else "?"
 
 
-def header_token(ws: WebSocket) -> str | None:
-    header = ws.headers.get("authorization", "")
+def header_token(conn: WebSocket | Request) -> str | None:
+    header = conn.headers.get("authorization", "")
     if header.lower().startswith("bearer "):
         return header[7:].strip() or None
     return None
@@ -103,6 +105,22 @@ def create_public_app(runtime: CompanionRuntime) -> FastAPI:
     @app.get("/health")
     async def health() -> JSONResponse:
         return JSONResponse({"status": "ok"})
+
+    @app.get("/v1/edge/package/{name}")
+    async def package(request: Request, name: str) -> Response:
+        """The edge client for device.update; enrolled devices only."""
+        address = request.client.host if request.client else "?"
+        if config.trusted_proxy:
+            forwarded = request.headers.get("cf-connecting-ip") or request.headers.get(
+                "x-forwarded-for", ""
+            )
+            address = forwarded.split(",")[0].strip() or address
+        if guard.banned(address):
+            raise HTTPException(status_code=403, detail="try again later")
+        if runtime.devices.identify(header_token(request)) is None:
+            guard.failed(address)
+            raise HTTPException(status_code=401, detail="missing or wrong device token")
+        return edge_package_response(name)
 
     @app.websocket("/v1/realtime")
     async def device_realtime(ws: WebSocket) -> None:
