@@ -1,4 +1,4 @@
-"""Event type names of the realtime protocol (1.1).
+"""Event type names of the realtime protocol (1.2).
 
 Client -> server
     session.start            payload: {session_id?, join?, roles?}
@@ -44,6 +44,12 @@ Client -> server
                              editable, choices?}})
     device.config.result     payload: {request_id, ok, restarting, error?}  (answer
                              to device.config.set)
+    device.log               payload: {boot, records: [{seq, t, level, logger, msg}]}
+                             (1.2) the device's own log lines; boot is random per
+                             process start, seq counts up within it; lines logged
+                             while offline follow on the next connection
+    device.diagnostics       payload: {request_id, sections: {name: text}}  (1.2)
+                             answer to device.diagnostics.request
 
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
@@ -85,9 +91,12 @@ Server -> client
     device.config.set        payload: {request_id, config}  (new settings for this
                              device, from the admin dashboard; answer
                              device.config.result)
+    device.diagnostics.request  payload: {request_id}  (1.2) collect a fixed set of
+                             facts about the device (versions, check, memory, disk,
+                             Wi-Fi, kernel log) and answer device.diagnostics
 """
 
-PROTOCOL_VERSION = "1.1"
+PROTOCOL_VERSION = "1.2"
 
 # client -> server
 SESSION_START = "session.start"
@@ -108,6 +117,8 @@ ATTENTION_QUIET = "attention.quiet"
 DEVICE_STATUS = "device.status"
 DEVICE_CONFIG = "device.config"
 DEVICE_CONFIG_RESULT = "device.config.result"
+DEVICE_LOG = "device.log"
+DEVICE_DIAGNOSTICS = "device.diagnostics"
 
 # server -> client
 SESSION_STARTED = "session.started"
@@ -134,3 +145,4 @@ ATTENTION_STATE = "attention.state"
 ATTENTION_DECISION = "attention.decision"
 METRICS_TURN = "metrics.turn"
 DEVICE_CONFIG_SET = "device.config.set"
+DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
