@@ -26,6 +26,42 @@ class _Section(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class PublicListenerConfig(_Section):
+    """A second listener for devices outside this network (router port forward, IPv6).
+
+    It serves only what devices need (/health and /v1/realtime), accepts only
+    enrolled devices' own tokens, sent as a header, and uses TLS with this
+    server's own certificate (data/tls), which the board installer copies to
+    the boards. The dashboard and the dev client are never served on it.
+    """
+
+    enabled: bool = False
+    # Both IPv4 and IPv6 by default; an address family the machine lacks is skipped.
+    hosts: list[str] = Field(default_factory=lambda: ["0.0.0.0", "::"])
+    port: int = Field(default=8766, ge=1, le=65535)
+    # How boards reach it from outside, e.g. wss://home.example.net:8766/v1/realtime
+    # (a dynamic DNS name or the public address); the installer gives it to boards.
+    url: str | None = None
+    # Your own certificate instead of the generated one (e.g. from a CA); boards then
+    # check it against their system CAs and the name in url.
+    cert_file: Path | None = None
+    key_file: Path | None = None
+    # Behind a reverse proxy or tunnel on this machine: take the client address from
+    # X-Forwarded-For / CF-Connecting-IP (for the limits below). Off: the TCP peer.
+    trusted_proxy: bool = False
+    # An address that fails to authenticate this often within ban_s is refused for ban_s.
+    max_failed_auth: int = Field(default=10, ge=1)
+    ban_s: float = Field(default=900.0, gt=0)
+    max_connections_per_address: int = Field(default=4, ge=1)
+
+    @field_validator("url")
+    @classmethod
+    def _wss(cls, v: str | None) -> str | None:
+        if v and not v.startswith(("wss://", "ws://")):
+            raise ValueError("a ws:// or wss:// URL, e.g. wss://home.example.net:8766/v1/realtime")
+        return v or None
+
+
 class ServerConfig(_Section):
     host: str = "127.0.0.1"
     port: int = Field(default=8765, ge=1, le=65535)
@@ -43,6 +79,7 @@ class ServerConfig(_Section):
     # Show what was said (transcripts and replies) on the dashboard; off, the
     # dashboard only sees their length.
     dashboard_conversation: bool = False
+    public: PublicListenerConfig = PublicListenerConfig()
 
     def auth_token(self) -> str | None:
         if not self.auth_token_env:
