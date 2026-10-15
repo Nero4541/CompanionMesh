@@ -3,6 +3,7 @@
   import Boards from "./pages/Boards.svelte";
   import Cameras from "./pages/Cameras.svelte";
   import Config from "./pages/Config.svelte";
+  import Conversations from "./pages/Conversations.svelte";
   import Devices from "./pages/Devices.svelte";
   import Events from "./pages/Events.svelte";
   import Metrics from "./pages/Metrics.svelte";
@@ -18,6 +19,7 @@
     { id: "devices", label: "Devices", component: Devices },
     { id: "boards", label: "Boards", component: Boards },
     { id: "events", label: "Events", component: Events },
+    { id: "conversations", label: "Conversations", component: Conversations },
   ];
 
   function current() {
