@@ -73,11 +73,24 @@ DIR={BOARD_DIR}
 set -a
 . "$DIR/edge.env"
 set +a
-# python3 -m imports from the current directory first: run from the release.
-cd "$DIR/current" || exit 1
 child=
 trap 'kill "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 while true; do
+  # After an update (update.pending names the version before it), the new version
+  # has three starts to connect; then this goes back to the version before.
+  if [ -f "$DIR/update.pending" ]; then
+    tries=$(cat "$DIR/update.tries" 2>/dev/null || echo 0)
+    tries=$((tries + 1))
+    echo "$tries" > "$DIR/update.tries"
+    if [ "$tries" -gt 3 ]; then
+      ln -sfn "releases/$(cat "$DIR/update.pending")" "$DIR/current"
+      rm -f "$DIR/update.pending" "$DIR/update.tries"
+      echo "$(date): the update did not connect; went back" >> "$DIR/logs/update.log"
+    fi
+  fi
+  # python3 -m imports from the current directory first: run from the release
+  # (again each time, as an update moves current).
+  cd "$DIR/current" || exit 1
   python3 -u -m companion_edge --config "$DIR/edge.toml" \\
     --log-file "$DIR/logs/edge.log" 2>"$DIR/logs/crash.log" &
   child=$!
@@ -243,8 +256,8 @@ def _section_body(lines: list[str], section: str | None) -> tuple[int, int] | No
 def toml_set(text: str, section: str | None, key: str, value: Any) -> str:
     """Set ``key`` in ``[section]`` (None: the top level) of a TOML file's text.
 
-    Replaces the key's line, or a commented-out ``# key = ...`` line, keeping a
-    trailing comment of a live line; appends the key to the section if absent.
+    Replaces the key's line (its trailing comment stays only if the value does),
+    or a commented-out ``# key = ...`` line; appends the key to the section if absent.
     Only for the flat files of the edge client (no arrays of tables).
     """
     lines = text.splitlines()
@@ -260,7 +273,9 @@ def toml_set(text: str, section: str | None, key: str, value: Any) -> str:
     if replaced is not None:
         match = live.match(lines[replaced])
         assert match is not None
-        lines[replaced] = f"{match[1]}{setting}" + (f"   {match[2]}" if match[2] else "")
+        # A trailing comment usually describes the value: keep it only if that stays.
+        same = lines[replaced].split("#")[0].split("=", 1)[1].strip() == toml_value(value)
+        lines[replaced] = f"{match[1]}{setting}" + (f"   {match[2]}" if match[2] and same else "")
     else:
         uncommented = next((i for i in range(start, end) if commented.match(lines[i])), None)
         if uncommented is not None:
@@ -293,6 +308,22 @@ def edge_toml(plan: InstallPlan, existing: str | None) -> str:
         text = toml_set(text, "camera", "enabled", plan.camera)
     if plan.rotate is not None:
         text = toml_set(text, "camera", "rotate", plan.rotate)
+    return text
+
+
+# Never restored from a remembered config: they say where and who the board is.
+_NOT_RESTORED = {"server", "servers", "server_cert", "token_env", "device_id", "state_file"}
+
+
+def restore_settings(text: str, remembered: dict[str, Any]) -> str:
+    """``text`` (an edge.toml) with the settings a board reported before it was reflashed."""
+    for key, value in remembered.items():
+        if isinstance(value, dict):
+            for name, item in value.items():
+                if isinstance(item, (bool, int, float, str)):
+                    text = toml_set(text, key, name, item)
+        elif key not in _NOT_RESTORED and isinstance(value, (bool, int, float, str)):
+            text = toml_set(text, None, key, value)
     return text
 
 
@@ -664,10 +695,20 @@ async def install(
             )
         if plan.server_cert_pem:
             await board.write(SERVER_CERT, plan.server_cert_pem)
-        await board.write(f"{BOARD_DIR}/edge.toml", edge_toml(plan, existing))
+        text = edge_toml(plan, existing)
+        remembered = enrolled.settings if enrolled is not None else None
+        if existing is None and remembered:  # reflashed: bring back what it had
+            text = edge_toml(plan, restore_settings(text, remembered))
+        await board.write(f"{BOARD_DIR}/edge.toml", text)
         await board.write(f"{BOARD_DIR}/edge.env", f"COMPANION_TOKEN={token}\n", mode=0o600)
         await board.write(f"{BOARD_DIR}/service.sh", SERVICE_SH, mode=0o755)
-        kept = "kept the board's settings" if existing else f"profile {plan.profile}"
+        kept = (
+            "kept the board's settings"
+            if existing
+            else "restored the settings it had before"
+            if remembered
+            else f"profile {plan.profile}"
+        )
         reach = f"; from outside {plan.public_url}" if plan.public_url else ""
         report("settings", "ok", f"{kept}; server {plan.server_url}{reach}")
 
@@ -732,12 +773,76 @@ async def install(
         conn.close()
 
 
+# -- when a board cannot connect at all: look at it over USB -------------------------
+
+DOCTOR = [
+    (
+        "version",
+        f"cd {BOARD_DIR}/current 2>/dev/null && python3 -m companion_edge --version"
+        " || echo 'not set up by a Companion Server'",
+    ),
+    ("running", "ps | grep '[c]ompanion_edge' || echo 'companion-edge is not running'"),
+    (
+        "check",
+        f"set -a; . {BOARD_DIR}/edge.env 2>/dev/null; set +a; cd {BOARD_DIR}/current"
+        f" && python3 -m companion_edge --config {BOARD_DIR}/edge.toml --check",
+    ),
+    ("settings", f"cat {BOARD_DIR}/edge.toml"),
+    ("log", f"tail -n 40 {BOARD_DIR}/logs/edge.log"),
+    ("last crash", f"cat {BOARD_DIR}/logs/crash.log 2>/dev/null"),
+    (
+        "updates",
+        f"cat {BOARD_DIR}/logs/update.log 2>/dev/null; ls -l {BOARD_DIR}/current;"
+        f" ls {BOARD_DIR}/releases",
+    ),
+    ("wifi", "wpa_cli -i wlan0 status 2>/dev/null; ip addr show wlan0"),
+    ("clock", "date"),
+]
+
+
+async def doctor(
+    host: str, *, registry: DeviceRegistry, data_dir: Path, password: str | None = None
+) -> list[tuple[str, str]]:
+    """What a board says about itself, read over SSH (USB): for boards that cannot connect."""
+    passwords: list[str | None] = [password] if password else []
+    passwords += [d.root_password for d in registry.list() if d.root_password]
+    passwords.append(STOCK_PASSWORD)
+    conn, _ = await connect(host, server_key(data_dir), list(dict.fromkeys(passwords)))
+    board = Board(conn)
+    try:
+        return [
+            (title, (await board.run(command, check=False)).strip() or "(nothing)")
+            for title, command in DOCTOR
+        ]
+    finally:
+        conn.close()
+
+
 # -- command line ------------------------------------------------------------------
 
 
 def run_cli(args: Any, config: Any) -> int:
     """``companion edge discover|install`` (see ``companion/__main__.py``)."""
     import getpass
+
+    if args.edge_command == "doctor":
+        host = args.host or next(iter(asyncio.run(discover())), None)
+        if not host:
+            print("No board found on USB; give --host.")
+            return 1
+        data_dir = config.storage.data_dir
+        try:
+            sections = asyncio.run(
+                doctor(host, registry=DeviceRegistry(data_dir / "devices.json"), data_dir=data_dir)
+            )
+        except InstallError as exc:
+            print(f"FAIL {exc}")
+            return 1
+        for title, text in sections:
+            print(f"== {title}")
+            print(text)
+            print()
+        return 0
 
     if args.edge_command == "discover":
         found = asyncio.run(discover())
