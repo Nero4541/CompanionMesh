@@ -11,7 +11,7 @@ import uuid
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from starlette.websockets import WebSocketState
 
-from companion.api.auth import authenticate
+from companion.api.auth import Identity, authenticate
 from companion.core.clock import now_ms
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
@@ -142,6 +142,12 @@ async def realtime(ws: WebSocket) -> None:
     if identity is None:
         await ws.close(code=1008, reason="missing or wrong token")
         return
+    await serve(ws, identity)
+
+
+async def serve(ws: WebSocket, identity: Identity) -> None:
+    """One realtime connection, once the caller has authenticated it."""
+    runtime: CompanionRuntime = ws.app.state.runtime
     await ws.accept()
     outbox = WebSocketOutbox(ws)
     session: Session | None = None
