@@ -6,6 +6,7 @@ import argparse
 import asyncio
 import contextlib
 import logging
+import logging.handlers
 import os
 import shutil
 import signal
@@ -14,6 +15,9 @@ from pathlib import Path
 
 from companion_edge import __version__
 from companion_edge.config import EdgeConfig, load
+
+# A board's SD card should not fill up with logs.
+LOG_FILE_BYTES = 512 * 1024
 
 
 def check(config: EdgeConfig) -> int:
@@ -75,12 +79,25 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--server", help="override the realtime URL")
     parser.add_argument("--check", action="store_true", help="check tools and devices, then exit")
     parser.add_argument("-v", "--verbose", action="store_true")
+    parser.add_argument(
+        "--log-file",
+        type=Path,
+        help="log to this file instead of stderr, rotated at 512 KB (3 old files kept)",
+    )
     args = parser.parse_args(argv)
 
+    # With a log file (a service), stderr is left for crashes before logging works.
+    handler: logging.Handler = logging.StreamHandler()
+    if args.log_file:
+        args.log_file.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.handlers.RotatingFileHandler(
+            args.log_file, maxBytes=LOG_FILE_BYTES, backupCount=3, encoding="utf-8"
+        )
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
         format="%(asctime)s %(levelname)-7s %(name)s: %(message)s",
-        datefmt="%H:%M:%S",
+        datefmt="%Y-%m-%d %H:%M:%S" if args.log_file else "%H:%M:%S",
+        handlers=[handler],
     )
     try:
         config = load(args.config)
