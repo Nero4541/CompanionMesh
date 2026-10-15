@@ -29,6 +29,7 @@ from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
 from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
+from companion.devices.registry import DeviceRegistry
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
 from companion.protocol import events as ev
 from companion.protocol import make_event
@@ -133,6 +134,7 @@ class CompanionRuntime:
         # Reads self.config at call time, so new utterances follow live VAD changes.
         self._vad_factory = providers.vad_factory or (lambda: create_vad(self.config.vad))
         self.sessions: dict[str, Session] = {}
+        self.devices = DeviceRegistry(config.storage.data_dir / "devices.json")
         self.cameras = CameraManager(providers.camera_factory)
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
@@ -301,6 +303,16 @@ class CompanionRuntime:
                 self.cameras.apply(self.config)
             log.info("settings applied", extra=kv(settings=",".join(applied)))
         return applied, pending
+
+    async def disconnect_device(self, device_id: str) -> int:
+        """Close every connection of ``device_id`` (e.g. its token was revoked)."""
+        closed = 0
+        for session in list(self.sessions.values()):
+            for device in list(session.devices):
+                if device.device_id == device_id:
+                    await device.outbox.close()
+                    closed += 1
+        return closed
 
     def find_device(self, device_id: str) -> tuple[Session, Device] | None:
         for session in self.sessions.values():
