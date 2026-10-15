@@ -34,11 +34,14 @@ full_duplex = false
 aec = "none"
 
 [camera]
-# Off unless the board has a camera that shows up as /dev/video* (v4l2).
+# The camera module on the board's MIPI CSI connector (GC4653 on Sipeed's kit).
+# Sipeed's image has no V4L2 for it; driver "cvi" drives Sipeed's sensor_test
+# instead (see companion_edge/cvi.py). Set enabled = true once it is plugged in;
+# if the picture comes out sideways, set rotate (90, 180 or 270).
 enabled = false
-device = "/dev/video0"
-input_format = "mjpeg"
-size = "640x480"
+driver = "cvi"
+size = "640x360"                 # the sensor is 16:9
+rotate = 0
 mode = "change"
 analysis_fps = 1                 # the single core is busy enough with audio
 heartbeat_s = 300
