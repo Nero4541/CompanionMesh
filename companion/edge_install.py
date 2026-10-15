@@ -62,6 +62,7 @@ STOCK_PASSWORD = "root"  # Sipeed's images (and many others) ship with root/root
 SERVICE_NAME = "S96companion-edge"
 PIDFILE = "/run/companion-edge-service.pid"
 KEEP_RELEASES = 2  # the current one and the one before it, for going back
+SERVER_CERT = f"{BOARD_DIR}/server.crt"  # the public listener's own certificate
 
 Progress = Callable[[str, str, str], None]  # (step, status: run|ok|warn|fail, detail)
 
@@ -167,6 +168,10 @@ class InstallPlan:
     password: str | None = None  # the board's current root password, if not the stock one
     change_password: bool = True
     start: bool = True
+    # The server's public address (server.public.url) and, unless that listener
+    # has a certificate from a CA, its own certificate for the board to trust.
+    public_url: str | None = None
+    server_cert_pem: str | None = None
 
 
 @dataclass
@@ -212,6 +217,8 @@ def toml_value(value: Any) -> str:
         return "true" if value else "false"
     if isinstance(value, (int, float)):
         return str(value)
+    if isinstance(value, list):
+        return "[" + ", ".join(toml_value(item) for item in value) + "]"
     return json.dumps(str(value), ensure_ascii=False)
 
 
@@ -276,6 +283,9 @@ def edge_toml(plan: InstallPlan, existing: str | None) -> str:
     else:
         text = existing
     text = toml_set(text, None, "server", plan.server_url)
+    servers = [plan.server_url, plan.public_url] if plan.public_url else []
+    text = toml_set(text, None, "servers", servers)
+    text = toml_set(text, None, "server_cert", SERVER_CERT if plan.server_cert_pem else "")
     text = toml_set(text, None, "token_env", "COMPANION_TOKEN")
     text = toml_set(text, None, "device_id", plan.device_id)
     text = toml_set(text, None, "state_file", f"{BOARD_DIR}/state.json")
@@ -448,6 +458,18 @@ def server_key(data_dir: Path) -> asyncssh.SSHKey:
     with contextlib.suppress(OSError):
         path.chmod(0o600)
     return key
+
+
+def public_reach(config: Any) -> tuple[str | None, str | None]:
+    """(public URL, certificate PEM for boards to trust) from the server's config."""
+    public = config.server.public
+    if not public.enabled or not public.url:
+        return None, None
+    if public.cert_file:  # from a CA: boards check it like any website
+        return public.url, None
+    from companion.core.tls import ensure_certificate
+
+    return public.url, ensure_certificate(config.storage.data_dir / "tls").pem()
 
 
 # -- talking to the board ----------------------------------------------------------
@@ -640,11 +662,14 @@ async def install(
             await board.run(
                 f"cp {BOARD_DIR}/edge.toml {BOARD_DIR}/edge.toml.before-install-{stamp}"
             )
+        if plan.server_cert_pem:
+            await board.write(SERVER_CERT, plan.server_cert_pem)
         await board.write(f"{BOARD_DIR}/edge.toml", edge_toml(plan, existing))
         await board.write(f"{BOARD_DIR}/edge.env", f"COMPANION_TOKEN={token}\n", mode=0o600)
         await board.write(f"{BOARD_DIR}/service.sh", SERVICE_SH, mode=0o755)
         kept = "kept the board's settings" if existing else f"profile {plan.profile}"
-        report("settings", "ok", f"{kept}; server {plan.server_url}")
+        reach = f"; from outside {plan.public_url}" if plan.public_url else ""
+        report("settings", "ok", f"{kept}; server {plan.server_url}{reach}")
 
         if plan.wifi:
             report("wifi", "run", ", ".join(n.ssid for n in plan.wifi))
@@ -749,10 +774,13 @@ def run_cli(args: Any, config: Any) -> int:
         if (args.ask_password)
         else None
     )
+    public_url, cert_pem = public_reach(config)
     plan = InstallPlan(
         device_id=args.name,
         host=host,
         server_url=server_url,
+        public_url=public_url,
+        server_cert_pem=cert_pem,
         profile=args.profile,
         camera=args.camera,
         rotate=args.rotate,
