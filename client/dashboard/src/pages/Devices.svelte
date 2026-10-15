@@ -245,7 +245,7 @@
                       {#if f.type === "bool"}
                         <input id={`d-${f.path}`} type="checkbox" checked={v} disabled={ro} onchange={(e) => set(f.path, e.currentTarget.checked)} />
                       {:else if f.choices}
-                        <select id={`d-${f.path}`} value={v} disabled={ro} onchange={(e) => set(f.path, e.currentTarget.value)}>
+                        <select id={`d-${f.path}`} value={v} disabled={ro} onchange={(e) => set(f.path, f.type === "int" || f.type === "float" ? Number(e.currentTarget.value) : e.currentTarget.value)}>
                           {#each f.choices as option}<option value={option}>{option}</option>{/each}
                         </select>
                       {:else if f.type === "int" || f.type === "float"}
