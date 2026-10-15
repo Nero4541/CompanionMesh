@@ -46,6 +46,7 @@ def create_app(
     app.include_router(http.protected)
     app.include_router(realtime.router)
     app.include_router(admin.router)
+    app.include_router(admin.events_router)
 
     if config.server.dashboard and DASHBOARD_DIR.is_dir():
         app.mount("/admin", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
