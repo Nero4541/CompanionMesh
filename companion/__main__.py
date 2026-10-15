@@ -7,6 +7,7 @@ import asyncio
 import errno
 import logging
 import socket
+import ssl
 import sys
 from pathlib import Path
 
@@ -111,11 +112,65 @@ def _check_port(host: str, port: int) -> str | None:
     return None
 
 
+def _load_with_stdlib_ssl(config: object) -> None:
+    """Load a uvicorn config that serves TLS with the standard library's SSLContext.
+
+    truststore (injected for outgoing HTTPS, see _use_system_certificates) is
+    made for clients; a server context built from it answers no requests.
+    """
+    try:
+        import truststore
+    except ImportError:
+        config.load()  # type: ignore[attr-defined]
+        return
+    injected = ssl.SSLContext is truststore.SSLContext
+    if injected:
+        truststore.extract_from_ssl()
+    try:
+        config.load()  # type: ignore[attr-defined]
+    finally:
+        if injected:
+            truststore.inject_into_ssl()
+
+
+def _public_sockets(config: CompanionConfig) -> list[socket.socket]:
+    """Listening sockets for the public listener; an address family the machine
+    lacks (often IPv6) is skipped with a warning."""
+    public = config.server.public
+    sockets = []
+    for host in public.hosts:
+        family = socket.AF_INET6 if ":" in host else socket.AF_INET
+        sock = socket.socket(family, socket.SOCK_STREAM)
+        try:
+            if family == socket.AF_INET6:  # IPv6 only, so "0.0.0.0" can have IPv4
+                sock.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+            if sys.platform != "win32":
+                sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            sock.bind((host, public.port))
+        except OSError as exc:
+            sock.close()
+            log.warning("public listener cannot use %s:%s: %s", host, public.port, exc)
+            continue
+        sockets.append(sock)
+    return sockets
+
+
 def _run_server(config: CompanionConfig, source: ConfigSource | None) -> bool:
     """Serve until stopped; True if the dashboard asked for a restart."""
+    import contextlib
+
     import uvicorn
 
     from companion.api.app import create_app
+    from companion.api.public import create_public_app
+    from companion.core.tls import ensure_certificate
+
+    class DeviceServer(uvicorn.Server):
+        """The public listener: the main server handles signals for both."""
+
+        @contextlib.contextmanager
+        def capture_signals(self):  # type: ignore[no-untyped-def]
+            yield
 
     host, port = config.server.host, config.server.port
     restart = False
@@ -146,7 +201,55 @@ def _run_server(config: CompanionConfig, source: ConfigSource | None) -> bool:
             dashboard=f"http://{host}:{port}/admin/",
         ),
     )
-    server.run()
+
+    public = config.server.public
+    devices: uvicorn.Server | None = None
+    sockets: list[socket.socket] = []
+    if public.enabled:
+        if public.cert_file and public.key_file:
+            cert_file, key_file = public.cert_file, public.key_file
+        else:
+            cert = ensure_certificate(config.storage.data_dir / "tls")
+            cert_file, key_file = cert.cert_file, cert.key_file
+            log.info("public listener certificate", extra=kv(sha256=cert.sha256))
+        sockets = _public_sockets(config)
+        if sockets:
+            devices = DeviceServer(
+                uvicorn.Config(
+                    create_public_app(app.state.runtime),
+                    log_config=None,
+                    timeout_graceful_shutdown=5,
+                    ws_max_size=config.vision.max_frame_bytes + 64 * 1024,
+                    ssl_certfile=str(cert_file),
+                    ssl_keyfile=str(key_file),
+                    lifespan="off",
+                )
+            )
+            _load_with_stdlib_ssl(devices.config)
+            log.info(
+                "public listener for devices",
+                extra=kv(
+                    addresses=",".join(f"{s.getsockname()[0]}:{public.port}" for s in sockets),
+                    url=public.url or "(server.public.url not set)",
+                ),
+            )
+        else:
+            log.error("public listener enabled but no address could be used")
+
+    async def serve_all() -> None:
+        side = asyncio.create_task(devices.serve(sockets=sockets)) if devices else None
+        try:
+            await server.serve()
+        finally:
+            if side is not None and devices is not None:
+                devices.should_exit = True
+                await side
+
+    try:
+        asyncio.run(serve_all(), loop_factory=server.config.get_loop_factory())
+    finally:
+        for sock in sockets:
+            sock.close()
     return restart
 
 
