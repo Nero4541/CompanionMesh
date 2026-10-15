@@ -1,5 +1,6 @@
 <script>
   import { getToken, setToken } from "./lib/api.js";
+  import Boards from "./pages/Boards.svelte";
   import Cameras from "./pages/Cameras.svelte";
   import Config from "./pages/Config.svelte";
   import Devices from "./pages/Devices.svelte";
@@ -15,6 +16,7 @@
     { id: "personas", label: "Personas", component: Personas },
     { id: "cameras", label: "Cameras", component: Cameras },
     { id: "devices", label: "Devices", component: Devices },
+    { id: "boards", label: "Boards", component: Boards },
     { id: "events", label: "Events", component: Events },
   ];
 
