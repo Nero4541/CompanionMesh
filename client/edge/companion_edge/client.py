@@ -413,21 +413,24 @@ class EdgeClient:
 
     # --- heartbeat -----------------------------------------------------------------
 
+    async def _send_status(self, ws: Any) -> None:
+        payload = status.snapshot(
+            version=__version__,
+            codec=self.codec,
+            audio_buffer_ms=round(len(self._pending) * PACKET_S * 1000),
+            reconnects=self.stats.reconnects,
+            server=self.route,
+            frames_sent=self.stats.frames_sent,
+            frame_interval_s=self.frame_interval,
+        )
+        with contextlib.suppress(websockets.WebSocketException):
+            await ws.send(protocol.text("device.status", payload))
+
     async def _heartbeat_loop(self) -> None:
         while True:
-            if self.ws is not None:
-                payload = status.snapshot(
-                    version=__version__,
-                    codec=self.codec,
-                    audio_buffer_ms=round(len(self._pending) * PACKET_S * 1000),
-                    reconnects=self.stats.reconnects,
-                    server=self.route,
-                    frames_sent=self.stats.frames_sent,
-                    frame_interval_s=self.frame_interval,
-                )
-                with contextlib.suppress(websockets.ConnectionClosed):
-                    await self.ws.send(protocol.text("device.status", payload))
             await asyncio.sleep(self.config.heartbeat_s)
+            if self.ws is not None:
+                await self._send_status(self.ws)
 
     # --- one connection --------------------------------------------------------------
 
@@ -438,6 +441,7 @@ class EdgeClient:
         if kind == "session.started":
             self.session_id = p["session_id"]
             self._save_state()
+            self._spawn(self._send_status(self.ws))  # the dashboard sees it at once
             self._spawn(self._ship_logs(self.ws))
             self._spawn(self._confirm_update(self.ws))
             log.info(
