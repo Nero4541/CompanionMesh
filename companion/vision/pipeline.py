@@ -88,6 +88,16 @@ class TurnVision:
     images: list[TurnImage] = field(default_factory=list)
 
 
+@dataclass
+class LastFrame:
+    """The newest camera frame a device sent (any frame, used or not)."""
+
+    data: bytes
+    mime: str
+    reason: str
+    received: float = field(default_factory=time.time)
+
+
 class VisionChannel:
     def __init__(self, session: Session) -> None:
         self.session = session
@@ -174,6 +184,12 @@ class VisionChannel:
         if not self.enabled:
             return await self._status(frame_id, "disabled")
         reason = str(payload.get("reason") or "periodic")
+        device_id = header.device_id or sender_id
+        if device_id and len(data) <= self.config.max_frame_bytes:
+            # For the dashboard's view of this camera (only while vision is on).
+            self.runtime.frames[device_id] = LastFrame(
+                data, str(payload.get("mime") or "image/jpeg"), reason
+            )
         manual = reason in MANUAL_REASONS
         raw_event = payload.get("event")
         event = raw_event if isinstance(raw_event, dict) else None
