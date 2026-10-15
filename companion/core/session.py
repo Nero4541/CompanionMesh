@@ -225,6 +225,8 @@ class Session:
         self.echo_guard = EchoGuard(similarity=echo.guard_similarity, window_s=echo.guard_window_s)
         self.reference = ReferenceBuffer()
         self.vision = VisionChannel(self)
+        # Lists that collect raw microphone audio for a while (the dashboard's mic test).
+        self.mic_taps: list[list[np.ndarray]] = []
         self._watchdog: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
         with contextlib.suppress(RuntimeError):  # no loop: built outside asyncio (tests)
@@ -492,6 +494,8 @@ class Session:
         if device is not None and device is not mic.device:
             return  # one microphone per session
         samples = self._decoder.decode(data) if self._decoder else pcm16_to_float32(data)
+        for tap in self.mic_taps:
+            tap.append(samples)
         meta = meta or {}
         pos = meta.get("pos")
         if isinstance(pos, int) and pos >= 0:
@@ -961,6 +965,27 @@ class Session:
                 await self.set_state(State.SPEAKING, deadline_s=self._speaking_deadline_s())
             seq += 1
         return seq > 0
+
+    @property
+    def mic_device(self) -> Device | None:
+        """The device whose microphone feeds this session, if any."""
+        return self._mic.device if self._mic is not None else None
+
+    async def say_test(self, device: Device, text: str) -> None:
+        """Speak ``text`` on one device only, outside the conversation (speaker test)."""
+        tts = self.runtime.tts
+        if tts is None:
+            raise CompanionError("no text-to-speech is configured (tts.provider)", code="no_tts")
+        audio = await tts.synthesize(text, voice=self.runtime.persona.voice)
+        turn_id = f"test-{uuid.uuid4().hex[:8]}"
+        self.echo_guard.spoke(text)  # the microphone may hear it
+        header = make_event(
+            ev.AUDIO_OUTPUT_CHUNK,
+            {"turn_id": turn_id, "seq": 0, "mime": audio.mime, "text": text},
+            session_id=self.session_id,
+        )
+        await device.outbox.send_binary(header, audio.data)
+        await self.emit_to([device], ev.AUDIO_OUTPUT_DONE, {"turn_id": turn_id})
 
     # --- attention (v0.3) ------------------------------------------------------
 
