@@ -197,6 +197,11 @@ async def realtime(ws: WebSocket) -> None:
         interval = runtime.config.realtime.ping_interval_s
         if interval > 0:
             pinger = asyncio.create_task(_ping_loop(session, device, interval))
+        await runtime.notice(
+            "device_connected",
+            {"device_id": start.device_id, "roles": sorted(device.roles), "resumed": resumed},
+            session_id=session.session_id,
+        )
         log.info(
             "realtime connected",
             extra=kv(
