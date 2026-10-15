@@ -61,6 +61,14 @@ class CameraConfig:
 @dataclass
 class EdgeConfig:
     server: str = "ws://127.0.0.1:8765/v1/realtime"
+    # Several addresses of the same server, tried in order (the one that worked
+    # last first): e.g. its home address, then the public one for when the
+    # board is out (wss://...). Empty: just `server`.
+    servers: list[str] = field(default_factory=list)
+    # The server's own certificate (PEM file): wss:// connections then trust
+    # exactly this certificate, whatever the address (no name check, no CA).
+    # Empty: the system's certificate authorities and the usual name check.
+    server_cert: str = ""
     token_env: str = "COMPANION_TOKEN"
     device_id: str = field(default_factory=socket.gethostname)
     state_file: Path = Path("~/.local/state/companion-edge/state.json")
@@ -70,6 +78,9 @@ class EdgeConfig:
 
     def token(self) -> str | None:
         return os.environ.get(self.token_env) or None
+
+    def server_urls(self) -> list[str]:
+        return list(self.servers) or [self.server]
 
 
 def _fill(cls: type, data: dict[str, Any]) -> Any:
