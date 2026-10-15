@@ -362,11 +362,13 @@ uv run companion-edge --config edge.toml
 
 `client/edge/systemd/companion-edge.service` is an example unit for running it at boot.
 
+**MIPI CSI cameras on CVITEK boards.** The LicheeRV Nano's camera module (GC4653) is not a V4L2 device on Sipeed's image, so ffmpeg cannot open it. `[camera] driver = "cvi"` keeps Sipeed's `sensor_test` running and asks it for a frame when needed: change detection reads a few rows of each 2560×1440 frame (about 0.3 s per look), and a JPEG is made only for a frame that is sent (under a second with ffmpeg). `rotate` turns pictures from a module mounted sideways. Do not run Sipeed's `sample_venc` or `sample_vio` against this camera: when they crash, the camera sends no frames again until the board is switched off and on.
+
 **Hardware profiles.** `client/edge/profiles/` has ready-made configs to copy instead of `edge.example.toml`; each explains the hardware it assumes and what to check:
 
 | Profile | For |
 |---|---|
-| `licheerv-nano.toml` | Sipeed LicheeRV Nano with Sipeed's Buildroot image: onboard microphone and speaker, Opus through ffmpeg (no libopus), half duplex |
+| `licheerv-nano.toml` | Sipeed LicheeRV Nano with Sipeed's Buildroot image: onboard microphone and speaker, Opus through ffmpeg (no libopus), half duplex, the MIPI CSI camera (`driver = "cvi"`) |
 | `raspberry-pi.toml` | Raspberry Pi with a USB speakerphone (hardware echo cancellation, so you can interrupt) and a USB webcam |
 | `bluetooth-speaker.toml` | Any board playing through a Bluetooth speaker with bluez-alsa (lead-in and a longer hold for the speaker's wake-up) |
 | `speaker-only.toml` | A speaker without microphone or camera, e.g. for proactive remarks while a microphone is too noisy |
@@ -539,6 +541,8 @@ The **Personas** page lists the personas in `personas_dir` and edits their displ
 
 The **Devices** page lists the connected devices with their last reported status. Edge devices running companion-edge 1.1 or newer started with `--config` show their settings there, and can be changed, or set up from one of the [hardware profiles](#edge-devices): the device checks the new settings, writes the changed lines into its TOML file (keeping the previous file as `edge.toml.bak`) and restarts with them in the same process, so no service manager is needed. `server`, `token_env`, `device_id` and `state_file` can only be changed on the device, as a mistake there would cut it off.
 
+The **Events** page shows what the server is doing as it happens: devices connecting and leaving, state changes, attention decisions with their reasons, camera observations, turns, errors and saved settings, with filters and a pause. What people say is never part of it: transcripts and replies show only their length.
+
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
 - With `COMPANION_ADMIN_TOKEN` unset, they answer only this machine (open `http://127.0.0.1:8765/admin/` on the server itself).
@@ -572,6 +576,7 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `GET /v1/admin/devices` | Connected devices, with the settings of those that offer them (admin token) |
 | `PUT /v1/admin/devices/{id}/config` | Send settings to an edge device (`{"config": {...}}`); it saves them and restarts (admin token) |
 | `GET /v1/admin/edge-profiles` | The hardware profiles in `client/edge/profiles` (admin token) |
+| `WS /v1/admin/events` | Live events for the dashboard: `{"recent": [...]}`, then `{"event": {...}}` each; conversation text is reduced to its length (admin token, `?token=` in browsers) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
 ### Realtime protocol (1.1)
