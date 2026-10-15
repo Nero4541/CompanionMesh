@@ -105,10 +105,13 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
         case ev.DEVICE_CONFIG:
             if isinstance(payload.get("config"), dict):
                 device.settings = dict(payload)
-        case ev.DEVICE_CONFIG_RESULT:
+        case ev.DEVICE_CONFIG_RESULT | ev.DEVICE_DIAGNOSTICS:
             waiting = device.settings_requests.pop(str(payload.get("request_id")), None)
             if waiting is not None and not waiting.done():
                 waiting.set_result(dict(payload))
+        case ev.DEVICE_LOG:
+            if device.device_id:
+                session.runtime.device_logs.add(device.device_id, payload)
         case _:
             # Forward compatibility: unknown event types are ignored.
             log.debug("ignored event", extra=kv(type=event.type))
