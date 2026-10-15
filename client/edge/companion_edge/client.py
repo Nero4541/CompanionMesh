@@ -26,7 +26,7 @@ from typing import Any
 
 import websockets
 
-from companion_edge import protocol, settings, status
+from companion_edge import diagnostics, logship, protocol, settings, status
 from companion_edge.config import EdgeConfig
 from companion_edge.cvi import CviCamera
 from companion_edge.devices import (
@@ -48,6 +48,7 @@ PACKET_S = 0.02
 SAMPLE_RATE = 16000
 PACKET_SAMPLES = int(PACKET_S * SAMPLE_RATE)
 JOIN_RETRY_S = 2.0  # camera-only devices: how often to look for a conversation to join
+LOG_SHIP_S = 2.0  # how often new log lines go to the server
 
 
 @dataclass
@@ -68,10 +69,16 @@ class EdgeClient:
         camera: Camera | None = None,
         encoder: Any = None,
         config_path: Path | None = None,
+        log_file: Path | None = None,
+        logs: logship.LogBuffer | None = None,
     ) -> None:
         self.config = config
         # The TOML file the settings came from; the server may change them there.
         self.config_path = config_path
+        self.log_file = log_file
+        # This device's log lines, sent to the server (device.log) while connected.
+        self.logs = logs or logship.BUFFER
+        self._logs_sent = -1  # seq of the newest line the server has
         self.restart_requested = False
         a, c = config.audio, config.camera
         self.encoder = encoder
@@ -120,6 +127,11 @@ class EdgeClient:
         )
         self._last_frame_sent = 0.0
         self._tasks: set[asyncio.Task[None]] = set()
+
+    def _spawn(self, coro: Any) -> None:
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks.add(task)
+        task.add_done_callback(self._tasks.discard)
 
     def _make_camera(self) -> Camera:
         c = self.config.camera
@@ -404,6 +416,7 @@ class EdgeClient:
         if kind == "session.started":
             self.session_id = p["session_id"]
             self._save_state()
+            self._spawn(self._ship_logs(self.ws))
             log.info(
                 "joined session %s (resumed=%s, roles=%s)",
                 self.session_id,
@@ -461,6 +474,8 @@ class EdgeClient:
                 await self._stop_playback()
         elif kind == "system.ping":
             await ws.send(protocol.text("system.pong", {**p, "t_device": time.time() * 1000}))
+        elif kind == "device.diagnostics.request":
+            self._spawn(self._send_diagnostics(self.ws, str(p.get("request_id") or "")))
         elif kind == "device.config.set":
             await self._apply_settings(p)
             if self.restart_requested:
@@ -476,6 +491,31 @@ class EdgeClient:
                 return "no_session"
             log.warning("server: %s: %s", p.get("code"), p.get("message"))
         return None
+
+    async def _ship_logs(self, ws: Any) -> None:
+        """Send new log lines every couple of seconds while this connection lasts."""
+        while self.ws is ws:
+            lines = self.logs.after(self._logs_sent)
+            if lines:
+                try:
+                    await ws.send(
+                        protocol.text("device.log", {"boot": self.logs.boot, "records": lines})
+                    )
+                except websockets.WebSocketException:
+                    return
+                self._logs_sent = lines[-1]["seq"]
+                if len(lines) == logship.BATCH:
+                    continue  # more waiting (e.g. after a long time offline)
+            await asyncio.sleep(LOG_SHIP_S)
+
+    async def _send_diagnostics(self, ws: Any, request_id: str) -> None:
+        sections = await diagnostics.collect(self.config, self.config_path, self.log_file)
+        with contextlib.suppress(websockets.WebSocketException):
+            await ws.send(
+                protocol.text(
+                    "device.diagnostics", {"request_id": request_id, "sections": sections}
+                )
+            )
 
     async def _apply_settings(self, p: dict[str, Any]) -> None:
         """Save settings sent from the dashboard; restart with them if anything changed."""
@@ -575,6 +615,7 @@ class EdgeClient:
                 await asyncio.sleep(backoff)
                 backoff = min(backoff * 2, 30.0)
         finally:
+            tasks += list(self._tasks)
             for task in tasks:
                 task.cancel()
             for task in tasks:
