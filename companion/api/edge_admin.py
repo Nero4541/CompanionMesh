@@ -84,6 +84,8 @@ async def setup_info(request: Request, scan: bool = True) -> dict[str, Any]:
         "profiles": edge_install.profiles(),
         "edge_version": edge_install.edge_version(),
         "listening": runtime.config.server.host,
+        "public_url": edge_install.public_reach(runtime.config)[0],
+        "public_enabled": runtime.config.server.public.enabled,
     }
 
 
@@ -120,7 +122,10 @@ async def start_install(request: Request, body: InstallBody) -> dict[str, Any]:
             except edge_install.InstallError as exc:
                 raise HTTPException(status_code=422, detail=str(exc)) from exc
 
+    public_url, cert_pem = edge_install.public_reach(runtime.config)
     plan = edge_install.InstallPlan(
+        public_url=public_url,
+        server_cert_pem=cert_pem,
         device_id=body.device_id,
         host=body.host,
         server_url=body.server_url,
