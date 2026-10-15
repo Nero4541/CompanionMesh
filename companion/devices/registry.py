@@ -43,6 +43,8 @@ class EnrolledDevice:
     address: str | None = None
     root_password: str | None = None
     installed_version: str | None = None
+    # The device's last reported settings (device.config), to restore after a reflash.
+    settings: dict[str, Any] | None = None
 
     def public(self) -> dict[str, Any]:
         """What the dashboard lists: never the token hash or the password."""
