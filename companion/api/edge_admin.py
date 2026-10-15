@@ -71,6 +71,12 @@ def _runtime(request: Request) -> CompanionRuntime:
     return request.app.state.runtime
 
 
+@router.get("/version")
+async def version() -> dict[str, Any]:
+    """The edge client version this server installs and offers for updates."""
+    return {"version": edge_install.edge_version()}
+
+
 @router.get("/setup")
 async def setup_info(request: Request, scan: bool = True) -> dict[str, Any]:
     """What the Add device form offers: boards on USB, server URLs, profiles."""
