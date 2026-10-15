@@ -1,5 +1,8 @@
 <script>
   import { api } from "../lib/api.js";
+  import DeviceCamera from "../lib/DeviceCamera.svelte";
+  import DeviceDiagnostics from "../lib/DeviceDiagnostics.svelte";
+  import DeviceLog from "../lib/DeviceLog.svelte";
   import { duration, value as show } from "../lib/format.js";
   import { changedPaths, equal, getPath, setPath } from "../lib/schema.js";
 
@@ -23,6 +26,11 @@
   let busy = $state(false);
   let message = $state(null);
   let waiting = $state(null); // { id, expect } while a device restarts
+  let tab = $state("settings"); // settings | log | camera | diagnostics
+  let withLogs = $state([]); // device ids the server has log lines of
+
+  // Devices that are not connected now but left their logs here.
+  const offline = $derived(withLogs.filter((id) => !devices?.some((d) => d.device_id === id)));
 
   const selected = $derived(devices?.find((d) => d.device_id === selectedId) ?? null);
   const settings = $derived(selected?.settings ?? null);
@@ -40,6 +48,7 @@
   function select(id) {
     if (changes.length && !confirm("Discard your unsaved changes?")) return;
     selectedId = id;
+    if (!devices?.some((d) => d.device_id === id)) tab = "log";
     message = null;
     profileName = "";
     reset();
@@ -57,6 +66,9 @@
     try {
       const data = await api("/devices");
       devices = data.devices;
+      api("/device-logs")
+        .then((r) => (withLogs = r.devices))
+        .catch(() => {});
       loadError = null;
       if (!selectedId && devices.length) select((devices.find((d) => d.configurable) ?? devices[0]).device_id);
       if (waiting) {
@@ -177,6 +189,14 @@
       {#if waiting && !devices.some((d) => d.device_id === waiting.id)}
         <p class="muted">{waiting.id}: restarting…</p>
       {/if}
+      {#if offline.length}
+        <p class="muted group">Not connected (log kept)</p>
+        {#each offline as id (id)}
+          <button class="item" class:selected={id === selectedId} onclick={() => select(id)}>
+            <span class="title"><code>{id}</code></span>
+          </button>
+        {/each}
+      {/if}
     </aside>
 
     <div class="main">
@@ -184,7 +204,27 @@
         <p class={message.kind === "error" ? "error" : `banner ${message.kind}`} role="status">{message.text}</p>
       {/if}
 
-      {#if selected}
+      {#if selectedId}
+        <div class="tabs" role="tablist">
+          {#each [["settings", "Status and settings"], ["log", "Log"], ["camera", "Camera"], ["diagnostics", "Diagnostics"]] as [id, label]}
+            <button
+              role="tab"
+              class:active={tab === id}
+              aria-selected={tab === id}
+              disabled={!selected && id !== "log"}
+              onclick={() => (tab = id)}>{label}</button
+            >
+          {/each}
+        </div>
+      {/if}
+
+      {#if selectedId && tab === "log"}
+        <DeviceLog deviceId={selectedId} />
+      {:else if selected && tab === "camera"}
+        <DeviceCamera deviceId={selectedId} />
+      {:else if selected && tab === "diagnostics"}
+        <DeviceDiagnostics deviceId={selectedId} />
+      {:else if selected}
         {#if selected.status && Object.keys(selected.status).length}
           <details class="card status">
             <summary>Last status <span class="muted">{duration(selected.status_age_s)} ago</span></summary>
@@ -310,6 +350,20 @@
     display: flex;
     flex-direction: column;
     gap: 2px;
+  }
+  .group {
+    margin: 8px 0 0;
+  }
+  .tabs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    border-bottom: 1px solid var(--line);
+    padding-bottom: 6px;
+  }
+  .tabs button.active {
+    border-color: var(--accent);
+    box-shadow: inset 0 -3px 0 var(--accent);
   }
   .item.selected {
     border-color: var(--accent);
