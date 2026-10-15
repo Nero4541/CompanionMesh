@@ -4,11 +4,14 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
+
+import numpy as np
 
 from companion import __version__
 from companion.agent.base import AgentBackend
@@ -28,7 +31,7 @@ from companion.core.feed import AdminFeed
 from companion.core.logging import kv
 from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
-from companion.core.recordings import RecordingStore
+from companion.core.recordings import Recording, RecordingStore
 from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.devices.registry import DeviceRegistry
@@ -46,6 +49,7 @@ log = logging.getLogger(__name__)
 # How long a device may take to check and save settings sent to it.
 DEVICE_CONFIG_TIMEOUT_S = 15.0
 DIAGNOSTICS_TIMEOUT_S = 30.0
+UPDATE_TIMEOUT_S = 180.0  # download and unpack on a slow board
 
 
 @dataclass
@@ -110,6 +114,10 @@ def build_vlm(config: CompanionConfig) -> VLMProvider | None:
     from companion.providers.vlm.openai_compatible import OpenAICompatibleVLM
 
     return OpenAICompatibleVLM(config.vlm)
+
+
+def _brief(result: dict[str, Any]) -> dict[str, Any]:
+    return {k: result.get(k) for k in ("ok", "error") if k in result}
 
 
 class CompanionRuntime:
@@ -354,6 +362,125 @@ class CompanionRuntime:
         )
         sections = result.get("sections")
         return sections if isinstance(sections, dict) else {}
+
+    def remember_settings(self, device_id: str | None, config: dict[str, Any]) -> None:
+        """Keep an enrolled device's settings, to restore them after a reflash."""
+        if device_id and self.devices.get(device_id) is not None:
+            with contextlib.suppress(OSError):
+                self.devices.update(device_id, settings=config)
+
+    async def update_device(self, device_id: str) -> dict[str, Any]:
+        """Offer a device this server's edge client; returns its device.update.result."""
+        from companion import edge_install
+
+        version = edge_install.edge_version()
+        sha256 = hashlib.sha256(edge_install.edge_package()).hexdigest()
+        session, result = await self._ask_device(
+            device_id, ev.DEVICE_UPDATE, {"version": version, "sha256": sha256}, UPDATE_TIMEOUT_S
+        )
+        await self.notice(
+            "device_update",
+            {"device_id": device_id, "version": version, **_brief(result)},
+            session_id=session.session_id,
+        )
+        return result
+
+    async def device_updated(self, device: Device, payload: dict[str, Any]) -> None:
+        """A device came back with a new version after device.update."""
+        version = payload.get("version")
+        if device.device_id and self.devices.get(device.device_id) is not None:
+            with contextlib.suppress(OSError):
+                self.devices.update(device.device_id, installed_version=version)
+        await self.notice(
+            "device_updated",
+            {
+                "device_id": device.device_id,
+                "version": version,
+                "previous": payload.get("previous"),
+            },
+        )
+        log.info("device updated", extra=kv(device=device.device_id, version=version))
+
+    async def restart_device(self, device_id: str, what: str) -> dict[str, Any]:
+        _, result = await self._ask_device(
+            device_id, ev.DEVICE_RESTART, {"what": what}, DEVICE_CONFIG_TIMEOUT_S
+        )
+        await self.notice("device_restart", {"device_id": device_id, "what": what})
+        return result
+
+    async def device_wifi(
+        self, device_id: str, add: list[dict[str, Any]], remove: list[str]
+    ) -> dict[str, Any]:
+        """Change (or with nothing to change, list) a device's Wi-Fi networks.
+
+        ``add`` holds {ssid, password}; only the WPA key derived from it goes to the device.
+        """
+        from companion import edge_install
+
+        networks = [
+            {
+                "ssid": n["ssid"],
+                "psk": edge_install.wpa_psk(n["ssid"], n["password"])
+                if n.get("password")
+                else None,
+            }
+            for n in add
+        ]
+        _, result = await self._ask_device(
+            device_id,
+            ev.DEVICE_WIFI_SET,
+            {"add": networks, "remove": remove},
+            DEVICE_CONFIG_TIMEOUT_S,
+        )
+        if add or remove:
+            await self.notice(
+                "device_wifi",
+                {
+                    "device_id": device_id,
+                    "added": [n["ssid"] for n in add],
+                    "removed": remove,
+                    **_brief(result),
+                },
+            )
+        return result
+
+    async def speaker_test(self, device_id: str, text: str) -> None:
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        if "speaker" not in device.roles:
+            raise CompanionError(f"device {device_id!r} has no speaker", code="no_speaker")
+        await session.say_test(device, text)
+
+    async def mic_test(self, device_id: str, seconds: float) -> Recording:
+        """Record ``seconds`` of what the device's microphone sends, as a recording."""
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        if session.mic_device is not device:
+            raise CompanionError(
+                f"device {device_id!r} sends no microphone audio (is audio.input_enabled off?)",
+                code="no_mic",
+            )
+        tap: list[np.ndarray] = []
+        session.mic_taps.append(tap)
+        try:
+            await asyncio.sleep(seconds)
+        finally:
+            session.mic_taps.remove(tap)
+        audio = np.concatenate(tap) if tap else np.zeros(0, dtype=np.float32)
+        if not audio.size:
+            raise CompanionError("no microphone audio arrived from the device", code="no_audio")
+        return await asyncio.to_thread(
+            self.recordings.save,
+            audio,
+            session_id=session.session_id,
+            device_id=device_id,
+            text="",
+            outcome="test",
+        )
 
     async def capture(self, device_id: str) -> None:
         """Ask a camera device for a fresh frame now."""
