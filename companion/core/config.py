@@ -40,6 +40,9 @@ class ServerConfig(_Section):
     # Token for the admin API (/v1/admin/*). The device token never grants admin
     # access; while this is unset, the admin API only answers this machine.
     admin_token_env: str | None = "COMPANION_ADMIN_TOKEN"
+    # Show what was said (transcripts and replies) on the dashboard; off, the
+    # dashboard only sees their length.
+    dashboard_conversation: bool = False
 
     def auth_token(self) -> str | None:
         if not self.auth_token_env:
@@ -141,6 +144,10 @@ class STTConfig(_Section):
     api_key_env: str | None = "STT_API_KEY"
     connect_timeout: float = Field(default=5.0, gt=0)
     timeout: float = Field(default=60.0, gt=0)
+    # Keep each utterance as heard (WAV in data/recordings) with its transcript,
+    # to check recognition from the dashboard; deleted after keep_audio_days.
+    keep_audio: bool = False
+    keep_audio_days: float = Field(default=3.0, gt=0)
 
     def api_key(self) -> str | None:
         if not self.api_key_env:
@@ -438,6 +445,9 @@ _LIVE_SETTINGS = {
     "realtime": True,
     "metrics.emit_turn": True,
     "cameras": True,  # started, stopped and replaced while running
+    "server.dashboard_conversation": True,
+    "stt.keep_audio": True,
+    "stt.keep_audio_days": True,
 }
 
 
