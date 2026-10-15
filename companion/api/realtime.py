@@ -105,10 +105,19 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
         case ev.DEVICE_CONFIG:
             if isinstance(payload.get("config"), dict):
                 device.settings = dict(payload)
-        case ev.DEVICE_CONFIG_RESULT | ev.DEVICE_DIAGNOSTICS:
+                session.runtime.remember_settings(device.device_id, payload["config"])
+        case (
+            ev.DEVICE_CONFIG_RESULT
+            | ev.DEVICE_DIAGNOSTICS
+            | ev.DEVICE_UPDATE_RESULT
+            | ev.DEVICE_RESTART_RESULT
+            | ev.DEVICE_WIFI_RESULT
+        ):
             waiting = device.settings_requests.pop(str(payload.get("request_id")), None)
             if waiting is not None and not waiting.done():
                 waiting.set_result(dict(payload))
+            if event.type == ev.DEVICE_UPDATE_RESULT and payload.get("connected"):
+                await session.runtime.device_updated(device, payload)
         case ev.DEVICE_LOG:
             if device.device_id:
                 session.runtime.device_logs.add(device.device_id, payload)
