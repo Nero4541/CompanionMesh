@@ -27,6 +27,16 @@ from companion_edge.motion import WIDTH as GRAY_WIDTH
 
 log = logging.getLogger(__name__)
 
+# camera.rotate (degrees clockwise) as an ffmpeg filter.
+_ROTATE = {90: "transpose=1", 180: "hflip,vflip", 270: "transpose=2"}
+
+
+def rotate_filter(degrees: int) -> str:
+    """``,transpose=...`` to append to a filter chain, or "" for 0 degrees."""
+    step = _ROTATE.get(degrees % 360)
+    return f",{step}" if step else ""
+
+
 FRAME_BYTES = 640  # 20 ms at 16 kHz s16le mono
 SOI, EOI = b"\xff\xd8", b"\xff\xd9"
 
@@ -323,8 +333,10 @@ class FfmpegCamera:
         size: str,
         quality: int,
         analysis_fps: float = 0.0,
+        rotate: int = 0,
     ) -> None:
         self.device = device
+        self.rotate = rotate
         self.input_format = input_format
         self.size = size
         self.quality = quality
@@ -348,9 +360,10 @@ class FfmpegCamera:
         args += ["-i", self.device]
         jpeg = ["-q:v", str(self.quality), "-f", "image2pipe", "-vcodec", "mjpeg"]
         if gray_fd is None:
-            return [*args, "-vf", "fps=1", *jpeg, "-"]
+            return [*args, "-vf", f"fps=1{rotate_filter(self.rotate)}", *jpeg, "-"]
         graph = (
-            f"[0:v]fps={self.analysis_fps:g},split=2[jpeg][small];"
+            f"[0:v]fps={self.analysis_fps:g},split=2[full][small];"
+            f"[full]null{rotate_filter(self.rotate)}[jpeg];"
             f"[small]scale={GRAY_WIDTH}:{GRAY_HEIGHT},format=gray[gray]"
         )
         return [
