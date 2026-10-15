@@ -1,4 +1,4 @@
-"""Command line entry point: ``uv run companion [serve|check|setup|camera]``."""
+"""Command line entry point: ``uv run companion [serve|check|setup|edge|camera]``."""
 
 from __future__ import annotations
 
@@ -28,6 +28,37 @@ def _parser() -> argparse.ArgumentParser:
     sub.add_parser("serve", help="run the server (default)")
     sub.add_parser("check", help="validate config and probe providers, then exit")
     sub.add_parser("setup", help="first-run questions: agent, speech, tokens (.env + local config)")
+    edge = sub.add_parser("edge", help="set up a board (edge device) over SSH")
+    edge_sub = edge.add_subparsers(dest="edge_command", required=True)
+    edge_sub.add_parser("discover", help="list boards connected to this computer by USB")
+    inst = edge_sub.add_parser(
+        "install", help="install the edge client on a board and connect it to this server"
+    )
+    inst.add_argument("--name", required=True, help="the device's id (letters, digits, - _ .)")
+    inst.add_argument("--host", help="the board's address (default: the board found on USB)")
+    inst.add_argument(
+        "--profile", default="licheerv-nano", help="hardware profile (client/edge/profiles)"
+    )
+    inst.add_argument(
+        "--server",
+        help="realtime URL the board connects to "
+        "(default: ws://<this machine's LAN address>:<port>/v1/realtime)",
+    )
+    inst.add_argument(
+        "--wifi",
+        action="append",
+        default=[],
+        metavar="SSID",
+        help="add a Wi-Fi network (its password is asked); repeat for several",
+    )
+    inst.add_argument("--camera", action=argparse.BooleanOptionalAction, default=None)
+    inst.add_argument("--rotate", type=int, choices=[0, 90, 180, 270])
+    inst.add_argument(
+        "--ask-password", action="store_true", help="the board's root password is not the stock one"
+    )
+    inst.add_argument(
+        "--keep-password", action="store_true", help="do not replace the stock root password"
+    )
     cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
     cam.add_argument(
         "source",
@@ -278,6 +309,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.command == "check":
         return asyncio.run(_check(config))
+    if args.command == "edge":
+        from companion import edge_install
+
+        return edge_install.run_cli(args, config)
     try:
         return serve(config, source)
     except KeyboardInterrupt:
