@@ -9,7 +9,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from companion import __version__
-from companion.api import admin, edge_admin, http, observe, realtime
+from companion.api import admin, edge_admin, http, maintain, observe, realtime
 from companion.core.config import CompanionConfig, ConfigSource
 from companion.core.runtime import CompanionRuntime, Providers
 
@@ -50,6 +50,7 @@ def create_app(
     app.include_router(admin.events_router)
     app.include_router(edge_admin.router)
     app.include_router(observe.router)
+    app.include_router(maintain.router)
 
     if config.server.dashboard and DASHBOARD_DIR.is_dir():
         app.mount("/admin", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
