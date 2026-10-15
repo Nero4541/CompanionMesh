@@ -63,27 +63,31 @@ def from_this_machine(conn: Request | WebSocket) -> bool:
     return peer in LOOPBACK_HOSTS and _hostname(conn.headers.get("host", "")) in LOOPBACK_HOSTS
 
 
-async def require_admin(request: Request) -> None:
-    """FastAPI dependency for the admin API (/v1/admin/*)."""
-    config: ServerConfig = request.app.state.runtime.config.server
+def admin_refusal(conn: Request | WebSocket) -> tuple[int, str] | None:
+    """Why ``conn`` may not use the admin API, as (HTTP status, reason); None if it may."""
+    config: ServerConfig = conn.app.state.runtime.config.server
     expected = config.admin_token()
     if expected is None:
-        if from_this_machine(request):
-            return
-        raise HTTPException(
-            status_code=403,
-            detail=(
-                "the admin API only answers this machine until "
-                f"{config.admin_token_env or 'COMPANION_ADMIN_TOKEN'} is set in .env"
-            ),
+        if from_this_machine(conn):
+            return None
+        return (
+            403,
+            "the admin API only answers this machine until "
+            f"{config.admin_token_env or 'COMPANION_ADMIN_TOKEN'} is set in .env",
         )
-    provided = presented_token(request)
+    provided = presented_token(conn)
     if provided is None or not secrets.compare_digest(provided, expected):
-        raise HTTPException(
-            status_code=401,
-            detail="missing or wrong admin token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        return 401, "missing or wrong admin token"
+    return None
+
+
+async def require_admin(request: Request) -> None:
+    """FastAPI dependency for the admin API (/v1/admin/*)."""
+    refusal = admin_refusal(request)
+    if refusal is not None:
+        status, detail = refusal
+        headers = {"WWW-Authenticate": "Bearer"} if status == 401 else None
+        raise HTTPException(status_code=status, detail=detail, headers=headers)
 
 
 def exposure_problem(config: ServerConfig) -> str | None:
