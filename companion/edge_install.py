@@ -601,10 +601,17 @@ async def install(
         await board.run(f"/etc/init.d/{SERVICE_NAME} stop >/dev/null 2>&1 || true", check=False)
         if systemd:
             await board.run("systemctl stop companion-edge >/dev/null 2>&1 || true", check=False)
-        others = await board.run(
-            "ps | grep '[c]ompanion_edge' | awk '{print $1}' || true", check=False
-        )
-        pids = [p for p in others.split() if p.isdigit()]
+        # The service's client takes a moment to shut down; what is left after
+        # that was started some other way (by hand, or an older setup).
+        pids: list[str] = []
+        for _ in range(10):
+            others = await board.run(
+                "ps | grep '[c]ompanion_edge' | awk '{print $1}' || true", check=False
+            )
+            pids = [p for p in others.split() if p.isdigit()]
+            if not pids:
+                break
+            await asyncio.sleep(0.5)
         if pids:
             await board.run(f"kill {' '.join(pids)} 2>/dev/null || true", check=False)
             report("stop", "warn", f"stopped another companion-edge (pid {', '.join(pids)})")
