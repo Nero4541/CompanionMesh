@@ -7,6 +7,10 @@ present that token. ``/health`` and the static dev client stay open.
 Clients send it as ``Authorization: Bearer <token>`` or, where headers are not
 available (browser WebSockets), as a ``?token=`` query parameter.
 
+Devices enrolled by the installer have tokens of their own
+(:mod:`companion.devices.registry`), accepted wherever the shared token is and
+bound to their device id.
+
 The admin API has its own token (``server.admin_token_env``), so a device
 token cannot change the server. Without it, only this machine is admitted.
 """
@@ -14,10 +18,12 @@ token cannot change the server. Without it, only this machine is admitted.
 from __future__ import annotations
 
 import secrets
+from dataclasses import dataclass
 
 from fastapi import HTTPException, Request, WebSocket
 
 from companion.core.config import ServerConfig
+from companion.devices.registry import DeviceRegistry
 
 LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
 
@@ -36,10 +42,30 @@ def token_ok(config: ServerConfig, provided: str | None) -> bool:
     return provided is not None and secrets.compare_digest(provided, expected)
 
 
+@dataclass(frozen=True)
+class Identity:
+    """Who connected: an enrolled device (bound to its id), or anyone with the
+    shared token (``device_id`` None)."""
+
+    device_id: str | None = None
+
+
+def authenticate(
+    config: ServerConfig, registry: DeviceRegistry, conn: Request | WebSocket
+) -> Identity | None:
+    token = presented_token(conn)
+    enrolled = registry.identify(token)
+    if enrolled is not None:
+        return Identity(enrolled.device_id)
+    if token_ok(config, token):
+        return Identity()
+    return None
+
+
 async def require_token(request: Request) -> None:
     """FastAPI dependency for protected HTTP routes."""
-    config: ServerConfig = request.app.state.runtime.config.server
-    if not token_ok(config, presented_token(request)):
+    runtime = request.app.state.runtime
+    if authenticate(runtime.config.server, runtime.devices, request) is None:
         raise HTTPException(
             status_code=401,
             detail="missing or wrong token",
