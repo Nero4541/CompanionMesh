@@ -50,6 +50,13 @@ Client -> server
                              while offline follow on the next connection
     device.diagnostics       payload: {request_id, sections: {name: text}}  (1.2)
                              answer to device.diagnostics.request
+    device.update.result     payload: {request_id?, ok, version, restarting?, error?,
+                             previous?, connected?}  (1.2) answer to device.update;
+                             sent again (connected: true, no request_id) by the new
+                             version once it is connected
+    device.restart.result    payload: {request_id, ok}  (1.2)
+    device.wifi.result       payload: {request_id, ok, networks: [ssid], current, error?}
+                             (1.2) answer to device.wifi.set
 
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
@@ -94,6 +101,13 @@ Server -> client
     device.diagnostics.request  payload: {request_id}  (1.2) collect a fixed set of
                              facts about the device (versions, check, memory, disk,
                              Wi-Fi, kernel log) and answer device.diagnostics
+    device.update            payload: {request_id, version, sha256}  (1.2) download
+                             GET /v1/edge/package/<version>.tar.gz from this server
+                             (device token), check it, install it, restart with it
+    device.restart           payload: {request_id, what: "client" | "board"}  (1.2)
+    device.wifi.set          payload: {request_id, add: [{ssid, psk?}], remove: [ssid]}
+                             (1.2) psk is the 64-hex-digit WPA key, never the password;
+                             both lists empty: just report the networks
 """
 
 PROTOCOL_VERSION = "1.2"
@@ -119,6 +133,9 @@ DEVICE_CONFIG = "device.config"
 DEVICE_CONFIG_RESULT = "device.config.result"
 DEVICE_LOG = "device.log"
 DEVICE_DIAGNOSTICS = "device.diagnostics"
+DEVICE_UPDATE_RESULT = "device.update.result"
+DEVICE_RESTART_RESULT = "device.restart.result"
+DEVICE_WIFI_RESULT = "device.wifi.result"
 
 # server -> client
 SESSION_STARTED = "session.started"
@@ -146,3 +163,6 @@ ATTENTION_DECISION = "attention.decision"
 METRICS_TURN = "metrics.turn"
 DEVICE_CONFIG_SET = "device.config.set"
 DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
+DEVICE_UPDATE = "device.update"
+DEVICE_RESTART = "device.restart"
+DEVICE_WIFI_SET = "device.wifi.set"
