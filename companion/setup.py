@@ -262,6 +262,52 @@ class Setup:
             )
         else:
             self.put("server.host", "127.0.0.1")
+            self.put("server.public.enabled", False)
+            return
+        self.remote()
+
+    def remote(self) -> None:
+        """The public listener, for boards away from home (see README)."""
+        enabled = bool(self.get("server.public.enabled"))
+        if not self.p.confirm(
+            "Should boards reach this server away from home (mobile data, other Wi-Fi)?", enabled
+        ):
+            self.put("server.public.enabled", False)
+            return
+        port = self.p.ask("Port for devices from outside", str(self.get("server.public.port")))
+        self.put("server.public.port", int(port) if port.isdigit() else 8766)
+        port = str(self.get("server.public.port"))
+        current = self.get("server.public.url") or ""
+        address = self.p.ask(
+            "Your home's address on the Internet: a dynamic DNS name (e.g. myhome.duckdns.org) "
+            "or the public IP address",
+            current,
+        ).strip()
+        if address and "://" not in address:
+            host = f"[{address}]" if ":" in address else address
+            address = f"wss://{host}:{port}/v1/realtime"
+        self.put("server.public.enabled", True)
+        self.put("server.public.url", address or None)
+        from companion.edge_install import lan_addresses
+
+        here = (lan_addresses() or ["<this computer's address>"])[0]
+        for line in (
+            "",
+            "  Boards then try home first, then this address, with TLS and this server's own",
+            "  certificate (set them up with  uv run companion edge install  or the dashboard).",
+            "  Still to do by hand:",
+            f"  1. Router, IPv4: forward TCP port {port} to {here}.",
+            f"     IPv6: allow incoming TCP port {port} to this computer only (no other ports).",
+            "  2. Firewall of this computer, as administrator:",
+            '     Windows: New-NetFirewallRule -DisplayName "Companion devices" -Direction Inbound'
+            f" -Protocol TCP -LocalPort {port} -Action Allow -Profile Private",
+            f"     Linux:   sudo ufw allow {port}/tcp",
+            "  3. Check from outside: on your phone with Wi-Fi off, open",
+            f"     https://<your address>:{port}/health  (the browser warns about the certificate,",
+            "     which is expected: it is this server's own). It should say status ok.",
+            "  Only devices set up by this server get in, and the dashboard is never on that port.",
+        ):
+            self.p.say(line)
 
     def save(self) -> bool:
         try:
