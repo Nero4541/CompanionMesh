@@ -10,6 +10,11 @@ if ! command -v uv >/dev/null 2>&1; then
   exit 1
 fi
 
+# First run: ask for the agent, speech and tokens (writes .env and the local config).
+if [ ! -f .env ]; then
+  uv run companion setup
+fi
+
 # The address the server listens on, from configs/companion.yaml (+ .local.yaml).
 if ! URL=$(uv run python -c "from companion.core.config import load_config; s = load_config().server; h = '127.0.0.1' if s.host in ('0.0.0.0', '::', '') else s.host; h = f'[{h}]' if ':' in h else h; print(f'http://{h}:{s.port}')"); then
   echo "Could not read the configuration. Run \"uv run companion check\" to see why." >&2
