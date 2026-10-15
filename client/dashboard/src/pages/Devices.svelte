@@ -3,6 +3,7 @@
   import DeviceCamera from "../lib/DeviceCamera.svelte";
   import DeviceDiagnostics from "../lib/DeviceDiagnostics.svelte";
   import DeviceLog from "../lib/DeviceLog.svelte";
+  import DeviceMaintain from "../lib/DeviceMaintain.svelte";
   import { duration, value as show } from "../lib/format.js";
   import { changedPaths, equal, getPath, setPath } from "../lib/schema.js";
 
@@ -167,7 +168,7 @@
 
 <div class="head">
   <h2>Devices</h2>
-  <span class="muted">Connected devices. Edge devices (companion-edge 1.1 or newer) can be set up from here.</span>
+  <span class="muted">Connected devices, and boards that left their log here. Settings need companion-edge 1.1, the rest 1.2.</span>
 </div>
 
 {#if loadError && !devices}
@@ -206,7 +207,7 @@
 
       {#if selectedId}
         <div class="tabs" role="tablist">
-          {#each [["settings", "Status and settings"], ["log", "Log"], ["camera", "Camera"], ["diagnostics", "Diagnostics"]] as [id, label]}
+          {#each [["settings", "Status and settings"], ["log", "Log"], ["camera", "Camera"], ["diagnostics", "Diagnostics"], ["maintain", "Maintenance"]] as [id, label]}
             <button
               role="tab"
               class:active={tab === id}
@@ -224,6 +225,8 @@
         <DeviceCamera deviceId={selectedId} />
       {:else if selected && tab === "diagnostics"}
         <DeviceDiagnostics deviceId={selectedId} />
+      {:else if selected && tab === "maintain"}
+        <DeviceMaintain device={selected} />
       {:else if selected}
         {#if selected.status && Object.keys(selected.status).length}
           <details class="card status">
