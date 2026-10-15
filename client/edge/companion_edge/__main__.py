@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import contextlib
 import logging
 import os
 import shutil
+import signal
 import sys
 from pathlib import Path
 
@@ -37,13 +39,33 @@ def check(config: EdgeConfig) -> int:
                 print("opus     ffmpeg's built-in encoder (no libopus)")
             else:
                 print("opus     none: audio will be sent as uncompressed PCM")
-    if config.camera.enabled:
+    if config.camera.enabled and config.camera.driver == "cvi":
+        from companion_edge import cvi
+
+        found = cvi.available()
+        ok &= found
+        detail = "ok" if found else f"NOT FOUND (needs {cvi.SENSOR_TEST} and {cvi.SENSOR_CONFIG})"
+        print(f"camera   cvi (MIPI CSI) {detail}")
+    elif config.camera.enabled:
         found = os.path.exists(config.camera.device)
         ok &= found
         print(f"camera   {config.camera.device} {'ok' if found else 'NOT FOUND'}")
     print(f"server   {config.server}")
     print(f"token    {'set' if config.token() else f'not set (${config.token_env})'}")
     return 0 if ok else 1
+
+
+async def _serve(client: object) -> str:
+    """Run the client; SIGTERM (a service stopping) shuts it down cleanly, so
+    devices such as the camera are released properly."""
+    task = asyncio.current_task()
+    assert task is not None
+    with contextlib.suppress(NotImplementedError, RuntimeError):  # not on Windows
+        asyncio.get_running_loop().add_signal_handler(signal.SIGTERM, task.cancel)
+    try:
+        return await client.run()  # type: ignore[attr-defined]
+    except asyncio.CancelledError:
+        return "stopped"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -75,7 +97,7 @@ def main(argv: list[str] | None = None) -> int:
     # Settings changed from the server's dashboard are saved to --config and
     # taken by starting over in this process (no service manager needed).
     try:
-        while asyncio.run(EdgeClient(config, config_path=args.config).run()) == "restart":
+        while asyncio.run(_serve(EdgeClient(config, config_path=args.config))) == "restart":
             config = load(args.config)
             if args.server:
                 config.server = args.server
