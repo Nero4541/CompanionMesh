@@ -14,6 +14,7 @@ server:
   # Admin token (from .env) for the dashboard and /v1/admin/*. While it is unset,
   # they only answer this machine; the device token above never grants access.
   admin_token_env: COMPANION_ADMIN_TOKEN
+  dashboard_conversation: false  # show transcripts and replies on the dashboard
 
 logging:
   level: INFO               # DEBUG | INFO | WARNING | ERROR
@@ -66,6 +67,10 @@ stt:
   # whisper.cpp server, OpenAI, Groq) instead of a local model.
   base_url: http://127.0.0.1:8000/v1
   api_key_env: STT_API_KEY
+  # Keep each utterance as heard (data/recordings, WAV + transcript) to check
+  # recognition from the dashboard; deleted after keep_audio_days.
+  keep_audio: false
+  keep_audio_days: 3
 
 vad:
   provider: silero          # silero | energy
