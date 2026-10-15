@@ -195,6 +195,19 @@
       {/if}
     </div>
 
+    <span class="label">Away from home</span>
+    <div>
+      {#if info?.public_url}
+        <span>The board also tries <code>{info.public_url}</code> (TLS, this server's own certificate).</span>
+      {:else if info?.public_enabled}
+        <span class="muted">The public listener is on, but <code>server.public.url</code> is not set, so boards do
+          not know its address yet.</span>
+      {:else}
+        <span class="muted">Only at home. To reach this server from anywhere, turn on <code>server.public</code>
+          (see README, "Reaching the server from outside"), then set the board up again.</span>
+      {/if}
+    </div>
+
     <label for="b-camera">Camera</label>
     <div class="row">
       <select id="b-camera" bind:value={form.camera} disabled={installing}>
