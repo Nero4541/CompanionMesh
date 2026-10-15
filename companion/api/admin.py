@@ -422,6 +422,57 @@ async def configure_device(
     return {"restarting": bool(result.get("restarting"))}
 
 
+class EnrollBody(BaseModel):
+    device_id: str
+
+
+@router.get("/enrolled")
+async def enrolled(request: Request) -> dict[str, Any]:
+    """Devices with tokens of their own (set up by the installer or enrolled here)."""
+    runtime = _runtime(request)
+    return {
+        "devices": [
+            {**d.public(), "connected": runtime.find_device(d.device_id) is not None}
+            for d in runtime.devices.list()
+        ]
+    }
+
+
+@router.post("/enrolled")
+async def enroll(request: Request, body: EnrollBody) -> dict[str, Any]:
+    """Create a device token, or replace it (the old one stops working at once)."""
+    runtime = _runtime(request)
+    replaced = runtime.devices.get(body.device_id) is not None
+    try:
+        token = runtime.devices.enroll(body.device_id)
+    except ValueError as exc:
+        raise _unprocessable(str(exc), "device_id") from exc
+    if replaced:
+        await runtime.disconnect_device(body.device_id)
+    log.info("device token issued", extra=kv(device=body.device_id, replaced=replaced))
+    return {"device_id": body.device_id, "token": token, "replaced": replaced}
+
+
+@router.delete("/enrolled/{device_id}")
+async def revoke(request: Request, device_id: str) -> dict[str, Any]:
+    """Forget a device: its token stops working and its connections close."""
+    runtime = _runtime(request)
+    if not runtime.devices.remove(device_id):
+        raise HTTPException(status_code=404, detail=f"no enrolled device {device_id!r}")
+    closed = await runtime.disconnect_device(device_id)
+    log.info("device revoked", extra=kv(device=device_id, connections_closed=closed))
+    return {"revoked": device_id, "connections_closed": closed}
+
+
+@router.get("/enrolled/{device_id}/root-password")
+async def root_password(request: Request, device_id: str) -> dict[str, Any]:
+    """The root password the installer gave the board (for its console or SSH)."""
+    device = _runtime(request).devices.get(device_id)
+    if device is None or not device.root_password:
+        raise HTTPException(status_code=404, detail="no password recorded for this device")
+    return {"device_id": device_id, "root_password": device.root_password}
+
+
 def _profile(path: Path) -> dict[str, Any]:
     """A profile's settings plus the comment block at its top, as notes."""
     text = path.read_text(encoding="utf-8")
