@@ -23,6 +23,7 @@ from companion.core.config import (
     set_setting,
 )
 from companion.core.errors import CompanionError
+from companion.core.feed import AdminFeed
 from companion.core.logging import kv
 from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
@@ -30,6 +31,7 @@ from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
 from companion.protocol import events as ev
+from companion.protocol import make_event
 from companion.providers.stt.base import STTProvider
 from companion.providers.tts.base import TTSProvider
 from companion.providers.vlm.base import VLMProvider
@@ -110,6 +112,7 @@ class CompanionRuntime:
         providers = providers or Providers()
         self.config = config
         self.bus = EventBus()
+        self.feed = AdminFeed(self.bus)
         self.store: TranscriptStore = build_store(config)
         self.persona: Persona = load_persona(config.personas_dir, config.agent.persona)
         self.agent: AgentBackend = providers.agent or build_agent(config, self.store)
@@ -227,12 +230,23 @@ class CompanionRuntime:
         self.sessions[sid] = session
         return session, session.devices[0], resumed
 
+    async def notice(
+        self, kind: str, payload: dict[str, Any], *, session_id: str | None = None
+    ) -> None:
+        """Tell observers (the dashboard's events page) about something the server did."""
+        await self.bus.publish(make_event(f"notice.{kind}", payload, session_id=session_id))
+
     async def disconnect(self, session: Session, device: Device) -> None:
         """Detach a device; the session ends with its last mic/speaker device.
 
         It lingers for ``server.session_linger_s`` first, so a device that drops
         off the network and reconnects resumes the same conversation.
         """
+        await self.notice(
+            "device_left",
+            {"device_id": device.device_id, "roles": sorted(device.roles)},
+            session_id=session.session_id,
+        )
         if not await session.detach(device):
             return
         linger = self.config.server.session_linger_s
@@ -318,6 +332,16 @@ class CompanionRuntime:
             result = await asyncio.wait_for(answer, DEVICE_CONFIG_TIMEOUT_S)
         finally:
             device.settings_requests.pop(request_id, None)
+        await self.notice(
+            "device_settings",
+            {
+                "device_id": device_id,
+                "ok": result.get("ok"),
+                "restarting": result.get("restarting"),
+                "error": result.get("error"),
+            },
+            session_id=session.session_id,
+        )
         log.info(
             "device settings sent",
             extra=kv(device=device_id, ok=result.get("ok"), restarting=result.get("restarting")),
