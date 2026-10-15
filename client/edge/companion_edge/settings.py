@@ -24,6 +24,8 @@ CHOICES = {
     "audio.opus_encoder": ["auto", "libopus", "ffmpeg"],
     "audio.aec": ["none", "device"],
     "camera.mode": ["change", "periodic"],
+    "camera.driver": ["v4l2", "cvi"],
+    "camera.rotate": [0, 90, 180, 270],
 }
 # Numbers that must be positive (the rest may be 0 or more).
 POSITIVE = frozenset(
@@ -112,7 +114,7 @@ def _check(path: str, value: Any, kind: str) -> Any:
         if value < 0 or (value == 0 and path in POSITIVE):
             raise ValueError(f"{path}: must be {'above' if path in POSITIVE else 'at least'} 0")
     if path in CHOICES and value not in CHOICES[path]:
-        raise ValueError(f"{path}: one of {', '.join(CHOICES[path])}")
+        raise ValueError(f"{path}: one of {', '.join(map(str, CHOICES[path]))}")
     return value
 
 
