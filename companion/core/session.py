@@ -126,7 +126,8 @@ class Device:
     clock: ClockSync = field(default_factory=ClockSync)
     # Remote settings (device.config); None if the device does not offer them.
     settings: dict[str, Any] | None = None
-    # device.config.set requests waiting for their device.config.result.
+    # Requests waiting for the device's answer, by request_id
+    # (device.config.set -> .result, device.diagnostics.request -> device.diagnostics).
     settings_requests: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
 
     def describe(self) -> dict[str, Any]:
@@ -401,6 +402,7 @@ class Session:
             return
         await self.interrupt("new_message")
         await self.vision.request_capture("text")
+        self.runtime.feed.said(self.session_id, "user", text, typed=True)
         self._timings = TurnTimings(transcript=TurnTimings.now())
         self._start_turn(self._text_turn(text))
 
@@ -561,19 +563,31 @@ class Session:
             return
         if self._timings is not None:
             self._timings.transcript = TurnTimings.now()
+        stt_s = time.perf_counter() - started
+        echo = bool(
+            transcript.text
+            and self.realtime.echo.guard
+            and self.echo_guard.is_echo(transcript.text)
+        )
+        recording_id = await self._keep_recording(
+            audio,
+            transcript.text,
+            "echo" if echo else "turn" if transcript.text else "empty",
+            stt_s,
+        )
         log.info(
             "transcribed",
             extra=kv(
                 session=self.session_id,
                 audio_s=round(audio.size / SAMPLE_RATE, 2),
-                stt_s=round(time.perf_counter() - started, 2),
+                stt_s=round(stt_s, 2),
                 text=transcript.text,
             ),
         )
         if not transcript.text:
             await self.rest("nothing recognized")
             return
-        if self.realtime.echo.guard and self.echo_guard.is_echo(transcript.text):
+        if echo:
             log.info(
                 "dropped own voice heard back",
                 extra=kv(session=self.session_id, text=transcript.text),
@@ -582,7 +596,35 @@ class Session:
             await self.rest("echo")
             return
         await self.emit(ev.CONVERSATION_TRANSCRIPT, {"text": transcript.text, "final": True})
+        self.runtime.feed.said(
+            self.session_id,
+            "user",
+            transcript.text,
+            device_id=self._mic.device.device_id if self._mic else None,
+            recording_id=recording_id,
+        )
         await self.run_turn(transcript.text)
+
+    async def _keep_recording(
+        self, audio: np.ndarray, text: str, outcome: str, stt_s: float
+    ) -> str | None:
+        """Save the utterance for the dashboard (``stt.keep_audio``); its id, or None."""
+        if not self.runtime.config.stt.keep_audio:
+            return None
+        try:
+            rec = await asyncio.to_thread(
+                self.runtime.recordings.save,
+                audio,
+                session_id=self.session_id,
+                device_id=self._mic.device.device_id if self._mic else None,
+                text=text,
+                outcome=outcome,
+                stt_s=stt_s,
+            )
+        except OSError as exc:
+            log.warning("cannot keep the recording", extra=kv(error=str(exc)))
+            return None
+        return rec.id
 
     # --- playback ---------------------------------------------------------
 
@@ -854,6 +896,9 @@ class Session:
                 self.attention.note_agent_speech()
                 await self.runtime.store.add_message(
                     self.session_id, "assistant", stored, turn_id=turn_id
+                )
+                self.runtime.feed.said(
+                    self.session_id, "companion", stored, cancelled=cancelled, turn_id=turn_id
                 )
             done: dict[str, Any] = {"turn_id": turn_id, "text": text, "cancelled": cancelled}
             if cancelled and reason:
