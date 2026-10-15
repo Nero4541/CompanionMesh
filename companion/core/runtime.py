@@ -22,11 +22,13 @@ from companion.core.config import (
     needs_restart,
     set_setting,
 )
+from companion.core.device_logs import DeviceLogs
 from companion.core.errors import CompanionError
 from companion.core.feed import AdminFeed
 from companion.core.logging import kv
 from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
+from companion.core.recordings import RecordingStore
 from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.devices.registry import DeviceRegistry
@@ -37,11 +39,13 @@ from companion.providers.stt.base import STTProvider
 from companion.providers.tts.base import TTSProvider
 from companion.providers.vlm.base import VLMProvider
 from companion.vision.archive import ImageArchive
+from companion.vision.pipeline import LastFrame
 
 log = logging.getLogger(__name__)
 
 # How long a device may take to check and save settings sent to it.
 DEVICE_CONFIG_TIMEOUT_S = 15.0
+DIAGNOSTICS_TIMEOUT_S = 30.0
 
 
 @dataclass
@@ -113,7 +117,7 @@ class CompanionRuntime:
         providers = providers or Providers()
         self.config = config
         self.bus = EventBus()
-        self.feed = AdminFeed(self.bus)
+        self.feed = AdminFeed(self.bus, show_text=lambda: self.config.server.dashboard_conversation)
         self.store: TranscriptStore = build_store(config)
         self.persona: Persona = load_persona(config.personas_dir, config.agent.persona)
         self.agent: AgentBackend = providers.agent or build_agent(config, self.store)
@@ -135,6 +139,9 @@ class CompanionRuntime:
         self._vad_factory = providers.vad_factory or (lambda: create_vad(self.config.vad))
         self.sessions: dict[str, Session] = {}
         self.devices = DeviceRegistry(config.storage.data_dir / "devices.json")
+        self.device_logs = DeviceLogs(config.storage.data_dir / "devices")
+        self.recordings = RecordingStore(config.storage.data_dir / "recordings")
+        self.frames: dict[str, LastFrame] = {}  # device_id -> newest frame
         self.cameras = CameraManager(providers.camera_factory)
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
@@ -144,6 +151,7 @@ class CompanionRuntime:
         await self.store.purge_observations(self.config.vision.retention_days)
         if self.image_archive is not None:
             await asyncio.to_thread(self.image_archive.purge)
+        await asyncio.to_thread(self.recordings.purge, self.config.stt.keep_audio_days)
         log.info(
             "runtime started",
             extra=kv(
@@ -183,6 +191,7 @@ class CompanionRuntime:
                 with contextlib.suppress(Exception):
                     await provider.aclose()
         self.store.close()
+        self.device_logs.close()
         log.info("runtime stopped")
 
     def new_vad(self) -> VAD:
@@ -321,6 +330,43 @@ class CompanionRuntime:
                     return session, device
         return None
 
+    async def _ask_device(
+        self, device_id: str, type_: str, payload: dict[str, Any], timeout_s: float
+    ) -> tuple[Session, dict[str, Any]]:
+        """Send ``type_`` to a connected device and wait for its answer (by request_id)."""
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        request_id = uuid.uuid4().hex[:12]
+        answer: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
+        device.settings_requests[request_id] = answer
+        try:
+            await session.emit_to([device], type_, {"request_id": request_id, **payload})
+            return session, await asyncio.wait_for(answer, timeout_s)
+        finally:
+            device.settings_requests.pop(request_id, None)
+
+    async def device_diagnostics(self, device_id: str) -> dict[str, Any]:
+        """Ask a device (protocol 1.2) for its diagnostics; TimeoutError if it does not answer."""
+        _, result = await self._ask_device(
+            device_id, ev.DEVICE_DIAGNOSTICS_REQUEST, {}, DIAGNOSTICS_TIMEOUT_S
+        )
+        sections = result.get("sections")
+        return sections if isinstance(sections, dict) else {}
+
+    async def capture(self, device_id: str) -> None:
+        """Ask a camera device for a fresh frame now."""
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        await session.emit_to(
+            [device],
+            ev.VISION_CAPTURE_REQUEST,
+            {"request_id": uuid.uuid4().hex[:12], "reason": "dashboard"},
+        )
+
     async def configure_device(self, device_id: str, config: dict[str, Any]) -> dict[str, Any]:
         """Send new settings to a connected device; return its device.config.result.
 
@@ -329,21 +375,13 @@ class CompanionRuntime:
         found = self.find_device(device_id)
         if found is None:
             raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
-        session, device = found
-        if device.settings is None:
+        if found[1].settings is None:
             raise CompanionError(
                 f"device {device_id!r} does not offer remote settings", code="not_configurable"
             )
-        request_id = uuid.uuid4().hex[:12]
-        answer: asyncio.Future[dict[str, Any]] = asyncio.get_running_loop().create_future()
-        device.settings_requests[request_id] = answer
-        try:
-            await session.emit_to(
-                [device], ev.DEVICE_CONFIG_SET, {"request_id": request_id, "config": config}
-            )
-            result = await asyncio.wait_for(answer, DEVICE_CONFIG_TIMEOUT_S)
-        finally:
-            device.settings_requests.pop(request_id, None)
+        session, result = await self._ask_device(
+            device_id, ev.DEVICE_CONFIG_SET, {"config": config}, DEVICE_CONFIG_TIMEOUT_S
+        )
         await self.notice(
             "device_settings",
             {
