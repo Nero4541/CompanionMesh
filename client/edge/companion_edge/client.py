@@ -17,6 +17,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import ssl
 import time
 import uuid
 from collections import deque
@@ -49,6 +50,11 @@ SAMPLE_RATE = 16000
 PACKET_SAMPLES = int(PACKET_S * SAMPLE_RATE)
 JOIN_RETRY_S = 2.0  # camera-only devices: how often to look for a conversation to join
 LOG_SHIP_S = 2.0  # how often new log lines go to the server
+CONNECT_TIMEOUT_S = 10.0  # per address, so the next one is tried soon
+# websockets 14 renamed the argument for request headers.
+HEADERS_ARG = (
+    "additional_headers" if int(websockets.__version__.split(".")[0]) >= 14 else "extra_headers"
+)
 
 
 @dataclass
@@ -79,6 +85,7 @@ class EdgeClient:
         # This device's log lines, sent to the server (device.log) while connected.
         self.logs = logs or logship.BUFFER
         self._logs_sent = -1  # seq of the newest line the server has
+        self.route: str | None = None  # the server address that worked last
         self.restart_requested = False
         a, c = config.audio, config.camera
         self.encoder = encoder
@@ -400,6 +407,7 @@ class EdgeClient:
                     codec=self.codec,
                     audio_buffer_ms=round(len(self._pending) * PACKET_S * 1000),
                     reconnects=self.stats.reconnects,
+                    server=self.route,
                     frames_sent=self.stats.frames_sent,
                     frame_interval_s=self.frame_interval,
                 )
@@ -571,12 +579,52 @@ class EdgeClient:
             self.streaming = False
         return "closed"
 
-    def _url(self) -> str:
+    def _ssl_context(self, url: str) -> ssl.SSLContext | None:
+        if not url.startswith("wss://"):
+            return None
+        if self.config.server_cert:
+            # Trust exactly the server's own certificate, at any address.
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+            context.check_hostname = False
+            context.load_verify_locations(cafile=self.config.server_cert)
+            return context
+        return ssl.create_default_context()
+
+    def _connect(self, url: str) -> Any:
+        """Open a connection; the token goes in a header, never in the URL."""
+        kwargs: dict[str, Any] = {"max_size": None}
         token = self.config.token()
-        if not token:
-            return self.config.server
-        sep = "&" if "?" in self.config.server else "?"
-        return f"{self.config.server}{sep}token={token}"
+        if token:
+            kwargs[HEADERS_ARG] = {"Authorization": f"Bearer {token}"}
+        context = self._ssl_context(url)
+        if context is not None:
+            kwargs["ssl"] = context
+        return websockets.connect(url, **kwargs)
+
+    def _addresses(self) -> list[str]:
+        """The server's addresses, the one that worked last first."""
+        urls = self.config.server_urls()
+        if self.route in urls:
+            urls.remove(self.route)
+            urls.insert(0, self.route)
+        return urls
+
+    async def _connect_any(self) -> Any:
+        """A connection to the first address that answers; raises the last error."""
+        error: Exception = OSError("no server address configured")
+        for url in self._addresses():
+            try:
+                ws = await asyncio.wait_for(self._connect(url), CONNECT_TIMEOUT_S)
+            except (OSError, TimeoutError, ssl.SSLError, websockets.WebSocketException) as exc:
+                error = exc
+                if len(self.config.server_urls()) > 1:
+                    log.info("%s: %s", url, exc or type(exc).__name__)
+                continue
+            if url != self.route:
+                log.info("connected through %s", url)
+            self.route = url
+            return ws
+        raise error
 
     async def run(self) -> str:
         """Serve until cancelled, or until new settings need a restart ("restart")."""
@@ -594,11 +642,15 @@ class EdgeClient:
             while True:
                 outcome = "error"
                 try:
-                    async with websockets.connect(self._url(), max_size=None) as ws:
+                    ws = await self._connect_any()
+                    try:
                         backoff = 1.0
                         outcome = await self._connection(ws)
-                except (OSError, websockets.WebSocketException) as exc:
-                    log.warning("server unreachable: %s (retrying in %.0f s)", exc, backoff)
+                    finally:
+                        await ws.close()
+                except (OSError, TimeoutError, ssl.SSLError, websockets.WebSocketException) as exc:
+                    reason = exc or type(exc).__name__
+                    log.warning("server unreachable: %s (retrying in %.0f s)", reason, backoff)
                 if self.restart_requested:
                     return "restart"
                 if outcome in ("no_session", "ended"):
