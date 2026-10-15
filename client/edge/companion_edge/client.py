@@ -28,6 +28,7 @@ import websockets
 
 from companion_edge import protocol, settings, status
 from companion_edge.config import EdgeConfig
+from companion_edge.cvi import CviCamera
 from companion_edge.devices import (
     AlsaMicrophone,
     AlsaSpeaker,
@@ -83,17 +84,7 @@ class EdgeClient:
             if a.enabled
             else None
         )
-        self.camera = camera or (
-            FfmpegCamera(
-                c.device,
-                input_format=c.input_format,
-                size=c.size,
-                quality=c.quality,
-                analysis_fps=c.analysis_fps if c.mode == "change" else 0.0,
-            )
-            if c.enabled
-            else None
-        )
+        self.camera = camera or (self._make_camera() if c.enabled else None)
         if self.mic is not None and microphone is not None and self.codec == "opus":
             if self.encoder is None and not getattr(self.mic, "encoded", False):
                 try:
@@ -129,6 +120,22 @@ class EdgeClient:
         )
         self._last_frame_sent = 0.0
         self._tasks: set[asyncio.Task[None]] = set()
+
+    def _make_camera(self) -> Camera:
+        c = self.config.camera
+        analysis_fps = c.analysis_fps if c.mode == "change" else 0.0
+        if c.driver == "cvi":
+            return CviCamera(
+                size=c.size, quality=c.quality, analysis_fps=analysis_fps, rotate=c.rotate
+            )
+        return FfmpegCamera(
+            c.device,
+            input_format=c.input_format,
+            size=c.size,
+            quality=c.quality,
+            analysis_fps=analysis_fps,
+            rotate=c.rotate,
+        )
 
     def _pick_microphone(self) -> Microphone:
         """libopus if present, else ffmpeg's Opus encoder, else uncompressed PCM."""
