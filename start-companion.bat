@@ -13,6 +13,14 @@ where uv >nul 2>nul || (
   exit /b 1
 )
 
+rem First run: ask for the agent, speech and tokens (writes .env and the local config).
+if not exist .env (
+  uv run companion setup || (
+    pause
+    exit /b 1
+  )
+)
+
 rem The address the server listens on, from configs\companion.yaml (+ .local.yaml).
 set "URL="
 for /f "usebackq delims=" %%U in (`uv run python -c "from companion.core.config import load_config; s = load_config().server; h = '127.0.0.1' if s.host in ('0.0.0.0', '::', '') else s.host; h = f'[{h}]' if ':' in h else h; print(f'http://{h}:{s.port}')"`) do set "URL=%%U"
