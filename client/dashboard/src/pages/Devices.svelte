@@ -229,7 +229,7 @@
       {#if selectedId && tab === "log"}
         <DeviceLog deviceId={selectedId} />
       {:else if selected && tab === "camera"}
-        <DeviceCamera deviceId={selectedId} />
+        <DeviceCamera deviceId={selectedId} roles={selected.roles} />
       {:else if selected && tab === "diagnostics"}
         <DeviceDiagnostics deviceId={selectedId} />
       {:else if selected && tab === "maintain"}
