@@ -109,6 +109,7 @@ class InstallBody(BaseModel):
     rotate: int | None = None
     wifi: list[WifiBody] = Field(default_factory=list)
     password: str | None = None
+    keep_token: bool = False  # update a board set up before (software, settings, Wi-Fi)
 
 
 @router.post("/install", status_code=202)
@@ -121,6 +122,10 @@ async def start_install(request: Request, body: InstallBody) -> dict[str, Any]:
         raise HTTPException(status_code=422, detail=f"no profile {body.profile!r}")
     if not DEVICE_ID.match(body.device_id):
         raise HTTPException(status_code=422, detail="device id: letters, digits, '.', '_', '-'")
+    if body.keep_token and runtime.devices.get(body.device_id) is None:
+        raise HTTPException(
+            status_code=422, detail=f"this server has not set up {body.device_id!r} yet"
+        )
     for network in body.wifi:
         if network.password:
             try:
@@ -140,6 +145,7 @@ async def start_install(request: Request, body: InstallBody) -> dict[str, Any]:
         rotate=body.rotate,
         wifi=[edge_install.WifiNetwork(n.ssid, n.password or None) for n in body.wifi],
         password=body.password or None,
+        keep_token=body.keep_token,
     )
     job = Job(id=uuid.uuid4().hex[:12], device_id=body.device_id, host=body.host)
 
