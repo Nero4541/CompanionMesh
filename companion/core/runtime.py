@@ -491,6 +491,11 @@ class CompanionRuntime:
         if found is None:
             raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
         session, device = found
+        if "camera" not in device.roles:
+            raise CompanionError(
+                f"device {device_id!r} has no camera turned on (its camera.enabled setting)",
+                code="no_camera",
+            )
         await session.emit_to(
             [device],
             ev.VISION_CAPTURE_REQUEST,
