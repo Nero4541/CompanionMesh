@@ -2,6 +2,10 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see the README, "Updating".
 
+## Unreleased
+
+- **Speech from boards with speech recognition on another machine**: voice activity detection and the Opus decoder no longer come with the `stt` and `opus` extras, which a server with remote speech recognition does not install. The board's microphone sent audio, but no speech was ever detected (`companion check`: `vad FAILED: onnxruntime is not installed`). Silero VAD's model now comes with the server, and onnxruntime and PyAV are base dependencies; `--extra opus` still works but is no longer needed.
+
 ## 1.2.0
 
 Boards from zero, and looking after them from the dashboard. Protocol 1.2 (additive: 1.x clients keep working), edge client 1.2.0.
