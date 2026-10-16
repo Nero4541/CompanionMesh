@@ -13,6 +13,8 @@ from companion.core.errors import ProviderError
 
 FRAME_SAMPLES = 512
 _CONTEXT = 64
+# Bundled (faster-whisper's export, MIT), so VAD works without the stt extra.
+SILERO_MODEL = Path(__file__).with_name("silero_vad_v6.onnx")
 
 
 class VAD(Protocol):
@@ -36,15 +38,6 @@ class EnergyVAD:
         pass
 
 
-def bundled_silero_path() -> Path | None:
-    try:
-        from faster_whisper.utils import get_assets_path
-    except ImportError:
-        return None
-    path = Path(get_assets_path()) / "silero_vad_v6.onnx"
-    return path if path.is_file() else None
-
-
 class SileroVAD:
     """Streaming Silero VAD over onnxruntime.
 
@@ -56,12 +49,13 @@ class SileroVAD:
         try:
             import onnxruntime
         except ImportError as exc:
-            raise ProviderError("silero_vad", "onnxruntime is not installed") from exc
-        path = model_path or bundled_silero_path()
-        if path is None or not path.is_file():
             raise ProviderError(
-                "silero_vad",
-                "Silero model not found; install the `stt` extra or set vad.provider: energy",
+                "silero_vad", "onnxruntime is not installed; run `uv sync`"
+            ) from exc
+        path = model_path or SILERO_MODEL
+        if not path.is_file():
+            raise ProviderError(
+                "silero_vad", f"Silero model not found at {path}; set vad.provider: energy"
             )
         opts = onnxruntime.SessionOptions()
         opts.inter_op_num_threads = 1
