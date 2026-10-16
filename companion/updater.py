@@ -115,10 +115,15 @@ def latest_release(api: str | None = None, *, timeout: float = 15) -> Release:
     )
 
 
-def package_name(version: str, system: str | None = None) -> str:
+def package_names(version: str, system: str | None = None) -> list[str]:
+    """This system's server package in a release, under its name and the name before 1.2.0."""
     system = system or ("windows" if sys.platform == "win32" else "linux")
     suffix = "windows.zip" if system == "windows" else "linux.tar.gz"
-    return f"companion-server-{version}-{suffix}"
+    return [f"companion-mesh-{version}-{suffix}", f"companion-server-{version}-{suffix}"]
+
+
+def package_name(version: str, system: str | None = None) -> str:
+    return package_names(version, system)[0]
 
 
 def read_package(name: str, data: bytes) -> dict[str, bytes]:
@@ -270,9 +275,10 @@ def _prune_backups(folder: Path) -> None:
 
 
 def update_from_release(root: Path, release: Release, out=print) -> dict[str, Any]:
-    name = package_name(release.version)
-    if name not in release.assets or "SHA256SUMS" not in release.assets:
-        raise UpdateError(f"release {release.tag} has no {name} (or no SHA256SUMS)")
+    name = next((n for n in package_names(release.version) if n in release.assets), None)
+    if name is None or "SHA256SUMS" not in release.assets:
+        wanted = package_name(release.version)
+        raise UpdateError(f"release {release.tag} has no {wanted} (or no SHA256SUMS)")
     out(f"Downloading {name} ...")
     data = _get(release.assets[name], timeout=300)
     sums = _get(release.assets["SHA256SUMS"]).decode().replace("\r", "")
