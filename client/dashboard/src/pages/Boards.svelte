@@ -1,6 +1,7 @@
 <script>
   import { api } from "../lib/api.js";
   import { duration } from "../lib/format.js";
+  import { DEVICE_EVENTS, onEvents } from "../lib/live.js";
 
   let { onAuthError } = $props();
 
@@ -75,10 +76,16 @@
   $effect(() => {
     loadEnrolled();
     scan();
+    // Live: a board connecting or leaving shows at once; the timer is a fallback
+    // (and moves "last seen" along).
+    const stop = onEvents(DEVICE_EVENTS, () => loadEnrolled());
     const timer = setInterval(() => {
       if (!document.hidden) loadEnrolled();
-    }, 5000);
-    return () => clearInterval(timer);
+    }, 15000);
+    return () => {
+      stop();
+      clearInterval(timer);
+    };
   });
 
   const host = $derived(form.host === "other" ? form.hostOther.trim() : form.host);
