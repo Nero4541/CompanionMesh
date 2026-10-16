@@ -15,6 +15,7 @@ from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from fastapi.responses import FileResponse
+from pydantic import BaseModel, Field
 
 from companion.api.auth import require_admin
 from companion.core.errors import CompanionError
@@ -93,6 +94,7 @@ async def device_frame(request: Request, device_id: str) -> Response:
             "Cache-Control": "no-store",
             "X-Frame-Reason": frame.reason,
             "X-Frame-Age": f"{time.time() - frame.received:.1f}",
+            "X-Frame-Time": f"{frame.received:.3f}",
         },
     )
 
@@ -104,10 +106,30 @@ async def frames(request: Request) -> dict[str, Any]:
     items = sorted(_runtime(request).frames.items(), key=lambda kv: -kv[1].received)
     return {
         "frames": [
-            {"device_id": d, "age_s": round(now - f.received, 1), "reason": f.reason}
+            {
+                "device_id": d,
+                "age_s": round(now - f.received, 1),
+                "received": f.received,
+                "reason": f.reason,
+            }
             for d, f in items
         ]
     }
+
+
+class LiveBody(BaseModel):
+    seconds: float = Field(default=15.0, ge=0, le=60)  # send again to keep it going
+    fps: float = Field(default=2.0, gt=0, le=5)
+
+
+@router.post("/devices/{device_id}/live", status_code=202)
+async def live(request: Request, device_id: str, body: LiveBody) -> dict[str, Any]:
+    """Pictures in a row for the dashboard's live view; seconds 0 stops."""
+    try:
+        await _runtime(request).live_view(device_id, body.seconds, body.fps)
+    except CompanionError as exc:
+        raise _not_connected(exc) from exc
+    return {"live": device_id, "seconds": body.seconds}
 
 
 @router.post("/devices/{device_id}/capture", status_code=202)
