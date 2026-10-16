@@ -9,6 +9,7 @@
   import Metrics from "./pages/Metrics.svelte";
   import Overview from "./pages/Overview.svelte";
   import Personas from "./pages/Personas.svelte";
+  import Updates from "./pages/Updates.svelte";
 
   const PAGES = [
     { id: "overview", label: "Overview", component: Overview },
@@ -20,6 +21,7 @@
     { id: "boards", label: "Boards", component: Boards },
     { id: "events", label: "Events", component: Events },
     { id: "conversations", label: "Conversations", component: Conversations },
+    { id: "updates", label: "Updates", component: Updates },
   ];
 
   function current() {
