@@ -420,7 +420,33 @@ The protocol has nothing board-specific: any client that speaks it (another SBC,
 
 ### Reaching the server from outside
 
-A board carried outdoors (on your phone's hotspot or mobile data) is outside the server's network. The board only ever connects out to the server, so all it needs is one address of the server it can reach from anywhere; settings, logs, diagnostics and updates then travel over that same connection. Nothing beyond the edge client runs on the board (no VPN).
+A board carried outdoors (on your phone's hotspot or mobile data) is outside the server's network. The board only ever connects out to the server, so all it needs is one address of the server it can reach from anywhere; settings, logs, diagnostics and updates then travel over that same connection.
+
+**Recommended: [Tailscale](https://tailscale.com) on the server and the board.** Both connect out to Tailscale, so it works behind carrier-grade NAT, on any hotspot or public Wi-Fi, with a VPN on the server and without touching the router or the firewall; the server's Tailscale address stays the same wherever the board is, and traffic between them is encrypted.
+
+1. **Server:** install Tailscale and sign in. `tailscale ip -4` shows its address (`100.x.y.z`).
+2. **Board:** install Tailscale and sign in to the same account (tailnet). On Sipeed's LicheeRV Nano image (no package manager), copy the static `riscv64` binaries from [pkgs.tailscale.com](https://pkgs.tailscale.com/stable/#static) to `/usr/sbin/` and start `tailscaled` at boot with its state on the SD card, since `/run` is cleared at every start, for example as `/etc/init.d/S45tailscale`:
+
+   ```sh
+   #!/bin/sh
+   case "$1" in
+     start)
+       mkdir -p /root/.tailscale /var/run/tailscale
+       start-stop-daemon -S -b -m -p /run/tailscaled.pid -x /usr/sbin/tailscaled -- \
+         --state=/root/.tailscale/tailscaled.state --port=41641 ;;
+     stop)
+       start-stop-daemon -K -p /run/tailscaled.pid && rm -f /run/tailscaled.pid ;;
+   esac
+   ```
+
+   Then run `tailscale up` once on the board and open the link it prints (or use `tailscale up --auth-key=…` with a key from the Tailscale admin console). `tailscaled` takes about 30 MB of the LicheeRV Nano's 128 MB.
+3. **Set the board up** (or **Update over USB**) under **Boards** and pick the server's Tailscale address under **Server address for the board**: the list shows it, marked "Tailscale". The same address works at home and away.
+
+Keep `server.host: 0.0.0.0` (or set it to the Tailscale address) and the device token, as for any network.
+
+#### Without Tailscale: the public listener (advanced)
+
+If you cannot use Tailscale and your home connection has a public IPv4 address (or IPv6), the server can offer boards a port of its own on the Internet. This needs a port forward on the router and breaks when the server's own traffic goes through a VPN or an exit node, so it is for those who can control both.
 
 Turn on the **public listener** (`uv run companion setup` asks, or set it yourself):
 
@@ -442,7 +468,8 @@ Then make that port reachable from the Internet, depending on your connection:
 |---|---|
 | A public IPv4 address | Forward TCP port 8766 on the router to the server's address. If the address changes, use dynamic DNS (most routers have it built in, or a free service) for `url`. |
 | IPv6 (at home and on the phone's hotspot) | Allow incoming TCP port 8766 to the server's (stable) IPv6 address in the router's firewall, nothing else. No port forwarding is needed. |
-| Carrier-grade NAT, no IPv6 | A small rented server in between: a relay such as frp or an SSH reverse tunnel to it. Or a hosted tunnel (Cloudflare Tunnel) or Tailscale on board and server. |
+| Carrier-grade NAT, no IPv6 | Use Tailscale (above). Otherwise a small rented server in between: a relay such as frp or an SSH reverse tunnel to it, or a hosted tunnel (Cloudflare Tunnel). |
+| The server's traffic goes through a VPN or an exit node | Incoming connections usually fail (the replies leave through the VPN). Use Tailscale, or exclude the server from the VPN (split tunneling). |
 
 And allow the port in the server's firewall, for that port only: on Windows, as administrator, `New-NetFirewallRule -DisplayName "Companion devices" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -Profile Private`; on Linux, e.g. `sudo ufw allow 8766/tcp`. Never allow the whole program on all ports. Check from outside: on your phone, with Wi-Fi off, open `https://<your address>:8766/health`. The browser warns about the certificate (expected: it is the server's own); it should then say `status ok`.
 
@@ -741,7 +768,7 @@ A session can have several devices attached at once. Every device receives the c
 | It answers its own voice | The echo guard missed it: lower `realtime.echo.guard_similarity`, or move the microphone away from the speaker. |
 | **Set up** finds no board | Wait until it has booted (about 30 s), use a data USB cable and the right port, then **Look again**. `uv run companion edge discover` lists boards on USB; give the address under "another address" otherwise. |
 | A board is set up but does not connect | Its log is under Devices (also when it is offline, once it was connected before). Over USB, `uv run companion edge doctor` shows its Wi-Fi state and log: usually a Wi-Fi network out of reach, or an address of the server it cannot reach (another network, firewall). |
-| A board connects at home but not outside | Check `https://<your address>:8766/health` from your phone with Wi-Fi off: no answer means the router or firewall does not let port 8766 in, or your connection has no public address (see [Reaching the server from outside](#reaching-the-server-from-outside)). Set the board up again after turning on the public listener. |
+| A board connects at home but not outside | Easiest: use [Tailscale](#reaching-the-server-from-outside) on the server and the board, and set the board up again with the server's Tailscale address. With the public listener, check `https://<your address>:8766/health` from your phone with Wi-Fi off: no answer means the router or firewall does not let port 8766 in, or your connection has no public address (see [Reaching the server from outside](#reaching-the-server-from-outside)). Set the board up again after turning on the public listener. |
 | Choppy audio from a Bluetooth speaker | Set `output_lead_in_ms = 300`; make sure nothing else holds the bluealsa PCM (only one `aplay` can use it). |
 
 ## Development
