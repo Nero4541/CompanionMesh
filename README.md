@@ -2,7 +2,7 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser or from a small Linux board with a camera, microphone and speaker; it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v1.1.0. The realtime protocol is version 1.1: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
+**Status:** v1.2.0. The realtime protocol is version 1.2: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
 
 - **Windows first, Linux supported.** Runs natively on Windows (PowerShell, no WSL required for the server itself) and on Linux.
 - **Bring your own agent.** [Hermes Agent](https://github.com/NousResearch/hermes-agent) and [OpenClaw](https://openclaw.ai) are supported through their OpenAI-compatible APIs. Without a framework, the `direct` backend talks to any OpenAI-compatible LLM.
@@ -62,6 +62,8 @@ uv run companion check
 # Start the server
 uv run companion
 ```
+
+Instead of editing `.env` and the config by hand, run `uv run companion setup`: it asks for the agent's address and key (and tests them), speech recognition and synthesis, and whether boards connect over the network or from away from home, then writes `.env` (with new device and admin tokens) and `configs/companion.local.yaml`. Run it again any time; Enter keeps each current value. `start-companion.bat` / `.sh` runs it by itself on the first start, when there is no `.env` yet.
 
 Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see. This needs a multimodal LLM behind the agent, or `vision.mode: vlm` with a vision model configured (see [Vision](#vision)).
 
@@ -141,7 +143,7 @@ Then set `base_url: http://127.0.0.1:28789/v1` for the agent and `http://127.0.0
 
 Visual observations (VLM mode descriptions and `vision.event`s) follow the same rule: in memory only with an external agent, which receives them as part of the conversation; in SQLite with `direct`, deleted after `vision.retention_days`.
 
-Microphone audio and synthesized speech are never written to disk. Camera images are never written to disk unless `vision.store_images: true`; they are then kept under `data/vision/` for `vision.retention_days`. Logs contain transcripts at `INFO` level; raise `logging.level` to `WARNING` if you do not want that.
+Microphone audio and synthesized speech are not written to disk, except utterances kept for checking speech recognition when `stt.keep_audio: true` (and microphone tests from the dashboard), under `data/recordings/` for `stt.keep_audio_days`. Camera images are never written to disk unless `vision.store_images: true`; they are then kept under `data/vision/` for `vision.retention_days`. `data/` also holds the boards this server set up (`devices.json`: token hashes, the root passwords it gave them, their last settings), their logs (`devices/<id>/edge.log`), this server's SSH key for its boards (`ssh/`) and the public listener's certificate (`tls/`); keep it private. Logs contain transcripts at `INFO` level; raise `logging.level` to `WARNING` if you do not want that.
 
 With an external agent, reconnecting with the same session keeps the conversation going (the agent remembers), but the dev client will not replay earlier messages.
 
@@ -330,6 +332,21 @@ board: arecord -> Opus (libopus) ----\                     /-> STT -> agent -> T
        aplay <-------------------------------------------------- speech audio <--------/
 ```
 
+### Setting up a board from the dashboard
+
+For a LicheeRV Nano (or another board whose image logs in as `root` over SSH and starts services from `/etc/init.d` or systemd, with Python 3.11+ and `websockets`), nothing has to be typed on the board:
+
+1. Flash the SD card with the maker's image (Sipeed's Buildroot image for the LicheeRV Nano) and let the board boot once (about 30 s).
+2. Plug the board into the computer running the server by USB (the LicheeRV Nano's USB-C port). Its image offers a USB network; the server finds the board on it.
+3. In the dashboard, open **Boards**, give the board a name, pick the hardware profile, the address it should reach this server at, the camera, and the Wi-Fi networks it may use (home and your phone's hotspot), and press **Set up**. `server.host` must not be `127.0.0.1` (`uv run companion setup` takes care of that).
+4. Unplug it and power it from anywhere with Wi-Fi; it connects by itself.
+
+**Set up** logs in over SSH (the stock password, or one you give), puts this server's own SSH key on the board and replaces the stock root password with a random one (shown under **Boards**: the stock one is public and the board goes outdoors). It gives the board a **token of its own**, copies this server's edge client to it (the board needs no Internet), writes `edge.toml` from the profile (a board set up before keeps its settings; a reflashed one gets back the settings it last reported), adds the Wi-Fi networks with their keys hashed (also on the boot partition, where Sipeed's image reads them from), installs a service that starts at boot and restarts the client if it stops, checks the tools and starts it. The same from a terminal: `uv run companion edge install --name walker --wifi "Home" --wifi "Phone"` (`uv run companion edge discover` lists boards on USB).
+
+A board's own token works only for its name. **Lock out** under **Boards** makes it stop working at once and closes the board's connection, for example when a board is lost; set the board up again to let it back in.
+
+### Setting up a board by hand
+
 **On the server:** listen on an address the board can reach and set a token:
 
 ```yaml
@@ -398,6 +415,47 @@ pcm.speaker {
 Then set `output_device = "speaker"` and `output_lead_in_ms = 300`: Bluetooth speakers chop the first fraction of a second after their stream starts.
 
 The protocol has nothing board-specific: any client that speaks it (another SBC, a phone app) works the same way.
+
+### Reaching the server from outside
+
+A board carried outdoors (on your phone's hotspot or mobile data) is outside the server's network. The board only ever connects out to the server, so all it needs is one address of the server it can reach from anywhere; settings, logs, diagnostics and updates then travel over that same connection. Nothing beyond the edge client runs on the board (no VPN).
+
+Turn on the **public listener** (`uv run companion setup` asks, or set it yourself):
+
+```yaml
+# configs/companion.local.yaml
+server:
+  host: 0.0.0.0
+  public:
+    enabled: true
+    port: 8766
+    url: wss://myhome.example.net:8766/v1/realtime   # how boards reach it from outside
+```
+
+It is a second listener, on IPv4 and IPv6, that serves only what boards need (`/health`, `/v1/realtime` and the edge client for updates), never the dashboard or the dev client. It takes only the tokens of boards this server set up, only in the `Authorization` header, refuses an address after repeated failed logins (`max_failed_auth`, `ban_s`) and limits connections per address. It uses TLS with this server's own certificate (made once in `data/tls/`); the installer copies that certificate to each board, which then trusts exactly it, so no domain or certificate authority is needed and the connection works with an IP address, a dynamic DNS name or IPv6. It is valid from 1970 on, as a board without network has no correct clock yet. Set the boards up again after turning it on, so they learn the address: they try their home address first and the public one when that fails.
+
+Then make that port reachable from the Internet, depending on your connection:
+
+| Your connection at home | What to do |
+|---|---|
+| A public IPv4 address | Forward TCP port 8766 on the router to the server's address. If the address changes, use dynamic DNS (most routers have it built in, or a free service) for `url`. |
+| IPv6 (at home and on the phone's hotspot) | Allow incoming TCP port 8766 to the server's (stable) IPv6 address in the router's firewall, nothing else. No port forwarding is needed. |
+| Carrier-grade NAT, no IPv6 | A small rented server in between: a relay such as frp or an SSH reverse tunnel to it. Or a hosted tunnel (Cloudflare Tunnel) or Tailscale on board and server. |
+
+And allow the port in the server's firewall, for that port only: on Windows, as administrator, `New-NetFirewallRule -DisplayName "Companion devices" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -Profile Private`; on Linux, e.g. `sudo ufw allow 8766/tcp`. Never allow the whole program on all ports. Check from outside: on your phone, with Wi-Fi off, open `https://<your address>:8766/health`. The browser warns about the certificate (expected: it is the server's own); it should then say `status ok`.
+
+**Security.** An open port is never free of risk, and the public listener is built to keep it small (see above). The largest risk is not the network but the agent: Hermes and OpenClaw can have terminal and file tools on their host, and anyone holding a board's token can talk to the agent. Lock out a board that is lost at once, and limit what the agent may do (its own tool and approval settings). Run the server as a normal user. A board's SD card is not encrypted: a stolen board leaks its token and its Wi-Fi keys, so also change the hotspot password.
+
+### Looking after boards
+
+Everything below works wherever the board is, over its own connection (companion-edge 1.2):
+
+- **Log** (Devices → Log): what the board logged, including what it logged while offline (sent when it is back), kept per board in `data/devices/<id>/edge.log` also after it disconnects.
+- **Diagnostics**: versions, its own checks, memory, disk, network, Wi-Fi and kernel messages, from a fixed list of read-only commands (there is no remote shell).
+- **Camera**: its newest picture and **Take a picture now**.
+- **Maintenance**: **Update** to the edge client this server has (downloaded from the server, checked, installed next to the old one; if the new version cannot connect after three starts, the board goes back to the old one by itself), restart the client or reboot the board, add and remove Wi-Fi networks (not the one it uses now), and speaker and microphone tests.
+
+When a board cannot connect at all, plug it in by USB and run `uv run companion edge doctor`: it shows the board's version, whether the client runs, its checks, settings, log, Wi-Fi and clock. Set it up again to fix settings or Wi-Fi.
 
 ## Proactive behavior
 
@@ -541,7 +599,11 @@ The **Personas** page lists the personas in `personas_dir` and edits their displ
 
 The **Devices** page lists the connected devices with their last reported status. Edge devices running companion-edge 1.1 or newer started with `--config` show their settings there, and can be changed, or set up from one of the [hardware profiles](#edge-devices): the device checks the new settings, writes the changed lines into its TOML file (keeping the previous file as `edge.toml.bak`) and restarts with them in the same process, so no service manager is needed. `server`, `token_env`, `device_id` and `state_file` can only be changed on the device, as a mistake there would cut it off.
 
-The **Events** page shows what the server is doing as it happens: devices connecting and leaving, state changes, attention decisions with their reasons, camera observations, turns, errors and saved settings, with filters and a pause. What people say is never part of it: transcripts and replies show only their length.
+The Devices page also has, per device, its **Log**, **Camera**, **Diagnostics** and **Maintenance** (see [Looking after boards](#looking-after-boards)), and lists boards that are not connected but left their log here. The **Boards** page sets boards up over USB and lists the boards this server set up (see [Setting up a board from the dashboard](#setting-up-a-board-from-the-dashboard)).
+
+The **Events** page shows what the server is doing as it happens: devices connecting and leaving, state changes, attention decisions with their reasons, camera observations, turns, errors and saved settings, with filters and a pause. What people say is not part of it unless `server.dashboard_conversation: true`: otherwise transcripts and replies show only their length.
+
+The **Conversations** page shows what the companion heard and said, per conversation, while `server.dashboard_conversation` is on (from then on; nothing is kept while it is off), and the recordings kept with `stt.keep_audio: true`: each utterance as the server received it, what speech recognition made of it and what became of it, to listen to when the companion mishears.
 
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
@@ -577,11 +639,21 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `PUT /v1/admin/devices/{id}/config` | Send settings to an edge device (`{"config": {...}}`); it saves them and restarts (admin token) |
 | `GET /v1/admin/edge-profiles` | The hardware profiles in `client/edge/profiles` (admin token) |
 | `WS /v1/admin/events` | Live events for the dashboard: `{"recent": [...]}`, then `{"event": {...}}` each; conversation text is reduced to its length (admin token, `?token=` in browsers) |
+| `GET /v1/edge/package/<version>.tar.gz` | The edge client this server offers, for `device.update` (device token) |
+| `GET /v1/admin/enrolled`, `POST /v1/admin/enrolled`, `DELETE /v1/admin/enrolled/{id}` | Boards with tokens of their own: list, create or replace a token (shown once), lock out (admin token) |
+| `GET /v1/admin/enrolled/{id}/root-password` | The root password the installer gave a board (admin token) |
+| `GET /v1/admin/edge/setup`, `POST /v1/admin/edge/install`, `GET /v1/admin/edge/install/{job}` | Boards on USB and this server's addresses; set a board up (a job with its steps) (admin token) |
+| `GET /v1/admin/devices/{id}/logs`, `/logs/file`, `GET /v1/admin/device-logs` | A device's log lines, its whole log file, devices with logs (admin token) |
+| `POST /v1/admin/devices/{id}/diagnostics` | Ask a device for its diagnostics (admin token) |
+| `GET /v1/admin/devices/{id}/frame`, `GET /v1/admin/frames`, `POST /v1/admin/devices/{id}/capture` | A camera's newest frame; which devices sent one; ask for a fresh one (admin token) |
+| `POST /v1/admin/devices/{id}/update`, `/restart`, `/speaker-test`, `/mic-test`; `GET`/`PUT .../wifi` | Look after a device remotely (admin token) |
+| `GET /v1/admin/conversation`, `GET /v1/admin/recordings`, `GET /v1/admin/recordings/{id}/audio` | What was said (with `server.dashboard_conversation`), recordings (with `stt.keep_audio`) (admin token) |
+| `GET /v1/admin/vision/images`, `GET /v1/admin/vision/images/{day}/{name}` | Images kept by `vision.store_images` (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
-### Realtime protocol (1.1)
+### Realtime protocol (1.2)
 
-1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them.
+1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer.
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -603,6 +675,11 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `device.status` | free-form device health, e.g. `{cpu_temp_c, mem_free_mb, wifi_signal_dbm, uptime_s}` |
 | → | `device.config` | `{config, schema, editable, file?}`: the device's settings, after `session.started`, from devices that can be set up remotely; `schema`: `{path: {type, editable, choices?}}` (1.1) |
 | → | `device.config.result` | `{request_id, ok, restarting, error?}`: answer to `device.config.set` (1.1) |
+| → | `device.log` | `{boot, records: [{seq, t, level, logger, msg}]}`: the device's own log lines, also those logged while offline; `boot` changes per process start (1.2) |
+| → | `device.diagnostics` | `{request_id, sections: {name: text}}`: answer to `device.diagnostics.request` (1.2) |
+| → | `device.update.result` | `{request_id?, ok, version, restarting?, error?, previous?, connected?}`: answer to `device.update`; sent again with `connected: true` by the new version once connected (1.2) |
+| → | `device.restart.result` | `{request_id, ok}` (1.2) |
+| → | `device.wifi.result` | `{request_id, ok, networks, current, error?}`: answer to `device.wifi.set` (1.2) |
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
 | → | `audio.output.progress` | `{turn_id, seq, state: "started", pos?}`: a clip began playing; `pos` = mic stream position at that moment |
 | → | `audio.output.stopped` | `{turn_id, reason?}`: answer to `audio.output.stop` |
@@ -633,6 +710,10 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
 | ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
 | ← | `device.config.set` | `{request_id, config}`: new settings from the admin dashboard; check them, save them and answer `device.config.result` (1.1) |
+| ← | `device.diagnostics.request` | `{request_id}`: collect versions, checks, memory, disk, network, Wi-Fi and kernel messages (1.2) |
+| ← | `device.update` | `{request_id, version, sha256}`: download `/v1/edge/package/<version>.tar.gz` from this server with the device token, check it, install it and restart (1.2) |
+| ← | `device.restart` | `{request_id, what: "client" or "board"}` (1.2) |
+| ← | `device.wifi.set` | `{request_id, add: [{ssid, psk?}], remove: [ssid]}`: `psk` is the WPA key (64 hex digits), never the password; both empty: just report (1.2) |
 
 A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). Simple clients stay simple: a client that declares no roles gets `mic` and `speaker`, one that does not ask for `full_duplex` is treated as half duplex, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*`, `session.*` and `device.*` are reserved.
 
@@ -656,6 +737,9 @@ A session can have several devices attached at once. Every device receives the c
 | Replies take tens of seconds | Usually the agent's prompt processing or reasoning; `/v1/metrics` names the slowest stage. See [Performance and hardware](#performance-and-hardware). |
 | The companion stops talking by itself | Its own voice (or a TV) is taken as you cutting in. Raise `realtime.barge_in_min_speech_ms`, use a microphone with echo cancellation, try `realtime.echo.canceller: nlms`, or set `full_duplex = false` on that device. |
 | It answers its own voice | The echo guard missed it: lower `realtime.echo.guard_similarity`, or move the microphone away from the speaker. |
+| **Set up** finds no board | Wait until it has booted (about 30 s), use a data USB cable and the right port, then **Look again**. `uv run companion edge discover` lists boards on USB; give the address under "another address" otherwise. |
+| A board is set up but does not connect | Its log is under Devices (also when it is offline, once it was connected before). Over USB, `uv run companion edge doctor` shows its Wi-Fi state and log: usually a Wi-Fi network out of reach, or an address of the server it cannot reach (another network, firewall). |
+| A board connects at home but not outside | Check `https://<your address>:8766/health` from your phone with Wi-Fi off: no answer means the router or firewall does not let port 8766 in, or your connection has no public address (see [Reaching the server from outside](#reaching-the-server-from-outside)). Set the board up again after turning on the public listener. |
 | Choppy audio from a Bluetooth speaker | Set `output_lead_in_ms = 300`; make sure nothing else holds the bluealsa PCM (only one `aplay` can use it). |
 
 ## Development
@@ -711,6 +795,7 @@ personas/      persona definitions
 | **v0.5** | Realtime multimodal interaction: full-duplex audio with barge-in, echo handling, state machine with recovery, latency metrics, change-driven vision |
 | **v1.0** | First stable release: protocol 1.0, speech recognition on another host, several camera images per turn, measured end to end from an edge board through the server and agent and back |
 | **v1.1** | Admin dashboard: status, latency, every setting (applied live where possible, in-process restart otherwise), personas, cameras run by the server, edge devices set up remotely (protocol 1.1, edge client 1.1) from hardware profiles; a one-file device template |
+| **v1.2** | Boards from zero: first-run setup, boards set up over USB from the dashboard with tokens of their own, their logs, diagnostics, camera and conversations in the dashboard, remote updates with automatic rollback and Wi-Fi changes, and a public listener with the server's own TLS certificate for boards away from home (protocol 1.2, edge client 1.2) |
 
 Possible directions, not scheduled: several users per server, native mobile clients, a plugin interface for third-party devices and providers, and ready-made hardware.
 
