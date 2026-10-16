@@ -485,6 +485,19 @@ class CompanionRuntime:
             outcome="test",
         )
 
+    async def live_view(self, device_id: str, seconds: float, fps: float) -> None:
+        """Ask a camera device for pictures in a row while someone watches (camera.live)."""
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        if "camera" not in device.roles:
+            raise CompanionError(
+                f"device {device_id!r} has no camera turned on (its camera.enabled setting)",
+                code="no_camera",
+            )
+        await session.emit_to([device], ev.CAMERA_LIVE, {"seconds": seconds, "fps": fps})
+
     async def capture(self, device_id: str) -> None:
         """Ask a camera device for a fresh frame now."""
         found = self.find_device(device_id)
