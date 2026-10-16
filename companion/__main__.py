@@ -260,6 +260,7 @@ def _run_server(config: CompanionConfig, source: ConfigSource | None) -> bool:
                 )
             )
             _load_with_stdlib_ssl(devices.config)
+            app.state.public_listening = [f"{s.getsockname()[0]}:{public.port}" for s in sockets]
             log.info(
                 "public listener for devices",
                 extra=kv(
