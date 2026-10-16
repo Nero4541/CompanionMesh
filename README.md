@@ -77,6 +77,19 @@ On Linux, use `cp .env.example .env` instead of `Copy-Item` and `./start-compani
 
 `uv run companion check` prints one line per component (config, persona, agent, STT, VAD, TTS) and exits non-zero if anything is unreachable. Run it first whenever something does not work.
 
+## Updating
+
+Stop the server (close its window, or Ctrl+C), then double-click **`update-companion.bat`** (on Linux, run `./update-companion.sh`) in the server's folder. It asks GitHub for the newest release and, if it is newer:
+
+- downloads this system's package and checks it against the release's `SHA256SUMS` (nothing is changed if it does not match);
+- keeps the files it is about to replace in `data/updates/backup-<version>-<time>.zip` (the last three are kept), writes the new ones and removes the files the new release no longer has;
+- never touches what is yours: `.env`, `configs/*.local.yaml`, `data/`, `.venv/` and your own personas;
+- installs the new dependencies with `uv sync`, keeping the optional ones you installed (speech recognition, CUDA, Opus).
+
+Every update is logged in `data/updates.jsonl`. The dashboard's **Updates** page shows the version running, whether a newer release exists (with its notes), that log and the [changelog](CHANGELOG.md). Afterwards, update your boards from the dashboard: Devices, a board, Maintenance, **Update**.
+
+In a git clone, the script runs `git pull --ff-only` and `uv sync` instead. To go back, unpack a backup zip over the folder and run `uv sync --frozen` (with your `--extra` options). `COMPANION_UPDATE_API` points the update at another "latest release" document in GitHub's format, for a fork or a mirror.
+
 ## Choosing an agent backend
 
 Set `agent.provider` in the config (see [Configuration](#configuration)).
@@ -678,6 +691,7 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `POST /v1/admin/devices/{id}/update`, `/restart`, `/speaker-test`, `/mic-test`; `GET`/`PUT .../wifi` | Look after a device remotely (admin token) |
 | `GET /v1/admin/conversation`, `GET /v1/admin/recordings`, `GET /v1/admin/recordings/{id}/audio` | What was said (with `server.dashboard_conversation`), recordings (with `stt.keep_audio`) (admin token) |
 | `GET /v1/admin/vision/images`, `GET /v1/admin/vision/images/{day}/{name}` | Images kept by `vision.store_images` (admin token) |
+| `GET /v1/admin/updates`, `GET /v1/admin/updates/latest` | Version, update log and changelog; the newest release on GitHub (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
 ### Realtime protocol (1.2)
