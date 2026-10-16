@@ -51,7 +51,9 @@
     rotate: 0,
     wifi: [{ ssid: "", password: "" }],
     password: "",
+    keep: true, // a board set up before: update it, keeping its token and password
   });
+  let formTop = $state(null);
   let job = $state(null);
   let formError = $state(null);
   let installing = $derived(job?.state === "running");
@@ -90,6 +92,13 @@
   const ready = $derived(nameOk && host && /^wss?:\/\//.test(serverUrl) && !wifiErrors.some(Boolean));
   const localOnly = $derived(info && ["127.0.0.1", "localhost", "::1"].includes(info.listening));
   const replacing = $derived(enrolled?.some((d) => d.device_id === form.device_id));
+  const updating = $derived(replacing && form.keep);
+
+  function updateBoard(id) {
+    form.device_id = id;
+    form.keep = true;
+    formTop?.scrollIntoView({ behavior: "smooth" });
+  }
 
   async function install() {
     formError = null;
@@ -102,6 +111,7 @@
       rotate: form.camera === "on" ? Number(form.rotate) : null,
       wifi: form.wifi.filter((w) => w.ssid.trim()).map((w) => ({ ssid: w.ssid.trim(), password: w.password || null })),
       password: form.password || null,
+      keep_token: Boolean(updating),
     };
     try {
       const { job: id } = await api("/edge/install", {
@@ -143,12 +153,14 @@
   <span class="muted">Set up a board over USB, and the boards this server has set up.</span>
 </div>
 
-<section class="card">
-  <h3>Add a board</h3>
+<section class="card" bind:this={formTop}>
+  <h3>Add or update a board</h3>
   <ol class="howto muted">
     <li>Flash the board's SD card with the maker's image and let it boot (about 30 s).</li>
     <li>Plug the board into this computer by USB (on a LicheeRV Nano: the USB-C port).</li>
     <li>Fill in the form and press <strong>Set up</strong>. Then unplug it and power it from anywhere with Wi-Fi.</li>
+    <li>A board set up before, that cannot connect (say, a new Wi-Fi network): plug it in and press
+      <strong>Update over USB</strong> below; it keeps its token.</li>
   </ol>
 
   {#if localOnly}
@@ -163,7 +175,13 @@
     <div>
       <input id="b-name" type="text" bind:value={form.device_id} placeholder="e.g. walker" spellcheck="false" disabled={installing} />
       {#if form.device_id && !nameOk}<span class="err small">letters, digits, - _ . (no spaces)</span>{/if}
-      {#if replacing}<span class="muted small">set up before: it gets a new token, the old one stops working</span>{/if}
+      {#if replacing}
+        <label class="keep">
+          <input type="checkbox" bind:checked={form.keep} disabled={installing} />
+          Update it: keep its token and password, bring its software, settings and Wi-Fi up to date
+        </label>
+        {#if !form.keep}<span class="muted small">set up anew: it gets a new token, the old one stops working</span>{/if}
+      {/if}
     </div>
 
     <label for="b-host">Board</label>
@@ -248,7 +266,9 @@
   </div>
 
   {#if formError}<p class="error">{formError}</p>{/if}
-  <button class="primary" onclick={install} disabled={!ready || installing}>{installing ? "Setting up…" : "Set up"}</button>
+  <button class="primary" onclick={install} disabled={!ready || installing}>
+    {installing ? (updating ? "Updating…" : "Setting up…") : updating ? "Update" : "Set up"}
+  </button>
 
   {#if job}
     <ol class="steps">
@@ -306,7 +326,10 @@
                 {:else if d.has_root_password}<button class="small" onclick={() => reveal(d.device_id)}>Show</button>
                 {:else}–{/if}
               </td>
-              <td><button class="small" onclick={() => revoke(d.device_id)}>Lock out</button></td>
+              <td class="actions">
+                <button class="small" onclick={() => updateBoard(d.device_id)}>Update over USB</button>
+                <button class="small" onclick={() => revoke(d.device_id)}>Lock out</button>
+              </td>
             </tr>
           {/each}
         </tbody>
@@ -329,6 +352,17 @@
   }
   .primary {
     align-self: flex-start;
+  }
+  .keep {
+    display: flex;
+    gap: 6px;
+    align-items: center;
+    font-size: 13px;
+    margin-top: 4px;
+  }
+  .actions {
+    display: flex;
+    gap: 6px;
   }
   .howto {
     margin: 0;
