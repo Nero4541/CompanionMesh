@@ -105,6 +105,10 @@ Server -> client
                              GET /v1/edge/package/<version>.tar.gz from this server
                              (device token), check it, install it, restart with it
     device.restart           payload: {request_id, what: "client" | "board"}  (1.2)
+    camera.live              payload: {seconds, fps}  (1.2) send pictures (reason
+                             "live") about fps times a second for seconds, for someone
+                             watching on the dashboard; again to extend, seconds 0 stops.
+                             Live pictures only update the dashboard's view.
     device.wifi.set          payload: {request_id, add: [{ssid, psk?}], remove: [ssid]}
                              (1.2) psk is the 64-hex-digit WPA key, never the password;
                              both lists empty: just report the networks
@@ -166,3 +170,4 @@ DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
 DEVICE_UPDATE = "device.update"
 DEVICE_RESTART = "device.restart"
 DEVICE_WIFI_SET = "device.wifi.set"
+CAMERA_LIVE = "camera.live"
