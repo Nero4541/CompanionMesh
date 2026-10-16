@@ -222,9 +222,7 @@ class Setup:
             try:
                 import faster_whisper  # noqa: F401
             except ImportError:
-                self.p.say(
-                    "  Not installed yet: run  uv sync --extra stt --extra cuda --extra opus"
-                )
+                self.p.say("  Not installed yet: run  uv sync --extra stt --extra cuda")
             if not shutil.which("nvidia-smi") and self.get("stt.model") == "large-v3-turbo":
                 if self.p.confirm("No GPU: use the smaller 'small' model?", True):
                     self.put("stt.model", "small")
