@@ -24,6 +24,9 @@
 !/.env.example
 !/start-companion.bat
 !/start-companion.sh
+!/update-companion.bat
+!/update-companion.sh
+!/CHANGELOG.md
 
 # --- Source ----------------------------------------------------------
 !/companion/
