@@ -185,6 +185,9 @@ class InstallPlan:
     # has a certificate from a CA, its own certificate for the board to trust.
     public_url: str | None = None
     server_cert_pem: str | None = None
+    # Update a board this server set up before: keep its token (and root password),
+    # only bring its software, settings and Wi-Fi up to date. Works without network.
+    keep_token: bool = False
 
 
 @dataclass
@@ -568,6 +571,19 @@ async def connect(
     ) from last
 
 
+async def _board_token(board: Board, registry: DeviceRegistry, device_id: str) -> str:
+    """The token already on the board, if it is this server's token for ``device_id``."""
+    env = await board.read(f"{BOARD_DIR}/edge.env") or ""
+    match = re.search(r"^COMPANION_TOKEN=(\S+)$", env, re.M)
+    enrolled = registry.identify(match[1]) if match else None
+    if enrolled is None or enrolled.device_id != device_id:
+        raise InstallError(
+            f"this board has no token from this server for {device_id!r}; "
+            "set it up instead of updating it"
+        )
+    return match[1]
+
+
 async def install(
     plan: InstallPlan,
     *,
@@ -626,8 +642,15 @@ async def install(
         )
         report("ssh key", "ok", "this server can log in with its own key from now on")
 
+        token: str | None = None
+        if plan.keep_token:
+            token = await _board_token(board, registry, plan.device_id)
+            report("token", "ok", "kept the token and password it has")
+
         root_password = enrolled.root_password if enrolled else None
-        if plan.change_password and (used_password == STOCK_PASSWORD or root_password is None):
+        if plan.change_password and (
+            used_password == STOCK_PASSWORD or (root_password is None and not plan.keep_token)
+        ):
             report("password", "run")
             new_password = secrets.token_urlsafe(12)
             out = await board.run(
@@ -640,15 +663,23 @@ async def install(
                 report("password", "ok", "replaced the root password (see the dashboard)")
 
         version = edge_version()
-        report("enroll", "run", plan.device_id)
-        token = registry.enroll(
-            plan.device_id,
-            profile=plan.profile,
-            address=plan.host,
-            root_password=root_password,
-            installed_version=version,
-        )
-        report("enroll", "ok", "the device has a token of its own")
+        if token is not None:
+            registry.update(
+                plan.device_id,
+                address=plan.host,
+                root_password=root_password,
+                installed_version=version,
+            )
+        else:
+            report("enroll", "run", plan.device_id)
+            token = registry.enroll(
+                plan.device_id,
+                profile=plan.profile,
+                address=plan.host,
+                root_password=root_password,
+                installed_version=version,
+            )
+            report("enroll", "ok", "the device has a token of its own")
 
         report("stop", "run")
         await board.run(f"/etc/init.d/{SERVICE_NAME} stop >/dev/null 2>&1 || true", check=False)
@@ -844,6 +875,13 @@ def run_cli(args: Any, config: Any) -> int:
             print()
         return 0
 
+    if (
+        args.edge_command == "update"
+        and DeviceRegistry(config.storage.data_dir / "devices.json").get(args.name) is None
+    ):
+        print(f"This server has not set up {args.name!r}; use  companion edge install.")
+        return 1
+
     if args.edge_command == "discover":
         found = asyncio.run(discover())
         if not found:
@@ -892,6 +930,7 @@ def run_cli(args: Any, config: Any) -> int:
         wifi=wifi,
         password=password or None,
         change_password=not args.keep_password,
+        keep_token=args.edge_command == "update",
     )
 
     def show(step: str, status: str, detail: str) -> None:
