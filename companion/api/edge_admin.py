@@ -92,7 +92,63 @@ async def setup_info(request: Request, scan: bool = True) -> dict[str, Any]:
         "listening": runtime.config.server.host,
         "public_url": edge_install.public_reach(runtime.config)[0],
         "public_enabled": runtime.config.server.public.enabled,
+        "public": _public_state(request),
     }
+
+
+def _public_state(request: Request) -> dict[str, Any]:
+    """The public listener as running, and as saved (they differ until a restart)."""
+    from companion.api.admin import _source
+
+    runtime = _runtime(request)
+    running = runtime.config.server.public
+    source = _source(request)
+    saved = source.saved().server.public if source is not None else running
+    cert = None
+    if running.enabled and not running.cert_file:
+        from companion.core.tls import ensure_certificate
+
+        cert = ensure_certificate(runtime.config.storage.data_dir / "tls").sha256
+    return {
+        "enabled": running.enabled,
+        "port": running.port,
+        "url": running.url,
+        "listening": getattr(request.app.state, "public_listening", None),
+        "certificate_sha256": cert,
+        "saved": {"enabled": saved.enabled, "port": saved.port, "url": saved.url},
+        "editable": source is not None,
+        "can_restart": getattr(request.app.state, "request_restart", None) is not None,
+        "server_host": runtime.config.server.host,
+    }
+
+
+class PublicBody(BaseModel):
+    enabled: bool
+    address: str = ""  # a DNS name or public IP, or a whole wss:// URL
+    port: int = Field(default=8766, ge=1, le=65535)
+
+
+@router.put("/public")
+async def save_public(request: Request, body: PublicBody) -> dict[str, Any]:
+    """Turn the public listener on or off (takes effect at the next restart)."""
+    from companion.api.admin import _require_source, _save
+
+    source = _require_source(request)
+    settings = source.saved().model_dump(mode="json")
+    public = settings["server"]["public"]
+    public["enabled"] = body.enabled
+    public["port"] = body.port
+    address = body.address.strip()
+    if address and "://" not in address:
+        host = f"[{address}]" if ":" in address and not address.startswith("[") else address
+        address = f"wss://{host}:{body.port}/v1/realtime"
+    if body.enabled and not address:
+        raise HTTPException(status_code=422, detail="give the address boards reach from outside")
+    public["url"] = address or public.get("url")
+    if body.enabled and settings["server"]["host"] in ("127.0.0.1", "localhost", "::1"):
+        settings["server"]["host"] = "0.0.0.0"  # boards at home need it too
+    result = await _save(_runtime(request), source, settings)
+    return {**result, "url": public["url"]}
 
 
 class WifiBody(BaseModel):
