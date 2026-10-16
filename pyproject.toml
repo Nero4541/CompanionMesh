@@ -19,17 +19,20 @@ dependencies = [
     "websockets>=13",
     "tzdata>=2026.4 ; sys_platform == 'win32'",
     "asyncssh>=2.17",
+    # Silero VAD (its model is bundled in companion/audio/).
+    "onnxruntime>=1.20",
+    # Opus-compressed microphone audio from edge devices (decoder: PyAV/FFmpeg).
+    "av>=14",
 ]
 
 [project.optional-dependencies]
-# Local speech-to-text (faster-whisper / CTranslate2) + Silero VAD (onnxruntime).
+# Local speech-to-text (faster-whisper / CTranslate2).
 stt = [
     "faster-whisper>=1.1",
 ]
-# Opus-compressed microphone audio from edge devices (decoder: PyAV/FFmpeg).
-opus = [
-    "av>=14",
-]
+# Empty: PyAV is a base dependency now. Kept because update scripts of 1.2.0 and
+# older pass --extra opus to uv sync.
+opus = []
 # NVIDIA runtime libraries for CTranslate2 GPU inference (cuBLAS 12 + cuDNN 9).
 cuda = [
     "nvidia-cublas-cu12; sys_platform == 'win32' or sys_platform == 'linux'",
