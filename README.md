@@ -173,7 +173,7 @@ stt:
   device: auto            # tries CUDA first, falls back to CPU
 ```
 
-The `cuda` extra installs cuBLAS and cuDNN from PyPI, so no separate CUDA toolkit is needed. Voice activity detection uses Silero VAD (bundled with faster-whisper). An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence.
+The `cuda` extra installs cuBLAS and cuDNN from PyPI, so no separate CUDA toolkit is needed. Voice activity detection uses Silero VAD, whose model comes with the server, so it also works with speech recognition on another machine. An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence.
 
 To run speech recognition on another machine, point the companion at any server with the OpenAI `POST /v1/audio/transcriptions` API ([speaches](https://github.com/speaches-ai/speaches), the whisper.cpp server, OpenAI, Groq):
 
@@ -373,10 +373,6 @@ server:
 ```bash
 # .env
 COMPANION_TOKEN=<a long random string>
-```
-
-```powershell
-uv sync --extra stt --extra cuda --extra opus   # opus: decode compressed edge audio
 ```
 
 The server refuses to listen beyond localhost without a token. With a token set, every client must present it: the dev client as `/dev/?token=…` (opened once; the browser remembers it), `companion camera` and the edge client from `COMPANION_TOKEN` in their environment.
@@ -847,4 +843,4 @@ Possible directions, not scheduled: several users per server, native mobile clie
 
 [Mozilla Public License 2.0](LICENSE). You may use the server in larger works under other licenses, but changes to files covered by the MPL must be shared under the MPL.
 
-Third-party components (Hermes Agent, OpenClaw, faster-whisper, Irodori-TTS, Pillow, and the models they download) are separate projects with their own licenses.
+Third-party components (Hermes Agent, OpenClaw, faster-whisper, Irodori-TTS, Pillow, and the models they download) are separate projects with their own licenses. The Silero VAD model in `companion/audio/` is under the MIT license (see the `.LICENSE` file next to it).
