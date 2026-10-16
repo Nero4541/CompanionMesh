@@ -45,9 +45,7 @@ class OpusDecoder:
         try:
             import av
         except ImportError as exc:
-            raise OpusUnavailable(
-                "Opus input needs the opus extra on the server: uv sync --extra opus"
-            ) from exc
+            raise OpusUnavailable("Opus input needs PyAV on the server: run `uv sync`") from exc
         self._av = av
         self._codec = av.CodecContext.create("opus", "r")
         self._codec.sample_rate = 48000
