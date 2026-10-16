@@ -481,7 +481,7 @@ Everything below works wherever the board is, over its own connection (companion
 
 - **Log** (Devices → Log): what the board logged, including what it logged while offline (sent when it is back), kept per board in `data/devices/<id>/edge.log` also after it disconnects.
 - **Diagnostics**: versions, its own checks, memory, disk, network, Wi-Fi and kernel messages, from a fixed list of read-only commands (there is no remote shell).
-- **Camera**: its newest picture and **Take a picture now**.
+- **Camera**: its newest picture, **Take a picture now**, and **Live**: pictures in a row while you watch (as fast as the board manages, at most 2 a second; about one a second on a LicheeRV Nano), which stop by themselves soon after you leave the page. Live pictures only update the view; they do not go to the agent.
 - **Maintenance**: **Update** to the edge client this server has (downloaded from the server, checked, installed next to the old one; if the new version cannot connect after three starts, the board goes back to the old one by itself), restart the client or reboot the board, add and remove Wi-Fi networks (not the one it uses now), and speaker and microphone tests.
 
 When a board cannot connect at all, plug it in by USB and run `uv run companion edge doctor`: it shows the board's version, whether the client runs, its checks, settings, log, Wi-Fi and clock. Set it up again to fix settings or Wi-Fi.
@@ -742,6 +742,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `device.diagnostics.request` | `{request_id}`: collect versions, checks, memory, disk, network, Wi-Fi and kernel messages (1.2) |
 | ← | `device.update` | `{request_id, version, sha256}`: download `/v1/edge/package/<version>.tar.gz` from this server with the device token, check it, install it and restart (1.2) |
 | ← | `device.restart` | `{request_id, what: "client" or "board"}` (1.2) |
+| ← | `camera.live` | `{seconds, fps}`: send pictures (reason `live`) about `fps` times a second for `seconds`, for the dashboard's live view only; again to extend, `seconds: 0` stops (1.2) |
 | ← | `device.wifi.set` | `{request_id, add: [{ssid, psk?}], remove: [ssid]}`: `psk` is the WPA key (64 hex digits), never the password; both empty: just report (1.2) |
 
 A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). Simple clients stay simple: a client that declares no roles gets `mic` and `speaker`, one that does not ask for `full_duplex` is treated as half duplex, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*`, `session.*` and `device.*` are reserved.
