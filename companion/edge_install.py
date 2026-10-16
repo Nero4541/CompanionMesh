@@ -475,8 +475,19 @@ async def discover(addresses: list[str] | None = None) -> list[str]:
     return boards
 
 
+def tailscale_addresses() -> list[str]:
+    """This machine's Tailscale (100.64.0.0/10) addresses: reachable by a board on
+    the same tailnet from anywhere."""
+    return [a for a in local_ipv4_addresses() if ipaddress.IPv4Address(a) in _OVERLAY]
+
+
+def server_addresses() -> list[str]:
+    """Addresses to offer boards, the one that works everywhere (Tailscale) first."""
+    return tailscale_addresses() + lan_addresses()
+
+
 def default_server_url(port: int) -> str | None:
-    addresses = lan_addresses()
+    addresses = server_addresses()
     return f"ws://{addresses[0]}:{port}/v1/realtime" if addresses else None
 
 
