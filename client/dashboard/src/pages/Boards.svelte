@@ -155,6 +155,12 @@
 
   const MARK = { run: "…", ok: "✓", warn: "!", fail: "✗" };
 
+  // Tailscale addresses (100.64.0.0/10) reach the server from anywhere on the tailnet.
+  function tailnet(url) {
+    const m = url.match(/^wss?:\/\/100\.(\d+)\./);
+    return Boolean(m && Number(m[1]) >= 64 && Number(m[1]) <= 127);
+  }
+
   // --- away from home: the public listener ------------------------------------------
   let away = $state(null); // form: {enabled, address, port}
   let awayBusy = $state(null);
@@ -274,7 +280,7 @@
     <label for="b-server">Server address for the board</label>
     <div class="row">
       <select id="b-server" bind:value={form.server_url} disabled={installing}>
-        {#each info?.server_urls ?? [] as u}<option value={u}>{u}</option>{/each}
+        {#each info?.server_urls ?? [] as u}<option value={u}>{u}{tailnet(u) ? " (Tailscale: home and away)" : " (this network)"}</option>{/each}
         <option value="other">another address…</option>
       </select>
       {#if form.server_url === "other"}
