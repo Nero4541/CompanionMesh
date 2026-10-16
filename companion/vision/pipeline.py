@@ -190,6 +190,8 @@ class VisionChannel:
             self.runtime.frames[device_id] = LastFrame(
                 data, str(payload.get("mime") or "image/jpeg"), reason
             )
+        if reason == "live":
+            return "accepted"  # for the dashboard's live view only, not for vision
         manual = reason in MANUAL_REASONS
         raw_event = payload.get("event")
         event = raw_event if isinstance(raw_event, dict) else None
