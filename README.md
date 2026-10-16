@@ -71,7 +71,7 @@ Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a me
 
 After the first setup, double-click **`start-companion.bat`** in the project folder (on Linux, run `./start-companion.sh`): it starts the server (or finds it already running) and opens the dashboard once the server answers.
 
-Instead of `git clone`, you can download a release from the [Releases](https://github.com/Nero4541/CompanionMesh/releases) page: `companion-server-<version>-windows.zip` or `companion-server-<version>-linux.tar.gz`. Unpack it and continue with `uv python install 3.13` above; `SHA256SUMS` lists the checksums.
+Instead of `git clone`, you can download a release from the [Releases](https://github.com/Nero4541/CompanionMesh/releases) page: `companion-server-<version>-windows.zip` or `companion-server-<version>-linux.tar.gz`. Unpack it (it unpacks to a `companion-mesh` folder) and continue with `uv python install 3.13` above; `SHA256SUMS` lists the checksums.
 
 On Linux, use `cp .env.example .env` instead of `Copy-Item` and `./start-companion.sh` instead of the `.bat`; every other command is the same. Without an NVIDIA GPU, drop `--extra cuda`; speech recognition then runs on the CPU. That is slower, so consider a smaller model (`stt.model: small`).
 
