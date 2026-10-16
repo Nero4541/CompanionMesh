@@ -4,6 +4,7 @@
   import DeviceDiagnostics from "../lib/DeviceDiagnostics.svelte";
   import DeviceLog from "../lib/DeviceLog.svelte";
   import DeviceMaintain from "../lib/DeviceMaintain.svelte";
+  import { DEVICE_EVENTS, onEvents } from "../lib/live.js";
   import { duration, value as show } from "../lib/format.js";
   import { changedPaths, equal, getPath, setPath } from "../lib/schema.js";
 
@@ -93,10 +94,16 @@
     api("/edge-profiles")
       .then((r) => (profiles = r.profiles))
       .catch(() => {});
+    const stop = onEvents(DEVICE_EVENTS, () => {
+      if (!busy) load();
+    });
     const timer = setInterval(() => {
       if (!document.hidden && !busy) load();
-    }, 3000);
-    return () => clearInterval(timer);
+    }, 5000);
+    return () => {
+      stop();
+      clearInterval(timer);
+    };
   });
 
   function setNumber(path, type, text) {
