@@ -343,6 +343,8 @@ For a LicheeRV Nano (or another board whose image logs in as `root` over SSH and
 
 **Set up** logs in over SSH (the stock password, or one you give), puts this server's own SSH key on the board and replaces the stock root password with a random one (shown under **Boards**: the stock one is public and the board goes outdoors). It gives the board a **token of its own**, copies this server's edge client to it (the board needs no Internet), writes `edge.toml` from the profile (a board set up before keeps its settings; a reflashed one gets back the settings it last reported), adds the Wi-Fi networks with their keys hashed (also on the boot partition, where Sipeed's image reads them from), installs a service that starts at boot and restarts the client if it stops, checks the tools and starts it. The same from a terminal: `uv run companion edge install --name walker --wifi "Home" --wifi "Phone"` (`uv run companion edge discover` lists boards on USB).
 
+To change a board that was set up before but cannot connect (a new Wi-Fi network, another server address) or to bring its software up to date without the network, plug it in again and press **Update over USB** under **Boards** (or `uv run companion edge update --name walker --wifi "New network"`): it keeps the board's token and password and only updates its software, settings and Wi-Fi networks.
+
 A board's own token works only for its name. **Lock out** under **Boards** makes it stop working at once and closes the board's connection, for example when a board is lost; set the board up again to let it back in.
 
 ### Setting up a board by hand
