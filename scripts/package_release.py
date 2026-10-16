@@ -6,6 +6,7 @@ Writes to build/release/:
 
     companion-server-<version>-windows.zip     the server, start/update-companion.bat
     companion-server-<version>-linux.tar.gz    the server, start/update-companion.sh
+                                               (both unpack to a companion-mesh folder)
     companion-edge-<version>.tar.gz            the edge client for Linux boards
     SHA256SUMS
 
@@ -37,6 +38,7 @@ DASHBOARD = "client/dashboard/"
 DASHBOARD_BUILD = "client/dashboard/dist/"
 EDGE = "client/edge/"
 MANIFEST = "RELEASE_FILES"  # see companion/updater.py
+FOLDER = "companion-mesh"  # what a server package unpacks to
 
 
 def git(*args: str) -> bytes:
@@ -110,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     built: list[Path] = []
-    server = f"companion-server-{server_version}"
+    server = f"companion-server-{server_version}"  # file names (the updater looks for them)
     for system in ("windows", "linux"):
         chosen = [(n, d) for n, d in names if server_file(n, system)]
         # The package's own file list: the updater removes what a newer one no longer has.
@@ -118,10 +120,10 @@ def main(argv: list[str] | None = None) -> int:
         chosen = sorted([*chosen, (MANIFEST, listing.encode())])
         if system == "windows":
             path = args.out / f"{server}-windows.zip"
-            write_zip(path, server, chosen, stamp)
+            write_zip(path, FOLDER, chosen, stamp)
         else:
             path = args.out / f"{server}-linux.tar.gz"
-            write_tar_gz(path, server, chosen, stamp)
+            write_tar_gz(path, FOLDER, chosen, stamp)
         built.append(path)
 
     edge = f"companion-edge-{edge_version}"
