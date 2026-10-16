@@ -2,6 +2,7 @@
   import { api } from "../lib/api.js";
   import { duration } from "../lib/format.js";
   import { DEVICE_EVENTS, onEvents } from "../lib/live.js";
+  import { waitForServer } from "../lib/restart.js";
 
   let { onAuthError } = $props();
 
@@ -153,6 +154,67 @@
   }
 
   const MARK = { run: "…", ok: "✓", warn: "!", fail: "✗" };
+
+  // --- away from home: the public listener ------------------------------------------
+  let away = $state(null); // form: {enabled, address, port}
+  let awayBusy = $state(null);
+  let awayMessage = $state(null);
+  const pub = $derived(info?.public ?? null);
+  const pending = $derived(
+    pub && (pub.saved.enabled !== pub.enabled || pub.saved.port !== pub.port || pub.saved.url !== pub.url),
+  );
+  const lanHost = $derived((info?.server_urls?.[0] ?? "").replace(/^ws:\/\/|:\d+\/v1\/realtime$/g, ""));
+  const awayPort = $derived(Number(away?.port) || 8766);
+  const firewall = $derived(
+    `New-NetFirewallRule -DisplayName "Companion devices" -Direction Inbound -Protocol TCP -LocalPort ${awayPort} -Action Allow -Profile Private`,
+  );
+
+  $effect(() => {
+    if (pub && !away) {
+      const url = pub.saved.url ?? "";
+      const address = url.replace(/^wss?:\/\//, "").replace(/:\d+\/v1\/realtime$/, "").replace(/^\[|\]$/g, "");
+      away = { enabled: pub.saved.enabled, address, port: pub.saved.port };
+    }
+  });
+
+  async function saveAway() {
+    awayBusy = "save";
+    awayMessage = null;
+    try {
+      const r = await api("/edge/public", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ enabled: away.enabled, address: away.address, port: awayPort }),
+      });
+      awayMessage = { kind: "ok", text: r.pending_restart.length ? "Saved. It takes effect after a restart." : "Saved." };
+      await scan();
+    } catch (err) {
+      awayMessage = { kind: "error", text: err.message };
+    } finally {
+      awayBusy = null;
+    }
+  }
+
+  async function restartServer() {
+    awayBusy = "restart";
+    awayMessage = { kind: "ok", text: "Restarting the server…" };
+    try {
+      await api("/restart", { method: "POST" });
+      const back = await waitForServer(window.location.origin);
+      awayMessage = back
+        ? { kind: "ok", text: "The server is back with the new settings." }
+        : { kind: "error", text: "The server did not come back within 2 minutes; look at its window." };
+      await scan();
+    } catch (err) {
+      awayMessage = { kind: "error", text: err.message };
+    } finally {
+      awayBusy = null;
+    }
+  }
+
+  function copy(text) {
+    navigator.clipboard?.writeText(text);
+  }
 </script>
 
 <div class="head">
@@ -311,6 +373,80 @@
 </section>
 
 <section class="card">
+  <h3>Away from home</h3>
+  <p class="muted">
+    For boards on mobile data or other Wi-Fi: a second port with TLS that only boards set up by this server can
+    use (never the dashboard). See README, "Reaching the server from outside".
+  </p>
+  {#if pub}
+    <p>
+      {#if pub.enabled && pub.listening}
+        <span class="pill ok">on</span> listening on <code>{pub.listening.join(", ")}</code>{#if pub.url}; boards use
+          <code>{pub.url}</code>{/if}
+      {:else if pub.enabled}
+        <span class="pill warn">on, not listening</span> no address could be used; see the server's log
+      {:else}
+        <span class="pill">off</span> boards reach this server only at home
+      {/if}
+    </p>
+    {#if pub.certificate_sha256}
+      <p class="muted small">Certificate (SHA-256): <code class="wrap">{pub.certificate_sha256}</code></p>
+    {/if}
+  {/if}
+  {#if away && pub?.editable}
+    <div class="form">
+      <span class="label">Reach from outside</span>
+      <label class="keep"><input type="checkbox" bind:checked={away.enabled} disabled={awayBusy} /> on</label>
+      {#if away.enabled}
+        <label for="a-address">Your home's address</label>
+        <div>
+          <input id="a-address" type="text" bind:value={away.address} placeholder="myhome.duckdns.org or your public IP" spellcheck="false" disabled={awayBusy} />
+          <span class="muted small">A dynamic DNS name if your address changes. Your router's status page shows the
+            public IP (or search "what is my IP" on a phone on home Wi-Fi).</span>
+        </div>
+        <label for="a-port">Port</label>
+        <input id="a-port" type="text" inputmode="numeric" bind:value={away.port} disabled={awayBusy} />
+      {/if}
+    </div>
+    <div class="row">
+      <button onclick={saveAway} disabled={awayBusy || (away.enabled && !away.address.trim())}>
+        {awayBusy === "save" ? "Saving…" : "Save"}
+      </button>
+      {#if pending && pub.can_restart}
+        <span class="warn small">Saved settings wait for a restart.</span>
+        <button class="primary" onclick={restartServer} disabled={awayBusy}>
+          {awayBusy === "restart" ? "Restarting…" : "Restart the server"}
+        </button>
+      {/if}
+    </div>
+    {#if awayMessage}
+      <p class={awayMessage.kind === "error" ? "error" : "muted"}>{awayMessage.text}</p>
+    {/if}
+    {#if away.enabled}
+      <ol class="steps-todo">
+        <li>
+          Router, IPv4: forward TCP port <strong>{awayPort}</strong> to this computer,
+          <code>{lanHost || "its address"}</code>. With IPv6: allow incoming TCP {awayPort} to this computer only.
+        </li>
+        <li>
+          Firewall of this computer (PowerShell as administrator), this port only:
+          <code class="wrap">{firewall}</code>
+          <button class="small" onclick={() => copy(firewall)}>Copy</button>
+        </li>
+        <li>
+          Check from outside: on your phone with Wi-Fi off, open
+          <code>https://{away.address || "<your address>"}:{awayPort}/health</code>. The browser warns about the
+          certificate (expected: it is this server's own); then it should say <code>status ok</code>.
+        </li>
+        <li>Plug each board in and press <strong>Update over USB</strong>, so it learns the address.</li>
+      </ol>
+    {/if}
+  {:else if pub && !pub.editable}
+    <p class="muted">This server was not started from a config file; set <code>server.public</code> there.</p>
+  {/if}
+</section>
+
+<section class="card">
   <h3>Boards set up by this server</h3>
   {#if listError && !enrolled}
     <p class="error">{listError.message}</p>
@@ -360,6 +496,27 @@
   .primary {
     align-self: flex-start;
   }
+  .row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .warn {
+    color: var(--warn);
+  }
+  .wrap {
+    overflow-wrap: anywhere;
+    white-space: normal;
+  }
+  .steps-todo {
+    margin: 0;
+    padding-left: 20px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    font-size: 14px;
+  }
   .keep {
     display: flex;
     gap: 6px;
@@ -406,6 +563,12 @@
   input[type="password"],
   select {
     max-width: 100%;
+  }
+  section > p {
+    margin: 0;
+  }
+  .form > input {
+    width: 120px;
   }
   .form > div > input,
   .form > select {
