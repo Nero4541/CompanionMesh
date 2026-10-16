@@ -4,8 +4,8 @@
 
 Writes to build/release/:
 
-    companion-server-<version>-windows.zip     the server, start/update-companion.bat
-    companion-server-<version>-linux.tar.gz    the server, start/update-companion.sh
+    companion-mesh-<version>-windows.zip       the server, start/update-companion.bat
+    companion-mesh-<version>-linux.tar.gz      the server, start/update-companion.sh
                                                (both unpack to a companion-mesh folder)
     companion-edge-<version>.tar.gz            the edge client for Linux boards
     SHA256SUMS
@@ -112,7 +112,7 @@ def main(argv: list[str] | None = None) -> int:
     args.out.mkdir(parents=True, exist_ok=True)
 
     built: list[Path] = []
-    server = f"companion-server-{server_version}"  # file names (the updater looks for them)
+    server = f"{FOLDER}-{server_version}"  # file names (companion/updater.py looks for them)
     for system in ("windows", "linux"):
         chosen = [(n, d) for n, d in names if server_file(n, system)]
         # The package's own file list: the updater removes what a newer one no longer has.
