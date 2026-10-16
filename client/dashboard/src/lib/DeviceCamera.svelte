@@ -1,7 +1,10 @@
 <script>
   import { api, apiImage } from "./api.js";
 
-  let { deviceId, connected = true } = $props();
+  let { deviceId, connected = true, roles = null } = $props();
+
+  // null: not connected now (roles unknown); otherwise whether it joined as a camera.
+  const hasCamera = $derived(roles === null || roles.includes("camera"));
 
   let src = $state(null);
   let info = $state(null); // {age_s, reason}
@@ -50,8 +53,15 @@
   }
 </script>
 
+{#if !hasCamera}
+  <p class="note">
+    This device has no camera turned on: it joined as {roles.length ? roles.join(", ") : "no role"}. Turn on
+    <code>camera.enabled</code> under <strong>Status and settings</strong> (if it has a camera); the device then
+    restarts and joins with its camera.
+  </p>
+{/if}
 <div class="bar">
-  <button onclick={capture} disabled={busy || !connected}>Take a picture now</button>
+  <button onclick={capture} disabled={busy || !connected || !hasCamera}>Take a picture now</button>
   {#if info}<span class="muted">newest picture: {Math.round(info.age_s)} s ago ({info.reason})</span>{/if}
 </div>
 {#if message}<p class="muted">{message}</p>{/if}
