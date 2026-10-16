@@ -39,6 +39,11 @@ def _parser() -> argparse.ArgumentParser:
     inst = edge_sub.add_parser(
         "install", help="install the edge client on a board and connect it to this server"
     )
+    upd = edge_sub.add_parser(
+        "update",
+        help="update a board this server set up, over USB: software, settings, Wi-Fi "
+        "(keeps its token and password)",
+    )
     inst.add_argument("--name", required=True, help="the device's id (letters, digits, - _ .)")
     inst.add_argument("--host", help="the board's address (default: the board found on USB)")
     inst.add_argument(
@@ -62,6 +67,31 @@ def _parser() -> argparse.ArgumentParser:
         "--ask-password", action="store_true", help="the board's root password is not the stock one"
     )
     inst.add_argument(
+        "--keep-password", action="store_true", help="do not replace the stock root password"
+    )
+    upd.add_argument("--name", required=True, help="the device's id (letters, digits, - _ .)")
+    upd.add_argument("--host", help="the board's address (default: the board found on USB)")
+    upd.add_argument(
+        "--profile", default="licheerv-nano", help="hardware profile (client/edge/profiles)"
+    )
+    upd.add_argument(
+        "--server",
+        help="realtime URL the board connects to "
+        "(default: ws://<this machine's LAN address>:<port>/v1/realtime)",
+    )
+    upd.add_argument(
+        "--wifi",
+        action="append",
+        default=[],
+        metavar="SSID",
+        help="add a Wi-Fi network (its password is asked); repeat for several",
+    )
+    upd.add_argument("--camera", action=argparse.BooleanOptionalAction, default=None)
+    upd.add_argument("--rotate", type=int, choices=[0, 90, 180, 270])
+    upd.add_argument(
+        "--ask-password", action="store_true", help="the board's root password is not the stock one"
+    )
+    upd.add_argument(
         "--keep-password", action="store_true", help="do not replace the stock root password"
     )
     cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
