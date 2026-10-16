@@ -261,6 +261,9 @@ class CompanionRuntime:
         It lingers for ``server.session_linger_s`` first, so a device that drops
         off the network and reconnects resumes the same conversation.
         """
+        if device.device_id and self.devices.get(device.device_id) is not None:
+            with contextlib.suppress(OSError):  # "last seen" in the dashboard
+                self.devices.update(device.device_id, last_seen=time.time())
         await self.notice(
             "device_left",
             {"device_id": device.device_id, "roles": sorted(device.roles)},
