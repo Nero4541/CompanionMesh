@@ -61,6 +61,7 @@ PACKET_SAMPLES = int(PACKET_S * SAMPLE_RATE)
 JOIN_RETRY_S = 2.0  # camera-only devices: how often to look for a conversation to join
 LOG_SHIP_S = 2.0  # how often new log lines go to the server
 CONNECT_TIMEOUT_S = 10.0  # per address, so the next one is tried soon
+LIVE_MAX_S = 60.0  # one camera.live keeps pictures coming at most this long
 UNREACHABLE_LOG_S = 600.0  # the same "server unreachable" is logged this rarely
 UPDATE_CONNECT_S = 120.0  # a new version that cannot connect this long exits (see update.py)
 # websockets 14 renamed the argument for request headers.
@@ -99,6 +100,10 @@ class EdgeClient:
         self._logs_sent = -1  # seq of the newest line the server has
         self.route: str | None = None  # the server address that worked last
         self.exit_requested = False  # stop for good: the service starts us (or a new version)
+        # Live view on the dashboard (camera.live): pictures in a row until this time.
+        self._live_until = 0.0
+        self._live_interval = 1.0
+        self._live_task: asyncio.Task[None] | None = None
         self.restart_requested = False
         a, c = config.audio, config.camera
         self.encoder = encoder
@@ -378,6 +383,28 @@ class EdgeClient:
             self.stats.frames_sent += 1
             self._last_frame_sent = asyncio.get_running_loop().time()
 
+    def _start_live(self, p: dict[str, Any]) -> None:
+        if self.camera is None:
+            return
+        loop = asyncio.get_running_loop()
+        seconds = min(max(float(p.get("seconds") or 0), 0.0), LIVE_MAX_S)
+        self._live_until = loop.time() + seconds
+        self._live_interval = 1 / min(max(float(p.get("fps") or 1), 0.1), 5.0)
+        if seconds and (self._live_task is None or self._live_task.done()):
+            self._live_task = loop.create_task(self._live_loop())
+            self._tasks.add(self._live_task)
+            self._live_task.add_done_callback(self._tasks.discard)
+
+    async def _live_loop(self) -> None:
+        """As many pictures as the camera manages, up to the asked rate, while watched."""
+        loop = asyncio.get_running_loop()
+        log.info("live view started")
+        while loop.time() < self._live_until and self.ws is not None:
+            started = loop.time()
+            await self._send_frame("live")
+            await asyncio.sleep(max(0.05, self._live_interval - (loop.time() - started)))
+        log.info("live view stopped")
+
     async def _camera_loop(self) -> None:
         if self.config.camera.mode == "change" and getattr(self.camera, "analysis", False):
             await self._watch_changes()
@@ -511,6 +538,8 @@ class EdgeClient:
             await self._restart(p)
             if self.exit_requested:
                 return "exit"
+        elif kind == "camera.live":
+            self._start_live(p)
         elif kind == "device.wifi.set":
             self._spawn(self._change_wifi(self.ws, p))
         elif kind == "device.config.set":
