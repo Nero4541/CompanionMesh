@@ -83,7 +83,7 @@ async def setup_info(request: Request, scan: bool = True) -> dict[str, Any]:
     runtime = _runtime(request)
     port = runtime.config.server.port
     boards = await edge_install.discover() if scan else []
-    addresses = await asyncio.to_thread(edge_install.lan_addresses)
+    addresses = await asyncio.to_thread(edge_install.server_addresses)
     return {
         "boards": boards,
         "server_urls": [f"ws://{a}:{port}/v1/realtime" for a in addresses],
