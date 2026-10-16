@@ -4,8 +4,8 @@
 
 Writes to build/release/:
 
-    companion-server-<version>-windows.zip     the server, start-companion.bat
-    companion-server-<version>-linux.tar.gz    the server, start-companion.sh
+    companion-server-<version>-windows.zip     the server, start/update-companion.bat
+    companion-server-<version>-linux.tar.gz    the server, start/update-companion.sh
     companion-edge-<version>.tar.gz            the edge client for Linux boards
     SHA256SUMS
 
@@ -36,6 +36,7 @@ DEV_ONLY = (".github/", ".gitattributes", ".gitignore")
 DASHBOARD = "client/dashboard/"
 DASHBOARD_BUILD = "client/dashboard/dist/"
 EDGE = "client/edge/"
+MANIFEST = "RELEASE_FILES"  # see companion/updater.py
 
 
 def git(*args: str) -> bytes:
@@ -63,9 +64,9 @@ def server_file(name: str, system: str) -> bool:
         return False
     if name.startswith(DASHBOARD) and not name.startswith(DASHBOARD_BUILD):
         return False
-    if system == "windows":
-        return name != "start-companion.sh"
-    return name != "start-companion.bat"
+    if "/" not in name and name.endswith((".bat", ".sh")):  # start and update scripts
+        return name.endswith(".bat" if system == "windows" else ".sh")
+    return True
 
 
 def executable(name: str) -> bool:
@@ -112,6 +113,9 @@ def main(argv: list[str] | None = None) -> int:
     server = f"companion-server-{server_version}"
     for system in ("windows", "linux"):
         chosen = [(n, d) for n, d in names if server_file(n, system)]
+        # The package's own file list: the updater removes what a newer one no longer has.
+        listing = "\n".join([*(n for n, _ in chosen), MANIFEST]) + "\n"
+        chosen = sorted([*chosen, (MANIFEST, listing.encode())])
         if system == "windows":
             path = args.out / f"{server}-windows.zip"
             write_zip(path, server, chosen, stamp)
