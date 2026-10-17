@@ -9,7 +9,7 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from companion import __version__
-from companion.api import admin, edge_admin, http, maintain, observe, realtime, updates
+from companion.api import admin, builtin, edge_admin, http, maintain, observe, realtime, updates
 from companion.core.config import CompanionConfig, ConfigSource
 from companion.core.runtime import CompanionRuntime, Providers
 
@@ -48,6 +48,7 @@ def create_app(
     app.include_router(realtime.router)
     app.include_router(admin.router)
     app.include_router(admin.events_router)
+    app.include_router(builtin.router)
     app.include_router(edge_admin.router)
     app.include_router(observe.router)
     app.include_router(maintain.router)
