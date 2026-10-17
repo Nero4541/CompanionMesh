@@ -30,6 +30,10 @@ AGENT_LABELS = {
     "openclaw": "OpenClaw (its gateway, usually http://127.0.0.1:18789/v1)",
     "direct": "No agent framework: any OpenAI-compatible LLM (LM Studio, Ollama, llama.cpp)",
 }
+# What setup calls each speech part, instead of stt/tts.
+ENGINE_NAMES = {"stt": "speech recognition", "tts": "voice"}
+SERVER_NAMES = {"stt": "speech recognition server", "tts": "voice server"}
+
 LANGUAGES = {
     "ja": "Japanese",
     "yue": "Cantonese",
@@ -210,17 +214,23 @@ class Setup:
                 self.put("llm.model", self.p.ask("Model name", self.get("llm.model")))
             result = asyncio.run(self.probe(url, self.secret_value(key_env)))
             self.p.say(f"  agent: {result.message}")
-            if result.ok or not self.p.confirm("Change these settings?", True):
+            if self.keep(result):
                 return
 
+    def keep(self, result: ProbeResult) -> bool:
+        """Whether to go on with settings just tested; False asks for them again."""
+        question = "Save these settings anyway? (No: enter them again)"
+        return result.ok or self.p.confirm(question, False)
+
     def speech(self) -> None:
-        self.p.say("\n== Speech ==")
+        self.p.say("\n== Hearing: speech recognition turns what you say into text ==")
         gpu = shutil.which("nvidia-smi") is not None
         where = " (NVIDIA GPU found)" if gpu else " (no NVIDIA GPU: on the CPU)"
         options = {
             "builtin": f"Built-in: Whisper, installed and run by the companion{where}",
-            "openai_compatible": "A speech-to-text server elsewhere (OpenAI-compatible)",
-            "none": "None (text only)",
+            "openai_compatible": "A speech recognition server on another machine "
+            "(OpenAI-compatible: speaches, whisper.cpp, OpenAI, Groq)",
+            "none": "None: you type, nothing is heard",
         }
         current = "builtin" if self.get("builtin.stt.enabled") else self.get("stt.provider")
         if current == "faster_whisper":
@@ -254,13 +264,15 @@ class Setup:
             )
             self.put("stt.language", None if language == "auto" else language)
 
+        self.p.say("\n== Speaking: the companion's voice reads its replies aloud ==")
         tts = self.p.choose(
-            "Voice (text-to-speech)",
+            "Voice",
             {
                 "builtin": "Built-in: Irodori-TTS, a Japanese voice, installed and run by the "
                 "companion" + ("" if gpu else " (slow without an NVIDIA GPU)"),
-                "openai_compatible": "A text-to-speech server elsewhere (OpenAI-compatible)",
-                "none": "None (text replies only)",
+                "openai_compatible": "A voice server on another machine "
+                "(OpenAI-compatible, e.g. Irodori-TTS-Server)",
+                "none": "None: replies as text only, no voice",
             },
             "builtin" if self.get("builtin.tts.enabled") else self.get("tts.provider"),
         )
@@ -268,11 +280,11 @@ class Setup:
         self.put("tts.provider", "none" if tts == "builtin" else tts)
         while tts == "openai_compatible":
             self.speech_url("tts", "/audio/speech")
-            self.put("tts.model", self.p.ask("Model", self.get("tts.model")))
-            self.put(
-                "tts.voice",
-                self.p.ask("Voice (Enter for its default)", self.get("tts.voice") or "") or None,
+            self.put("tts.model", self.p.ask("Voice server's model name", self.get("tts.model")))
+            voice = self.p.ask(
+                "Voice id (Enter for the server's default)", self.get("tts.voice") or ""
             )
+            self.put("tts.voice", voice or None)
             self.ask_secret(self.get("tts.api_key_env"), "Key, if it needs one")
             if self.speech_server_answers("tts"):
                 break
@@ -281,7 +293,8 @@ class Setup:
 
     def speech_url(self, section: str, endpoint: str) -> None:
         """Ask for an STT/TTS server's base URL; one ending in ``endpoint`` is cut back."""
-        url = self.p.ask("Its URL", self.get(f"{section}.base_url")).strip()
+        question = f"{SERVER_NAMES[section].capitalize()} URL"
+        url = self.p.ask(question, self.get(f"{section}.base_url")).strip()
         base = strip_endpoint(url, endpoint).rstrip("/")
         if base != url.rstrip("/"):
             self.p.say(f"  Using {base}: the companion adds {endpoint} itself.")
@@ -291,8 +304,8 @@ class Setup:
         """Test the server just entered; False when the user wants to enter it again."""
         key = self.secret_value(self.get(f"{section}.api_key_env"))
         result = asyncio.run(self.probe(self.get(f"{section}.base_url"), key, missing_ok=False))
-        self.p.say(f"  {section}: {result.message}")
-        return result.ok or not self.p.confirm("Change these settings?", True)
+        self.p.say(f"  {SERVER_NAMES[section]}: {result.message}")
+        return self.keep(result)
 
     def install_builtin(self) -> bool:
         """Install the built-in engines chosen above (uv; several GB the first time)."""
@@ -304,14 +317,14 @@ class Setup:
         missing = [name for name in self.install if Engine(name).installed() is None]
         if not missing:
             return True
-        names = " and ".join({"stt": "speech recognition", "tts": "voice"}[n] for n in missing)
+        names = " and ".join(ENGINE_NAMES[n] for n in missing)
         if not self.p.confirm(
             f"\nInstall the built-in {names} now? It downloads several GB the first time.", True
         ):
             self.p.say("  Later: Speech in the dashboard installs it, with a button.")
             return True
         for name in missing:
-            self.p.say(f"\nInstalling the built-in {name} (builtin/{name}) ...")
+            self.p.say(f"\nInstalling the built-in {ENGINE_NAMES[name]} (builtin/{name}) ...")
             if install_here(name, config) != 0:
                 self.p.say("  Installing failed; try again from Speech in the dashboard.")
                 return False
