@@ -5,6 +5,7 @@ What changed in each release of the Companion Server and its edge client. The ne
 ## Unreleased
 
 - **Every setting explained**: the Configuration page says under each setting, and each group, what it does in plain words, with units, examples and when to change it, for people new to the project. The tags now read **applies now** and **needs restart** (were *live* and *restart*).
+- **Clearer setup questions**: when a server you entered does not answer, setup asks "Save these settings anyway?" (No, or Enter, asks for them again) instead of "Change these settings?". Speech is now two parts that no longer mirror each other: *Hearing* (speech recognition, your voice into text) and *Speaking* (the companion's voice), with "speech recognition server" and "voice server" instead of speech-to-text and text-to-speech.
 - **Built-in speech keeps everything in its own folder**: `builtin/stt` and `builtin/tts` hold the engine's environment (`.venv`), its models (`models/<name>`, one folder each) and, for the voice, `voices/` with reference clips and speaker embeddings. Nothing of it goes to `data/builtin` or the user's Hugging Face cache any more, and updates leave it alone. `builtin.stt.model` and `builtin.tts.checkpoint` name a folder in `models/` (a size or repository not there yet is downloaded there first); the Speech page lists the folders and switches between them. Voices in `data/builtin/tts/voices` are copied over; the old `data/builtin` can be deleted (the engines install again, from uv's cache, and download their models once more).
 
 ## 1.3.0 — 2026-10-17
