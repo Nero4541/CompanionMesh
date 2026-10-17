@@ -168,6 +168,12 @@ class LLMConfig(HttpProviderConfig):
     extra_body: dict[str, Any] = Field(default_factory=dict)
 
 
+def strip_endpoint(url: str, endpoint: str) -> str:
+    """``url`` without a trailing ``endpoint``: providers add it themselves."""
+    trimmed = url.rstrip("/")
+    return trimmed[: -len(endpoint)] if trimmed.endswith(endpoint) else url
+
+
 class STTConfig(_Section):
     provider: Literal["faster_whisper", "openai_compatible", "none"] = "faster_whisper"
     model: str = "large-v3-turbo"
@@ -189,6 +195,11 @@ class STTConfig(_Section):
     # to check recognition from the dashboard; deleted after keep_audio_days.
     keep_audio: bool = False
     keep_audio_days: float = Field(default=3.0, gt=0)
+
+    @field_validator("base_url")
+    @classmethod
+    def _no_endpoint(cls, v: str) -> str:
+        return strip_endpoint(v, "/audio/transcriptions")
 
     def api_key(self) -> str | None:
         if not self.api_key_env:
@@ -219,6 +230,11 @@ class TTSConfig(_Section):
     speed: float | None = None
     # Vendor-specific request fields merged into the body (e.g. {"irodori": {...}}).
     extra_body: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("base_url")
+    @classmethod
+    def _no_endpoint(cls, v: str) -> str:
+        return strip_endpoint(v, "/audio/speech")
 
     def api_key(self) -> str | None:
         if not self.api_key_env:
