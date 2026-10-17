@@ -13,13 +13,13 @@
       name: "stt",
       title: "Speech recognition",
       what: "Whisper (faster-whisper)",
-      settings: "builtin.stt (model, device) and stt.language, stt.prompt",
+      settings: "builtin.stt (device, compute_type) and stt.language, stt.prompt",
     },
     {
       name: "tts",
       title: "Voice",
       what: "Irodori-TTS, a Japanese voice",
-      settings: "builtin.tts (checkpoint, device, precision) and tts.voice",
+      settings: "builtin.tts (device, precision) and tts.voice",
     },
   ];
 
@@ -56,6 +56,20 @@
       if (!enabled) message = { kind: "ok", text: `${name}: stopped; its memory is free.` };
     });
   }
+
+  function useModel(name, model) {
+    act(name, "switching", async () => {
+      await api(`/builtin/${name}`, {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      message = { kind: "ok", text: `${name}: now ${model}; it restarts with it if it is on.` };
+    });
+  }
+
+  // The model folders, and the configured model's folder even before it is downloaded.
+  const choices = (s) => (s.models.includes(s.model_folder) ? s.models : [s.model_folder, ...s.models]);
 
   function install(name) {
     act(name, "installing", () => api(`/builtin/${name}/install`, { method: "POST" }));
@@ -107,6 +121,23 @@
       </div>
 
       <dl>
+        <dt>Model</dt>
+        <dd class="model">
+          <select
+            value={s.model_folder}
+            disabled={!info.data.editable || busy[e.name] || s.state === "installing"}
+            onchange={(ev) => useModel(e.name, ev.currentTarget.value)}
+            aria-label={`${e.title} model`}
+          >
+            {#each choices(s) as m (m)}
+              <option value={m}>{m}{s.models.includes(m) ? "" : " (downloads when it starts)"}</option>
+            {/each}
+          </select>
+          <span class="muted small">
+            model folders in <code>{s.models_dir}</code>{#if s.voices_dir}; voices and embeddings in
+              <code>{s.voices_dir}</code>{/if}
+          </span>
+        </dd>
         <dt>Installed</dt>
         <dd>
           {#if s.installed}{s.installed.libraries === "cuda" ? "CUDA" : "CPU"} libraries, {when(s.installed.installed_at)}
@@ -194,6 +225,15 @@
   }
   dd {
     margin: 0;
+  }
+  dd.model {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px 8px;
+    align-items: center;
+  }
+  dd.model code {
+    word-break: break-all;
   }
   p {
     margin: 0;
