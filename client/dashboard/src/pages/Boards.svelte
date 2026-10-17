@@ -297,7 +297,7 @@
           not know its address yet.</span>
       {:else}
         <span class="muted">Only at home. To reach this server from anywhere, turn on <code>server.public</code>
-          (see README, "Reaching the server from outside"), then set the board up again.</span>
+          (see docs/remote-access.md), then set the board up again.</span>
       {/if}
     </div>
 
@@ -382,7 +382,7 @@
   <h3>Away from home</h3>
   <p class="muted">
     For boards on mobile data or other Wi-Fi: a second port with TLS that only boards set up by this server can
-    use (never the dashboard). See README, "Reaching the server from outside".
+    use (never the dashboard). See docs/remote-access.md.
   </p>
   {#if pub}
     <p>
