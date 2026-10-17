@@ -136,6 +136,7 @@ class Setup:
         self.env = read_values(self.env_path)
         self.secrets: dict[str, str] = {}
         self.settings: dict[str, Any] = source.saved().model_dump(mode="json")
+        self.install: list[str] = []  # built-in engines to install after saving
 
     # -- helpers -------------------------------------------------------------
 
@@ -202,30 +203,33 @@ class Setup:
 
     def speech(self) -> None:
         self.p.say("\n== Speech ==")
-        stt = self.p.choose(
-            "Speech recognition",
-            {
-                "faster_whisper": "Whisper on this machine"
-                + (
-                    " (NVIDIA GPU found)" if shutil.which("nvidia-smi") else " (no NVIDIA GPU: CPU)"
-                ),
-                "openai_compatible": "A speech-to-text server elsewhere (OpenAI-compatible)",
-                "none": "None (text only)",
-            },
-            self.get("stt.provider"),
-        )
-        self.put("stt.provider", stt)
+        gpu = shutil.which("nvidia-smi") is not None
+        where = " (NVIDIA GPU found)" if gpu else " (no NVIDIA GPU: on the CPU)"
+        options = {
+            "builtin": f"Built-in: Whisper, installed and run by the companion{where}",
+            "openai_compatible": "A speech-to-text server elsewhere (OpenAI-compatible)",
+            "none": "None (text only)",
+        }
+        current = "builtin" if self.get("builtin.stt.enabled") else self.get("stt.provider")
+        if current == "faster_whisper":  # kept for setups made before the built-in engines
+            options["faster_whisper"] = (
+                "Whisper inside the server (uv sync --extra stt --extra cuda)"
+            )
+        stt = self.p.choose("Speech recognition", options, current)
+        self.put("builtin.stt.enabled", stt == "builtin")
+        # Built-in: nothing else, so turning it off in the dashboard frees the GPU.
+        self.put("stt.provider", "none" if stt == "builtin" else stt)
         if stt == "openai_compatible":
             self.put("stt.base_url", self.p.ask("Its URL", self.get("stt.base_url")))
             self.ask_secret(self.get("stt.api_key_env"), "Key, if it needs one")
-        if stt == "faster_whisper":
-            try:
-                import faster_whisper  # noqa: F401
-            except ImportError:
-                self.p.say("  Not installed yet: run  uv sync --extra stt --extra cuda")
-            if not shutil.which("nvidia-smi") and self.get("stt.model") == "large-v3-turbo":
-                if self.p.confirm("No GPU: use the smaller 'small' model?", True):
-                    self.put("stt.model", "small")
+        if stt in ("builtin", "faster_whisper") and not gpu:
+            path = "builtin.stt.model" if stt == "builtin" else "stt.model"
+            if self.get(path) == "large-v3-turbo" and self.p.confirm(
+                "No GPU: use the smaller 'small' model?", True
+            ):
+                self.put(path, "small")
+        if stt == "builtin":
+            self.install.append("stt")
         if stt != "none":
             current = self.get("stt.language") or "auto"
             language = self.p.choose(
@@ -233,9 +237,19 @@ class Setup:
             )
             self.put("stt.language", None if language == "auto" else language)
 
-        has_tts = self.get("tts.provider") != "none"
-        if self.p.confirm("Is there a text-to-speech server (OpenAI-compatible)?", has_tts):
-            self.put("tts.provider", "openai_compatible")
+        tts = self.p.choose(
+            "Voice (text-to-speech)",
+            {
+                "builtin": "Built-in: Irodori-TTS, a Japanese voice, installed and run by the "
+                "companion" + ("" if gpu else " (slow without an NVIDIA GPU)"),
+                "openai_compatible": "A text-to-speech server elsewhere (OpenAI-compatible)",
+                "none": "None (text replies only)",
+            },
+            "builtin" if self.get("builtin.tts.enabled") else self.get("tts.provider"),
+        )
+        self.put("builtin.tts.enabled", tts == "builtin")
+        self.put("tts.provider", "none" if tts == "builtin" else tts)
+        if tts == "openai_compatible":
             self.put("tts.base_url", self.p.ask("Its URL", self.get("tts.base_url")))
             self.put("tts.model", self.p.ask("Model", self.get("tts.model")))
             self.put(
@@ -243,8 +257,36 @@ class Setup:
                 self.p.ask("Voice (Enter for its default)", self.get("tts.voice") or "") or None,
             )
             self.ask_secret(self.get("tts.api_key_env"), "Key, if it needs one")
-        else:
-            self.put("tts.provider", "none")
+        if tts == "builtin":
+            self.install.append("tts")
+
+    def install_builtin(self) -> bool:
+        """Install the built-in engines chosen above (uv; several GB the first time)."""
+        if not self.install:
+            return True
+        from companion.builtin import Engine, install_here
+
+        config = self.source.load()
+        missing = [
+            name
+            for name in self.install
+            if Engine(name, config.storage.data_dir).installed() is None
+        ]
+        if not missing:
+            return True
+        names = " and ".join({"stt": "speech recognition", "tts": "voice"}[n] for n in missing)
+        if not self.p.confirm(
+            f"\nInstall the built-in {names} now? It downloads several GB the first time.", True
+        ):
+            self.p.say("  Later: Speech in the dashboard installs it, with a button.")
+            return True
+        for name in missing:
+            self.p.say(f"\nInstalling the built-in {name} (data/builtin/{name}) ...")
+            if install_here(name, config) != 0:
+                self.p.say("  Installing failed; try again from Speech in the dashboard.")
+                return False
+        self.p.say("Installed. The models download when the server first starts them.")
+        return True
 
     def network(self) -> None:
         self.p.say("\n== Devices ==")
@@ -327,8 +369,9 @@ class Setup:
         self.network()
         if not self.save():
             return 1
+        installed = self.install_builtin()
         self.p.say("Next: uv run companion check   (tests every part), then start the server.")
-        return 0
+        return 0 if installed else 1
 
 
 def run(source: ConfigSource, prompter: Prompter | None = None) -> int:
