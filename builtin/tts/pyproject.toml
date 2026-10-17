@@ -1,0 +1,56 @@
+# The built-in text-to-speech: Irodori-TTS-Server, installed and run by the
+# Companion Server in a virtual environment of its own (data/builtin/tts).
+# Not a package: `uv sync --project builtin/tts --extra cuda|cpu` installs it.
+
+[project]
+name = "companion-builtin-tts"
+version = "1.0.0"
+description = "Irodori-TTS for the Companion Server's built-in speech"
+# Irodori-TTS needs sentencepiece < 0.2, whose wheels end at Python 3.11; it is
+# made with 3.10. uv fetches that Python by itself.
+requires-python = ">=3.10,<3.11"
+dependencies = [
+    "irodori-tts-server @ https://github.com/Aratako/Irodori-TTS-Server/archive/61012c760f22f7b4a6c21c5c5f8f9e148120b6f9.zip",
+    # Model downloads trust the OS certificate store (proxies, antivirus HTTPS scanning).
+    "truststore>=0.10",
+]
+
+[project.optional-dependencies]
+cuda = [
+    "torch>=2.10.0,<2.11.0",
+    "torchaudio>=2.10.0,<2.11.0",
+]
+cpu = [
+    "torch>=2.10.0,<2.11.0",
+    "torchaudio>=2.10.0,<2.11.0",
+]
+
+[tool.uv]
+package = false
+# Irodori names these by git URLs; the same commits as archives need no git.
+override-dependencies = [
+    "irodori-tts @ https://github.com/Aratako/Irodori-TTS/archive/89f9d8fbd4d51ea019867ee1197725ede1df13c5.zip",
+    "dacvae @ https://github.com/facebookresearch/dacvae/archive/414c20785fc3a28373073ea8ef7a1316eeeaca6e.zip",
+    "silentcipher @ https://github.com/SesameAILabs/silentcipher/archive/d46d7d0893a583d8968ab3a6626e2289faec9152.zip",
+]
+conflicts = [[{ extra = "cuda" }, { extra = "cpu" }]]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", extra = "cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+    { index = "pytorch-cu128", extra = "cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
