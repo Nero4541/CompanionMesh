@@ -75,6 +75,13 @@ htmlcov/
 /personas/*
 !/personas/default.yaml
 
+# Built-in speech: models, voices and install state stay yours (.venv and logs above/below).
+/builtin/*/models/*
+!/builtin/*/models/README.md
+/builtin/*/voices/*
+!/builtin/*/voices/README.md
+/builtin/*/.installed.json
+
 # Logs & OS/editor noise
 *.log
 .DS_Store
