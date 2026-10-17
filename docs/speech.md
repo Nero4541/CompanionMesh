@@ -4,13 +4,31 @@
 
 Without a speech-to-text or text-to-speech server of your own, the server installs and runs both itself: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for recognition and [Irodori-TTS](https://github.com/Aratako/Irodori-TTS-Server), a Japanese voice. Choose **Built-in** in `uv run companion setup`, or open **Speech** in the dashboard, press **Install** and turn the engine on.
 
-- **Installing.** Each engine gets an environment of its own under `data/builtin/stt` and `data/builtin/tts`, made by uv from the locked projects in `builtin/` (the voice runs on Python 3.10, which uv fetches by itself), so the server's own installation stays small. The first install downloads several GB: PyTorch for the voice and the NVIDIA libraries, or CPU builds without an NVIDIA GPU (`builtin.libraries`). The models download from Hugging Face on the first start: about 1.5 GB for Whisper `large-v3-turbo`, 3.4 GB for Irodori `v4.1-Small-MF`.
+- **Installing.** Each engine gets an environment of its own, `builtin/stt/.venv` and `builtin/tts/.venv`, made by uv from the locked project in the same folder (the voice runs on Python 3.10, which uv fetches by itself), so the server's own installation stays small. The first install downloads several GB: PyTorch for the voice and the NVIDIA libraries, or CPU builds without an NVIDIA GPU (`builtin.libraries`).
 - **On and off.** The switch on the Speech page, or `builtin.stt.enabled` / `builtin.tts.enabled`, takes effect at once, without a restart. Off, the engine's process ends and all of its GPU memory is free at once (the page shows the GPU's total); on, it starts again, in seconds once its model is downloaded. An engine also ends with the server, however the server ends.
 - **What it replaces.** While on, an engine is used instead of `stt.provider` / `tts.provider`; off, those apply again. Setup sets them to `none` when you choose built-in, so off means no speech recognition or voice.
-- **Settings.** `builtin.stt` (model, device) and `builtin.tts` (checkpoint, device, `precision: bf16` to halve the memory on CUDA); changing them restarts only that engine. `stt.language`, `stt.prompt`, `tts.voice` and `tts.extra_body` apply as with any provider. Reference clips for the voice go in `data/builtin/tts/voices/`.
-- **Updates.** A newer server may bring newer engines; an installed engine is brought up to date when it next starts.
+- **Settings.** `builtin.stt` (device, compute type) and `builtin.tts` (device, `precision: bf16` to halve the memory on CUDA); changing them restarts only that engine. `stt.language`, `stt.prompt`, `tts.voice` and `tts.extra_body` apply as with any provider.
+- **Updates.** A newer server may bring newer engines; an installed engine is brought up to date when it next starts. Updates never touch the models, voices or environments below.
 
-Each engine serves the OpenAI audio API on `127.0.0.1` only, on a port of its own; its log is on the Speech page and in `data/builtin/<name>/worker.log`.
+Everything an engine has stays in its folder, outside the repository's files:
+
+```
+builtin/stt/
+  models/large-v3-turbo/            a Whisper model (CTranslate2: model.bin, config.json, tokenizer)
+  models/.cache/                    whatever else it downloads
+  .venv/  worker.log
+builtin/tts/
+  models/Irodori-TTS-v4.1-Small-MF/ a checkpoint (model.safetensors, tokenizer/)
+  models/.cache/                    the codec and the watermarker
+  voices/                           reference clips, .speaker.safetensors embeddings, .pt latents
+  .venv/  worker.log
+```
+
+**Models.** `builtin.stt.model` and `builtin.tts.checkpoint` name a folder in the engine's `models/`; the Speech page lists the folders and switches between them. Put a model of your own there as a folder (a Whisper model in Transformers format needs converting once; see `builtin/stt/models/README.md`). A name that is not there yet is downloaded there first: a Whisper size (`large-v3-turbo`, `small`, …) or a Hugging Face repository (`owner/name`, kept as `models/name`). The defaults are about 1.5 GB (Whisper `large-v3-turbo`) and 3.4 GB (Irodori `v4.1-Small-MF`, with its codec).
+
+**Voices.** Files in `builtin/tts/voices/` are voices by their name without the extension: set `tts.voice` to one. See `builtin/tts/voices/README.md`. More Irodori settings can go in `builtin/tts/.env` (its `IRODORI_*` variables).
+
+Each engine serves the OpenAI audio API on `127.0.0.1` only, on a port of its own; its log is on the Speech page and in `builtin/<name>/worker.log`.
 
 ## Speech-to-text
 
