@@ -9,12 +9,14 @@
   import Metrics from "./pages/Metrics.svelte";
   import Overview from "./pages/Overview.svelte";
   import Personas from "./pages/Personas.svelte";
+  import Speech from "./pages/Speech.svelte";
   import Updates from "./pages/Updates.svelte";
 
   const PAGES = [
     { id: "overview", label: "Overview", component: Overview },
     { id: "metrics", label: "Latency", component: Metrics },
     { id: "config", label: "Configuration", component: Config },
+    { id: "speech", label: "Speech", component: Speech },
     { id: "personas", label: "Personas", component: Personas },
     { id: "cameras", label: "Cameras", component: Cameras },
     { id: "devices", label: "Devices", component: Devices },
