@@ -301,11 +301,7 @@ class Setup:
         from companion.builtin import Engine, install_here
 
         config = self.source.load()
-        missing = [
-            name
-            for name in self.install
-            if Engine(name, config.storage.data_dir).installed() is None
-        ]
+        missing = [name for name in self.install if Engine(name).installed() is None]
         if not missing:
             return True
         names = " and ".join({"stt": "speech recognition", "tts": "voice"}[n] for n in missing)
@@ -315,7 +311,7 @@ class Setup:
             self.p.say("  Later: Speech in the dashboard installs it, with a button.")
             return True
         for name in missing:
-            self.p.say(f"\nInstalling the built-in {name} (data/builtin/{name}) ...")
+            self.p.say(f"\nInstalling the built-in {name} (builtin/{name}) ...")
             if install_here(name, config) != 0:
                 self.p.say("  Installing failed; try again from Speech in the dashboard.")
                 return False
