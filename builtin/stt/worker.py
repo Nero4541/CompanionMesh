@@ -1,7 +1,7 @@
 """faster-whisper as the Companion Server's built-in speech recognition.
 
 Serves the OpenAI ``POST /v1/audio/transcriptions`` API on 127.0.0.1. The
-server starts this with the Python of data/builtin/stt and its own process id:
+server starts this with the Python of builtin/stt/.venv and its own process id:
 when the server ends, however it ends, this process exits at once, so its GPU
 memory never outlives the server.
 """
@@ -23,6 +23,8 @@ import uvicorn
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 
 log = logging.getLogger("builtin-stt")
+
+MODELS = Path(__file__).resolve().parent / "models"
 
 
 def exit_with_parent(pid: int) -> None:
@@ -80,6 +82,31 @@ def register_nvidia_libraries() -> None:
                 if len(failed) == len(pending):
                     break
                 pending = failed
+
+
+def model_folder(name: str) -> Path:
+    """The model's folder: models/<name>, downloaded there first when it is not there yet.
+
+    ``name`` is a folder in models/, a Whisper size (large-v3-turbo, small, ...) or a
+    Hugging Face repository of a CTranslate2 model (owner/name, kept as models/name).
+    An absolute path is used as it is.
+    """
+    given = Path(name).expanduser()
+    if given.is_absolute():
+        return given
+    folder = MODELS / name.split("/")[-1]
+    if not (folder / "model.bin").is_file():
+        from faster_whisper import download_model
+
+        log.info("downloading %s to %s", name, folder)
+        try:
+            download_model(name, output_dir=str(folder))
+        except ValueError as exc:  # not a Whisper size, and not owner/name
+            raise SystemExit(
+                f"no model in {folder}: put a CTranslate2 model there (model.bin, "
+                f"config.json, tokenizer), or name a Whisper size or a repository ({exc})"
+            ) from exc
+    return folder
 
 
 def load_model(name: str, device: str, compute_type: str) -> tuple[Any, str]:
@@ -182,7 +209,8 @@ def main() -> None:
     use_system_certificates()
     register_nvidia_libraries()
     # Loaded before the port opens, so a server that answers /health is ready.
-    model, device = load_model(args.model, args.device, args.compute_type)
+    folder = model_folder(args.model)
+    model, device = load_model(str(folder), args.device, args.compute_type)
     log.info("loaded %s on %s", args.model, device)
     app = create_app(model, args.model, device, args.beam_size)
     uvicorn.run(app, host="127.0.0.1", port=args.port)
