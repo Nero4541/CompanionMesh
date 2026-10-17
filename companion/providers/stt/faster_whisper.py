@@ -123,10 +123,13 @@ class FasterWhisperSTT:
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(self._executor, self._load_blocking)
 
-    def _transcribe_blocking(self, audio: np.ndarray, language: str | None) -> Transcript:
+    def _transcribe_blocking(
+        self, audio: np.ndarray, language: str | None, prompt: str | None
+    ) -> Transcript:
         segments, info = self._model.transcribe(
             audio,
             language=language,
+            initial_prompt=prompt or None,
             beam_size=self._config.beam_size,
             vad_filter=False,
             condition_on_previous_text=False,
@@ -134,13 +137,15 @@ class FasterWhisperSTT:
         text = "".join(segment.text for segment in segments).strip()
         return Transcript(text=text, language=info.language, duration_s=info.duration)
 
-    async def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> Transcript:
+    async def transcribe(
+        self, audio: np.ndarray, *, language: str | None = None, prompt: str | None = None
+    ) -> Transcript:
         await self.warmup()
         loop = asyncio.get_running_loop()
         lang = language or self._config.language
         try:
             return await loop.run_in_executor(
-                self._executor, self._transcribe_blocking, audio.astype(np.float32), lang
+                self._executor, self._transcribe_blocking, audio.astype(np.float32), lang, prompt
             )
         except ProviderError:
             raise
