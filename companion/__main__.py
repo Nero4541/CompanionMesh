@@ -293,8 +293,17 @@ def serve(config: CompanionConfig, source: ConfigSource | None = None) -> int:
 
     A restart stops the server, reads the config files again and starts it
     anew in this process. If the new settings cannot start, the previous ones
-    are used.
+    are used. The built-in speech engines outlive restarts, not the server.
     """
+    from companion.builtin import shutdown_all
+
+    try:
+        return _serve(config, source)
+    finally:
+        shutdown_all()
+
+
+def _serve(config: CompanionConfig, source: ConfigSource | None) -> int:
     from companion.api.auth import exposure_problem
 
     previous: CompanionConfig | None = None
@@ -335,6 +344,18 @@ async def _check(config: CompanionConfig) -> int:
         health = await runtime.agent.health()
         ok &= health.startswith("ok")
         print(f"agent      {health}  [{runtime.agent.name}]")
+        wanted = [n for n in ("stt", "tts") if getattr(config.builtin, n).enabled]
+        if wanted:
+            print(
+                "builtin    starting " + " and ".join(wanted) + " (a first start downloads models)"
+            )
+            await runtime.apply_builtin()
+            for name in wanted:
+                engine = runtime.builtin.engines[name]
+                state, error = engine.status.state, engine.status.error
+                ok &= state == "running"
+                hint = "; install it: uv run companion setup" if state == "not_installed" else ""
+                print(f"builtin    {name}: {state}" + (f" ({error})" if error else "") + hint)
         if runtime.stt is not None:
             try:
                 await runtime.stt.warmup()
@@ -389,6 +410,7 @@ async def _check(config: CompanionConfig) -> int:
                 print(f"tts        FAILED: {exc}")
     finally:
         await runtime.stop()
+        runtime.builtin.shutdown()
     return 0 if ok else 1
 
 
