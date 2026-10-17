@@ -1,0 +1,28 @@
+# The built-in speech recognition: faster-whisper behind the OpenAI
+# transcription API, installed and run by the Companion Server in a virtual
+# environment of its own (data/builtin/stt).
+# Not a package: `uv sync --project builtin/stt [--extra cuda]` installs it.
+
+[project]
+name = "companion-builtin-stt"
+version = "1.0.0"
+description = "faster-whisper for the Companion Server's built-in speech"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    "faster-whisper>=1.1",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    "python-multipart>=0.0.9",
+    # Model downloads trust the OS certificate store (proxies, antivirus HTTPS scanning).
+    "truststore>=0.10",
+]
+
+[project.optional-dependencies]
+# NVIDIA runtime libraries for CTranslate2 (cuBLAS 12 + cuDNN 9); no CUDA toolkit needed.
+cuda = [
+    "nvidia-cublas-cu12; sys_platform == 'win32' or sys_platform == 'linux'",
+    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32' or sys_platform == 'linux'",
+]
+
+[tool.uv]
+package = false
