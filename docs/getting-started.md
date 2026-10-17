@@ -48,7 +48,7 @@ uv run companion check
 uv run companion
 ```
 
-Instead of editing `.env` and the config by hand, run `uv run companion setup`: it asks for the agent's address and key (and tests them), speech recognition and synthesis, and whether boards connect over the network or from away from home, then writes `.env` (with new device and admin tokens) and `configs/companion.local.yaml`. Run it again any time; Enter keeps each current value. `start-companion.bat` / `.sh` runs it by itself on the first start, when there is no `.env` yet. Without a speech-to-text or text-to-speech server, choose **Built-in** for both: setup then installs them for the server to run itself (see [Built-in speech](speech.md#built-in-speech)).
+Instead of editing `.env` and the config by hand, run `uv run companion setup`: it asks for the agent's address and key (and tests them), speech recognition and synthesis, and whether boards connect over the network or from away from home, then writes `.env` (with new device and admin tokens) and `configs/companion.local.yaml`. Run it again any time; Enter keeps each current value. `start-companion.bat` / `.sh` runs it by itself on the first start, when there is no `.env` yet. Without a speech recognition or voice server of your own, choose **Built-in** for both: setup then installs them for the server to run itself (see [Built-in speech](speech.md#built-in-speech)).
 
 Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see. This needs a multimodal LLM behind the agent, or `vision.mode: vlm` with a vision model configured (see [Vision](vision.md)).
 
