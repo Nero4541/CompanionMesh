@@ -19,7 +19,7 @@ from typing import Any, Protocol
 
 import httpx
 
-from companion.core.config import ConfigSource, get_setting, set_setting
+from companion.core.config import ConfigSource, get_setting, set_setting, strip_endpoint
 from companion.core.config_edit import ConfigEditError, save_settings
 from companion.core.envfile import read_values, set_values
 
@@ -92,8 +92,13 @@ class ProbeResult:
     message: str
 
 
-async def probe_openai_api(base_url: str, key: str | None, *, wait_s: float = 5.0) -> ProbeResult:
-    """Reach ``{base_url}/models``: does the endpoint answer, and take the key?"""
+async def probe_openai_api(
+    base_url: str, key: str | None, *, wait_s: float = 5.0, missing_ok: bool = True
+) -> ProbeResult:
+    """Reach ``{base_url}/models``: does the endpoint answer, and take the key?
+
+    ``missing_ok=False`` counts a 404 as a wrong address (e.g. a web page, not an API).
+    """
     headers = {"Authorization": f"Bearer {key}"} if key else {}
     url = f"{base_url.rstrip('/')}/models"
     try:
@@ -103,6 +108,12 @@ async def probe_openai_api(base_url: str, key: str | None, *, wait_s: float = 5.
         return ProbeResult(False, f"cannot connect to {url}: {exc or type(exc).__name__}")
     if response.status_code in (401, 403):
         return ProbeResult(False, "it answered but refused the key")
+    if response.status_code == 404 and not missing_ok:
+        return ProbeResult(
+            False,
+            f"{url} does not exist (HTTP 404): is this the API's address, usually ending in "
+            "/v1? (Keep it if the server just has no model list.)",
+        )
     if response.status_code == 200:
         try:
             models = [m.get("id") for m in response.json().get("data", [])]
@@ -219,9 +230,11 @@ class Setup:
         self.put("builtin.stt.enabled", stt == "builtin")
         # Built-in: nothing else, so turning it off in the dashboard frees the GPU.
         self.put("stt.provider", "none" if stt == "builtin" else stt)
-        if stt == "openai_compatible":
-            self.put("stt.base_url", self.p.ask("Its URL", self.get("stt.base_url")))
+        while stt == "openai_compatible":
+            self.speech_url("stt", "/audio/transcriptions")
             self.ask_secret(self.get("stt.api_key_env"), "Key, if it needs one")
+            if self.speech_server_answers("stt"):
+                break
         if stt in ("builtin", "faster_whisper") and not gpu:
             path = "builtin.stt.model" if stt == "builtin" else "stt.model"
             if self.get(path) == "large-v3-turbo" and self.p.confirm(
@@ -249,16 +262,33 @@ class Setup:
         )
         self.put("builtin.tts.enabled", tts == "builtin")
         self.put("tts.provider", "none" if tts == "builtin" else tts)
-        if tts == "openai_compatible":
-            self.put("tts.base_url", self.p.ask("Its URL", self.get("tts.base_url")))
+        while tts == "openai_compatible":
+            self.speech_url("tts", "/audio/speech")
             self.put("tts.model", self.p.ask("Model", self.get("tts.model")))
             self.put(
                 "tts.voice",
                 self.p.ask("Voice (Enter for its default)", self.get("tts.voice") or "") or None,
             )
             self.ask_secret(self.get("tts.api_key_env"), "Key, if it needs one")
+            if self.speech_server_answers("tts"):
+                break
         if tts == "builtin":
             self.install.append("tts")
+
+    def speech_url(self, section: str, endpoint: str) -> None:
+        """Ask for an STT/TTS server's base URL; one ending in ``endpoint`` is cut back."""
+        url = self.p.ask("Its URL", self.get(f"{section}.base_url")).strip()
+        base = strip_endpoint(url, endpoint).rstrip("/")
+        if base != url.rstrip("/"):
+            self.p.say(f"  Using {base}: the companion adds {endpoint} itself.")
+        self.put(f"{section}.base_url", base)
+
+    def speech_server_answers(self, section: str) -> bool:
+        """Test the server just entered; False when the user wants to enter it again."""
+        key = self.secret_value(self.get(f"{section}.api_key_env"))
+        result = asyncio.run(self.probe(self.get(f"{section}.base_url"), key, missing_ok=False))
+        self.p.say(f"  {section}: {result.message}")
+        return result.ok or not self.p.confirm("Change these settings?", True)
 
     def install_builtin(self) -> bool:
         """Install the built-in engines chosen above (uv; several GB the first time)."""
