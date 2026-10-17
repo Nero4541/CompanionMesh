@@ -1,6 +1,6 @@
 # The built-in speech recognition: faster-whisper behind the OpenAI
 # transcription API, installed and run by the Companion Server in a virtual
-# environment of its own (data/builtin/stt).
+# environment of its own (builtin/stt/.venv).
 # Not a package: `uv sync --project builtin/stt [--extra cuda]` installs it.
 
 [project]
