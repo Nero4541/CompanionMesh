@@ -30,6 +30,7 @@
 
 # --- Source ----------------------------------------------------------
 !/companion/
+!/builtin/
 !/client/
 !/configs/
 !/personas/
