@@ -37,8 +37,8 @@ The server streams the agent's reply text to the client as it arrives. Each fini
 | OS | Windows 10/11 or Linux | |
 | [uv](https://docs.astral.sh/uv/) | yes | Installs Python 3.13 and all dependencies. No Conda, no manual `pip`. |
 | Agent backend | yes | Hermes, OpenClaw, or any OpenAI-compatible LLM (`direct`) |
-| NVIDIA GPU | recommended | For Whisper. Falls back to CPU automatically. |
-| TTS server | optional | Any OpenAI-compatible `/v1/audio/speech` server. Without one the companion replies in text only. |
+| NVIDIA GPU | recommended | For Whisper and the built-in voice. Falls back to CPU automatically. |
+| STT/TTS servers | optional | Any OpenAI-compatible server, or none: the server can install and run [built-in speech](#built-in-speech) itself. Without any TTS the companion replies in text only. |
 | Vision | optional | For the camera: the LLM behind your agent must be multimodal. Otherwise set `vision.mode: vlm` and configure a vision model. |
 | Browser | for the dev client | Chrome or Edge recommended. The microphone needs `localhost` or HTTPS. |
 
@@ -63,7 +63,7 @@ uv run companion check
 uv run companion
 ```
 
-Instead of editing `.env` and the config by hand, run `uv run companion setup`: it asks for the agent's address and key (and tests them), speech recognition and synthesis, and whether boards connect over the network or from away from home, then writes `.env` (with new device and admin tokens) and `configs/companion.local.yaml`. Run it again any time; Enter keeps each current value. `start-companion.bat` / `.sh` runs it by itself on the first start, when there is no `.env` yet.
+Instead of editing `.env` and the config by hand, run `uv run companion setup`: it asks for the agent's address and key (and tests them), speech recognition and synthesis, and whether boards connect over the network or from away from home, then writes `.env` (with new device and admin tokens) and `configs/companion.local.yaml`. Run it again any time; Enter keeps each current value. `start-companion.bat` / `.sh` runs it by itself on the first start, when there is no `.env` yet. Without a speech-to-text or text-to-speech server, choose **Built-in** for both: setup then installs them for the server to run itself (see [Built-in speech](#built-in-speech)).
 
 Open **http://127.0.0.1:8765/dev/**, press **Start mic** and speak, or type a message. **Start camera** lets the companion see. This needs a multimodal LLM behind the agent, or `vision.mode: vlm` with a vision model configured (see [Vision](#vision)).
 
@@ -162,6 +162,18 @@ With an external agent, reconnecting with the same session keeps the conversatio
 
 ## Speech
 
+### Built-in speech
+
+Without a speech-to-text or text-to-speech server of your own, the server installs and runs both itself: [faster-whisper](https://github.com/SYSTRAN/faster-whisper) for recognition and [Irodori-TTS](https://github.com/Aratako/Irodori-TTS-Server), a Japanese voice. Choose **Built-in** in `uv run companion setup`, or open **Speech** in the dashboard, press **Install** and turn the engine on.
+
+- **Installing.** Each engine gets an environment of its own under `data/builtin/stt` and `data/builtin/tts`, made by uv from the locked projects in `builtin/` (the voice runs on Python 3.10, which uv fetches by itself), so the server's own installation stays small. The first install downloads several GB: PyTorch for the voice and the NVIDIA libraries, or CPU builds without an NVIDIA GPU (`builtin.libraries`). The models download from Hugging Face on the first start: about 1.5 GB for Whisper `large-v3-turbo`, 3.4 GB for Irodori `v4.1-Small-MF`.
+- **On and off.** The switch on the Speech page, or `builtin.stt.enabled` / `builtin.tts.enabled`, takes effect at once, without a restart. Off, the engine's process ends and all of its GPU memory is free at once (the page shows the GPU's total); on, it starts again, in seconds once its model is downloaded. An engine also ends with the server, however the server ends.
+- **What it replaces.** While on, an engine is used instead of `stt.provider` / `tts.provider`; off, those apply again. Setup sets them to `none` when you choose built-in, so off means no speech recognition or voice.
+- **Settings.** `builtin.stt` (model, device) and `builtin.tts` (checkpoint, device, `precision: bf16` to halve the memory on CUDA); changing them restarts only that engine. `stt.language`, `stt.prompt`, `tts.voice` and `tts.extra_body` apply as with any provider. Reference clips for the voice go in `data/builtin/tts/voices/`.
+- **Updates.** A newer server may bring newer engines; an installed engine is brought up to date when it next starts.
+
+Each engine serves the OpenAI audio API on `127.0.0.1` only, on a port of its own; its log is on the Speech page and in `data/builtin/<name>/worker.log`.
+
 ### Speech-to-text
 
 The default is [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with `large-v3-turbo`. The model is downloaded on first start (about 1.6 GB).
@@ -188,11 +200,21 @@ stt:
 
 Voice activity detection still runs in the companion; only finished utterances are sent, as 16 kHz WAV.
 
+**Steering the writing.** Whisper often writes Cantonese in simplified characters, or as written Mandarin. `stt.prompt` shows it the style you want with a short example in that style, for instance:
+
+```yaml
+stt:
+  language: yue
+  prompt: 以下係廣東話對話，用香港繁體中文書寫。
+```
+
+It goes with every utterance (Whisper's initial prompt; `prompt` in the OpenAI API, which speaches, OpenAI and the built-in engine take) and applies at once. There is none by default; add one only if you need it. Keep it to one short sentence: a long or repetitive prompt can make Whisper repeat itself. It changes how words are written, not which words are heard; for better Cantonese recognition, use a model fine-tuned for it.
+
 ### Text-to-speech
 
 Any server implementing OpenAI's `POST /v1/audio/speech` works. Each sentence is synthesized as it completes. Vendor-specific options go in `tts.extra_body` and are merged into every request.
 
-The default configuration targets [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server), a Japanese TTS server (MIT; check the model cards for the weights' licenses):
+The default configuration targets [Irodori-TTS-Server](https://github.com/Aratako/Irodori-TTS-Server), a Japanese TTS server (MIT; check the model cards for the weights' licenses). The [built-in voice](#built-in-speech) is the same server, installed and run for you. To run it yourself, for example on another machine:
 
 ```powershell
 git clone https://github.com/Aratako/Irodori-TTS-Server.git
@@ -589,7 +611,7 @@ Use a shorter `vad.min_silence_ms` (e.g. 700) for snappier turns if you speak in
 | VLM | depends on the model; small models (a few billion parameters) are enough |
 | LLM | depends on model and context size; usually by far the largest |
 
-The companion server itself needs a GPU only for STT. STT can stay on the machine running the companion while the agent, LLM and TTS run on a server.
+The companion server itself needs a GPU only for STT (and the built-in voice). STT can stay on the machine running the companion while the agent, LLM and TTS run on a server. Turning a [built-in engine](#built-in-speech) off frees its GPU memory at once, for example to run something else on the card for a while.
 
 ### Suggested setups
 
@@ -664,6 +686,8 @@ The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `C
 | `GET /admin/` | Admin dashboard |
 | `GET /v1/admin/config` | Running and saved settings, their JSON schema, which need a restart or wait for one, which secrets are set (admin token) |
 | `PUT /v1/admin/config` | Save every setting (`{"config": {...}}`, as `saved` above); applies the live ones, returns `applied` and `pending_restart` (admin token) |
+| `GET /v1/admin/builtin` | The built-in speech engines: installed, state, process, GPU memory, log (admin token) |
+| `POST /v1/admin/builtin/{stt\|tts}/install`, `PUT /v1/admin/builtin/{stt\|tts}` | Install an engine in the background; turn one on or off (`{"enabled": true}`, saved and applied at once) (admin token) |
 | `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
 | `GET /v1/admin/personas`, `GET /v1/admin/personas/{name}` | List personas; read one (admin token) |
 | `PUT /v1/admin/personas/{name}` | Replace a persona, or create it with `?create=true` (admin token) |
@@ -843,4 +867,4 @@ Possible directions, not scheduled: several users per server, native mobile clie
 
 [Mozilla Public License 2.0](LICENSE). You may use the server in larger works under other licenses, but changes to files covered by the MPL must be shared under the MPL.
 
-Third-party components (Hermes Agent, OpenClaw, faster-whisper, Irodori-TTS, Pillow, and the models they download) are separate projects with their own licenses. The Silero VAD model in `companion/audio/` is under the MIT license (see the `.LICENSE` file next to it).
+Third-party components (Hermes Agent, OpenClaw, faster-whisper, Irodori-TTS, Pillow, and the models they download) are separate projects with their own licenses. The Silero VAD model in `companion/audio/` is under the MIT license (see the `.LICENSE` file next to it). The built-in speech engines download faster-whisper, Irodori-TTS-Server, Irodori-TTS, PyTorch and their models when you install and start them.
