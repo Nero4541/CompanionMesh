@@ -341,7 +341,7 @@ class Setup:
         self.remote()
 
     def remote(self) -> None:
-        """The public listener, for boards away from home (see README)."""
+        """The public listener, for boards away from home (see docs/remote-access.md)."""
         enabled = bool(self.get("server.public.enabled"))
         if not self.p.confirm(
             "Should boards reach this server away from home (mobile data, other Wi-Fi)?", enabled
