@@ -243,10 +243,13 @@ class TTSConfig(_Section):
 
 
 class BuiltinSTTConfig(_Section):
-    """faster-whisper, installed and run by the server (data/builtin/stt)."""
+    """faster-whisper, installed and run by the server (builtin/stt)."""
 
     # On: used instead of stt.provider. Off: its process ends, freeing its GPU memory.
     enabled: bool = False
+    # A folder in builtin/stt/models (a CTranslate2 model). A Whisper size such as
+    # large-v3-turbo or small, or a Hugging Face repository (owner/name), that is not
+    # there yet is downloaded there first, as models/<size> or models/<name>.
     model: str = "large-v3-turbo"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     compute_type: str = "auto"
@@ -254,11 +257,17 @@ class BuiltinSTTConfig(_Section):
 
 
 class BuiltinTTSConfig(_Section):
-    """Irodori-TTS (Japanese), installed and run by the server (data/builtin/tts)."""
+    """Irodori-TTS (Japanese), installed and run by the server (builtin/tts).
+
+    Voices (reference clips, .speaker.safetensors embeddings, .pt latents) go in
+    builtin/tts/voices; tts.voice names one.
+    """
 
     # On: used instead of tts.provider. Off: its process ends, freeing its GPU memory.
     enabled: bool = False
-    # A Hugging Face repository; the MF models need 4 steps instead of 40.
+    # A folder in builtin/tts/models holding model.safetensors (and tokenizer/). A
+    # Hugging Face repository (owner/name) that is not there yet is downloaded there
+    # first, as models/<name>. The MF models need 4 steps instead of 40.
     checkpoint: str = "Aratako/Irodori-TTS-v4.1-Small-MF"
     device: Literal["auto", "cuda", "cpu"] = "auto"
     # bf16 halves the memory but needs CUDA.
