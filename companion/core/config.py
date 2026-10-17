@@ -176,6 +176,10 @@ class STTConfig(_Section):
     compute_type: str = "auto"
     beam_size: int = Field(default=1, ge=1)
     preload: bool = True
+    # Text that steers recognition toward a writing style or vocabulary (Whisper's
+    # initial prompt; `prompt` in the OpenAI API), e.g. for Cantonese in traditional
+    # characters: 以下係廣東話對話，用香港繁體中文書寫。 Keep it short.
+    prompt: str | None = None
     # openai_compatible only: POST {base_url}/audio/transcriptions on another host.
     base_url: str = "http://127.0.0.1:8000/v1"
     api_key_env: str | None = "STT_API_KEY"
@@ -220,6 +224,40 @@ class TTSConfig(_Section):
         if not self.api_key_env:
             return None
         return os.environ.get(self.api_key_env) or None
+
+
+class BuiltinSTTConfig(_Section):
+    """faster-whisper, installed and run by the server (data/builtin/stt)."""
+
+    # On: used instead of stt.provider. Off: its process ends, freeing its GPU memory.
+    enabled: bool = False
+    model: str = "large-v3-turbo"
+    device: Literal["auto", "cuda", "cpu"] = "auto"
+    compute_type: str = "auto"
+    beam_size: int = Field(default=1, ge=1)
+
+
+class BuiltinTTSConfig(_Section):
+    """Irodori-TTS (Japanese), installed and run by the server (data/builtin/tts)."""
+
+    # On: used instead of tts.provider. Off: its process ends, freeing its GPU memory.
+    enabled: bool = False
+    # A Hugging Face repository; the MF models need 4 steps instead of 40.
+    checkpoint: str = "Aratako/Irodori-TTS-v4.1-Small-MF"
+    device: Literal["auto", "cuda", "cpu"] = "auto"
+    # bf16 halves the memory but needs CUDA.
+    precision: Literal["fp32", "bf16"] = "fp32"
+
+
+class BuiltinConfig(_Section):
+    """Speech engines the server installs and runs itself, for a setup without servers."""
+
+    # Libraries to install: cuda (NVIDIA GPU) or cpu; auto picks cuda when nvidia-smi is found.
+    libraries: Literal["auto", "cuda", "cpu"] = "auto"
+    # How long an engine may take to start (its first start downloads the model).
+    start_timeout_s: float = Field(default=900.0, gt=0)
+    stt: BuiltinSTTConfig = BuiltinSTTConfig()
+    tts: BuiltinTTSConfig = BuiltinTTSConfig()
 
 
 class VLMConfig(HttpProviderConfig):
@@ -425,6 +463,7 @@ class CompanionConfig(_Section):
     stt: STTConfig = STTConfig()
     vad: VADConfig = VADConfig()
     tts: TTSConfig = TTSConfig()
+    builtin: BuiltinConfig = BuiltinConfig()
     vlm: VLMConfig = VLMConfig()
     vision: VisionConfig = VisionConfig()
     attention: AttentionConfig = AttentionConfig()
@@ -485,6 +524,8 @@ _LIVE_SETTINGS = {
     "server.dashboard_conversation": True,
     "stt.keep_audio": True,
     "stt.keep_audio_days": True,
+    "stt.prompt": True,  # read on every utterance
+    "builtin": True,  # engines start, stop and restart while running
 }
 
 
