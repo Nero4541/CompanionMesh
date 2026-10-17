@@ -1,6 +1,6 @@
 # Changelog
 
-What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see the README, "Updating".
+What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
 ## 1.3.0 — 2026-10-17
 
@@ -36,4 +36,4 @@ Admin dashboard. Protocol 1.1, edge client 1.1.0.
 
 ## 1.0.0
 
-First stable release: protocol 1.0, speech recognition on another host, several camera images per turn, measured end to end from an edge board through the server and agent and back. Earlier versions (0.1 to 0.5) are summarized in the README, "Roadmap".
+First stable release: protocol 1.0, speech recognition on another host, several camera images per turn, measured end to end from an edge board through the server and agent and back. Earlier versions (0.1 to 0.5) are summarized in [docs/roadmap.md](docs/roadmap.md).
