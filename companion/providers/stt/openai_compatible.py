@@ -56,12 +56,16 @@ class OpenAICompatibleSTT:
             await self.transcribe(np.zeros(SAMPLE_RATE // 2, dtype=np.float32))
             self._warm = True
 
-    async def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> Transcript:
+    async def transcribe(
+        self, audio: np.ndarray, *, language: str | None = None, prompt: str | None = None
+    ) -> Transcript:
         cfg = self._config
         data: dict[str, Any] = {"model": cfg.model, "response_format": "json"}
         lang = language or cfg.language
         if lang:
             data["language"] = lang
+        if prompt:
+            data["prompt"] = prompt
         files = {"file": ("speech.wav", to_wav(audio), "audio/wav")}
         try:
             response = await self._client.post("audio/transcriptions", data=data, files=files)
