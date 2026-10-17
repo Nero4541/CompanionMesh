@@ -32,4 +32,4 @@ Only four methods touch hardware. Replace them and the rest stays the same:
 
 Binary frames are `[uint32 big-endian length of the JSON header][JSON header][raw bytes]`, both ways. The JSON header is an ordinary envelope: `{"type": …, "payload": {…}}`.
 
-The full event list is in the main README under "Realtime protocol (1.0)".
+The full event list is in [docs/api.md](../../docs/api.md), under "Realtime protocol".
