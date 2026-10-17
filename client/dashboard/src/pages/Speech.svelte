@@ -6,6 +6,9 @@
 
   const { state: info, refresh } = poll("/builtin", 2000, (err) => onAuthError?.(err));
   let busy = $state({});
+  // Logs opened or closed by hand stay so across refreshes; until then they open
+  // by themselves while installing or after a failure.
+  let logOpen = $state({});
   let message = $state(null);
 
   const ENGINES = [
@@ -177,7 +180,10 @@
       </div>
 
       {#if s.log.length}
-        <details open={s.state === "installing" || s.state === "failed"}>
+        <details
+          open={logOpen[e.name] ?? (s.state === "installing" || s.state === "failed")}
+          ontoggle={(ev) => (logOpen[e.name] = ev.currentTarget.open)}
+        >
           <summary>{s.state === "installing" ? "Install log" : "Log"}</summary>
           <pre>{s.log.join("\n")}</pre>
         </details>
