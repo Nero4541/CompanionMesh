@@ -16,7 +16,7 @@ Try it against a running server (it plays "speech" by saving it to files):
     python device.py --wav question.wav                  # 16 kHz mono 16-bit WAV as the mic
     python device.py --roles camera --jpeg room.jpg       # join a conversation as a camera
 
-See "Realtime protocol (1.0)" in the repository README for every event.
+See "Realtime protocol" in docs/api.md of the repository for every event.
 """
 
 from __future__ import annotations
