@@ -201,7 +201,7 @@ class Session:
         self.devices: list[Device] = [Device(outbox, device_id, roles)]
         self.realtime = runtime.config.realtime
         self.metrics = runtime.metrics
-        self.speak = speak and runtime.tts is not None
+        self._speak = speak
         self.attention = AttentionEngine(runtime.config.attention)
         self._context_notes: list[AttentionEvent] = []
         # Events emitted while every conversation device is away (session
@@ -425,7 +425,7 @@ class Session:
                 code="audio_format",
             )
             return
-        if self.runtime.stt is None:
+        if self.runtime.stt is None and not self.runtime.config.builtin.stt.enabled:
             await self.emit_error("speech input is disabled (stt.provider: none)", code="stt_off")
             return
         self._decoder = None
@@ -556,11 +556,17 @@ class Session:
 
     async def _voice_turn(self, audio: np.ndarray) -> None:
         stt = self.runtime.stt
-        assert stt is not None
+        if stt is None:  # the built-in engine is still starting, or was turned off
+            await self.emit_error(
+                "speech recognition is not ready yet (see Speech in the dashboard)",
+                code="stt_starting",
+            )
+            return
         await self.set_state(State.TRANSCRIBING, deadline_s=self.realtime.transcribe_timeout_s)
         started = time.perf_counter()
+        prompt = self.runtime.config.stt.prompt
         try:
-            transcript = await stt.transcribe(audio)
+            transcript = await stt.transcribe(audio, **({"prompt": prompt} if prompt else {}))
         except CompanionError as exc:
             await self.emit_error(exc)
             await self.rest("transcription failed")
@@ -965,6 +971,11 @@ class Session:
                 await self.set_state(State.SPEAKING, deadline_s=self._speaking_deadline_s())
             seq += 1
         return seq > 0
+
+    @property
+    def speak(self) -> bool:
+        """Replies are spoken: asked for, and a TTS is running (built-in ones come and go)."""
+        return self._speak and self.runtime.tts is not None
 
     @property
     def mic_device(self) -> Device | None:
