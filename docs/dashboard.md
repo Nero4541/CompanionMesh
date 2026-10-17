@@ -2,7 +2,8 @@
 
 `/admin/` shows the server's status, connected devices with their round-trip time and last reported status, latency per pipeline stage, and every setting, which you can change there.
 
-- Each setting is marked **live** or **restart**. Live settings (vad, attention, realtime, most of vision, `metrics.emit_turn`) apply as soon as you save, also to conversations already open; the rest wait for a restart, which the page offers to do. The server then stops, reads its config files again and starts in the same process; if the new settings cannot start (say the port is taken), it starts again with the previous ones.
+- Each setting and group of settings says in plain words what it does, with units and examples where that helps; the same text is in the config's JSON schema (`GET /v1/admin/config`).
+- Each setting is marked **applies now** or **needs restart**. Those that apply now (vad, attention, realtime, most of vision, `metrics.emit_turn`) do so as soon as you save, also to conversations already open; the rest wait for a restart, which the page offers to do. The server then stops, reads its config files again and starts in the same process; if the new settings cannot start (say the port is taken), it starts again with the previous ones.
 - Values are checked before saving, and invalid ones are marked at the setting.
 - Saving writes only what differs from `configs/companion.yaml` into `configs/companion.local.yaml`; `companion.yaml` is never changed. The version before each save is kept as `companion.previous.local.yaml`, and a file you wrote by hand (with your comments) as `companion.original.local.yaml`, once.
 - `--host`/`--port` on the command line win over the file; such settings are marked.
