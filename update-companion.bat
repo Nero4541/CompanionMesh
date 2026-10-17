@@ -1,7 +1,7 @@
 @echo off
 rem Update the Companion Server to the newest release (or git pull for a clone).
 rem Stop the server first. Your .env, local config, data and personas are kept;
-rem the replaced files are backed up in data\updates\. See README, "Updating".
+rem the replaced files are backed up in data\updates\. See docs/updating.md.
 setlocal
 
 rem The update may replace this very file, and cmd reads a running batch file as
