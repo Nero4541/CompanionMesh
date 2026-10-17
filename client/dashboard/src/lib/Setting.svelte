@@ -16,6 +16,7 @@
   const isSecretRef = $derived(name.endsWith("_env") && typeof value === "string" && value);
   const error = $derived(ctx.errors[path]);
   const id = $derived(`f-${path}`);
+  const help = $derived(desc.node.description);
 
   // Text controls keep what was typed, even while it does not parse yet. The
   // form remounts rows after saving or discarding, which resets this.
@@ -100,6 +101,8 @@
     {/if}
   </div>
 
+  {#if help}<p class="help">{help}</p>{/if}
+
   <div class="meta">
     {#if error}<span class="err">{error}</span>{/if}
     {#if desc.bounds}<span>{desc.bounds}</span>{/if}
@@ -108,7 +111,7 @@
       class:live={!restart}
       title={restart ? "takes effect after a server restart" : "applies to the running server"}
     >
-      {restart ? "restart" : "live"}
+      {restart ? "needs restart" : "applies now"}
     </span>
     {#if pending}
       <span class="pill warn" title="saved; the running server still uses its previous value">
@@ -130,7 +133,7 @@
   .row {
     display: grid;
     grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
-    grid-template-areas: "name control" ". meta";
+    grid-template-areas: "name control" ". help" ". meta";
     gap: 4px 12px;
     padding: 8px 0 8px 8px;
     margin-left: -8px;
@@ -173,6 +176,14 @@
   .invalid .control textarea {
     border-color: var(--err);
   }
+  .help {
+    grid-area: help;
+    margin: 0;
+    max-width: 640px;
+    font-size: 13px;
+    line-height: 1.45;
+    color: var(--muted);
+  }
   .meta {
     grid-area: meta;
     display: flex;
@@ -198,7 +209,7 @@
   @media (max-width: 560px) {
     .row {
       grid-template-columns: minmax(0, 1fr);
-      grid-template-areas: "name" "control" "meta";
+      grid-template-areas: "name" "control" "help" "meta";
     }
   }
 </style>
