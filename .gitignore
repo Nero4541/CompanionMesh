@@ -3,9 +3,8 @@
 # re-include only what belongs in the public repository.
 #
 # Never whitelist (private, not published):
-#   docs/        internal development docs / roadmap
-#   .workspace/  private notes, experiments, dev/test scratch data,
-#                recordings, model weights, etc.
+#   .workspace/  private notes, design docs, experiments, dev/test
+#                scratch data, recordings, model weights, etc.
 # =====================================================================
 
 /*
@@ -27,6 +26,7 @@
 !/update-companion.bat
 !/update-companion.sh
 !/CHANGELOG.md
+!/docs/
 
 # --- Source ----------------------------------------------------------
 !/companion/
@@ -82,5 +82,4 @@ Thumbs.db
 desktop.ini
 
 # Private — never published
-/docs/
 .workspace/
