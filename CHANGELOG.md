@@ -2,6 +2,10 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
+## Unreleased
+
+- **Built-in speech keeps everything in its own folder**: `builtin/stt` and `builtin/tts` hold the engine's environment (`.venv`), its models (`models/<name>`, one folder each) and, for the voice, `voices/` with reference clips and speaker embeddings. Nothing of it goes to `data/builtin` or the user's Hugging Face cache any more, and updates leave it alone. `builtin.stt.model` and `builtin.tts.checkpoint` name a folder in `models/` (a size or repository not there yet is downloaded there first); the Speech page lists the folders and switches between them. Voices in `data/builtin/tts/voices` are copied over; the old `data/builtin` can be deleted (the engines install again, from uv's cache, and download their models once more).
+
 ## 1.3.0 — 2026-10-17
 
 Built-in speech, and fixes for speech from boards. Protocol 1.2 and edge client 1.2.0, both unchanged.
