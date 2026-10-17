@@ -1,9 +1,10 @@
 """Built-in speech: STT and TTS engines the server installs and runs itself.
 
 Each engine is a small project under ``builtin/<name>`` with its own locked
-dependencies, installed with uv into ``data/builtin/<name>/venv`` and run as a
-child process that serves the OpenAI audio API on 127.0.0.1. The runtime talks
-to it as to any other OpenAI-compatible server.
+dependencies, installed with uv into ``builtin/<name>/.venv`` and run as a
+child process that serves the OpenAI audio API on 127.0.0.1. Its models live
+next to it in ``builtin/<name>/models``. The runtime talks to it as to any
+other OpenAI-compatible server.
 
 Turning an engine off ends its process, which frees all of its GPU memory at
 once. An engine also exits by itself when the server goes away, however it
@@ -146,8 +147,8 @@ def worker_spec(name: str, config: CompanionConfig) -> WorkerSpec | None:
     if not tts.enabled:
         return None
     return WorkerSpec(
+        args=("--checkpoint", tts.checkpoint),
         env=(
-            ("IRODORI_HF_CHECKPOINT", tts.checkpoint),
             ("IRODORI_MODEL_DEVICE", tts.device),
             ("IRODORI_CODEC_DEVICE", tts.device),
             ("IRODORI_MODEL_PRECISION", tts.precision),
@@ -170,13 +171,20 @@ class EngineStatus:
 
 
 class Engine:
-    """One built-in engine: its environment, its process, its state."""
+    """One built-in engine: its environment, models, process and state.
 
-    def __init__(self, name: str, data_dir: Path) -> None:
+    Everything it has lives in its project folder, ``builtin/<name>``: the
+    environment (``.venv``), the models (``models/``, one folder each, plus
+    ``models/.cache`` for what else it downloads), the TTS voices (``voices/``)
+    and the log. The repository ignores all of it, and updates leave it alone.
+    """
+
+    def __init__(self, name: str) -> None:
         self.name = name
-        self.project = PROJECTS / name
-        self.home = data_dir / "builtin" / name
-        self.venv = self.home / "venv"
+        self.project = self.home = PROJECTS / name
+        self.venv = self.home / ".venv"
+        self.models_dir = self.home / "models"
+        self.voices_dir = self.home / "voices"
         self.status = EngineStatus()
         self.log: deque[str] = deque(maxlen=LOG_LINES)
         self.url: str | None = None
@@ -195,7 +203,15 @@ class Engine:
 
     @property
     def _marker(self) -> Path:
-        return self.home / "installed.json"
+        return self.home / ".installed.json"
+
+    def models(self) -> list[str]:
+        """The model folders in ``models/``: what the config can name."""
+        try:
+            entries = sorted(self.models_dir.iterdir())
+        except OSError:
+            return []
+        return [p.name for p in entries if p.is_dir() and not p.name.startswith(".")]
 
     def _lock_hash(self) -> str:
         return hashlib.sha256((self.project / "uv.lock").read_bytes()).hexdigest()
@@ -309,7 +325,17 @@ class Engine:
         port = _free_port()
         env = {k: v for k, v in os.environ.items() if k != "VIRTUAL_ENV"}
         env.update(spec.env)
-        env["IRODORI_VOICES_DIR"] = str(self.home / "voices")
+        # The models themselves go to models/<name> (the worker sees to that); whatever
+        # else the engine downloads from Hugging Face goes to models/.cache.
+        cache = self.models_dir / ".cache"
+        env["HF_HUB_CACHE"] = str(cache / "hub")
+        env["HF_XET_CACHE"] = str(cache / "xet")
+        if self.name == "tts":
+            self.voices_dir.mkdir(parents=True, exist_ok=True)
+            env["IRODORI_VOICES_DIR"] = str(self.voices_dir)
+            aliases = self.voices_dir / "voices.json"
+            if aliases.is_file():
+                env["IRODORI_VOICE_ALIASES_FILE"] = str(aliases)
         env["PYTHONUNBUFFERED"] = "1"
         command = [str(self.python), str(self.project / "worker.py"), "--port", str(port)]
         command += ["--parent-pid", str(self.parent_pid)]
@@ -406,15 +432,34 @@ class Engine:
             # Linux reports it; on Windows the worker runs under the venv's launcher
             # (another pid) and WDDM reports no per-process memory: the total tells.
             "vram_mb": gpu.processes.get(pid) if pid else None,
+            "models_dir": str(self.models_dir),
+            "models": self.models(),
+            "voices_dir": str(self.voices_dir) if self.name == "tts" else None,
             "log": list(self.log)[-40:],
         }
 
 
+def _take_over_voices(old: Path, new: Path) -> None:
+    """Copy voices from where 1.3.0 kept them (data/builtin/tts/voices) to builtin/tts/voices."""
+    try:
+        files = [p for p in old.iterdir() if p.is_file()]
+    except OSError:
+        return
+    for path in files:
+        target = new / path.name
+        if not target.exists():
+            new.mkdir(parents=True, exist_ok=True)
+            with contextlib.suppress(OSError):
+                shutil.copy2(path, target)
+                log.info("builtin voice moved", extra=kv(file=path.name, to=str(new)))
+
+
 class Builtin:
-    """The built-in engines of this process, for one data directory."""
+    """The built-in engines of this process (one set per data directory, for tests)."""
 
     def __init__(self, data_dir: Path) -> None:
-        self.engines = {name: Engine(name, data_dir) for name in ENGINES}
+        self.engines = {name: Engine(name) for name in ENGINES}
+        _take_over_voices(data_dir / "builtin" / "tts" / "voices", self.engines["tts"].voices_dir)
 
     def shutdown(self) -> None:
         for engine in self.engines.values():
@@ -443,7 +488,7 @@ def shutdown_all() -> None:
 
 def install_here(name: str, config: CompanionConfig) -> int:
     """Install engine ``name`` in the foreground (``companion setup``), showing uv's output."""
-    engine = Engine(name, config.storage.data_dir)
+    engine = Engine(name)
     libraries = resolve_libraries(config)
     engine.home.mkdir(parents=True, exist_ok=True)
     try:
