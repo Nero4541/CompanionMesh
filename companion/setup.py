@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import getpass
+import importlib.util
 import secrets
 import shutil
 from dataclasses import dataclass
@@ -222,10 +223,13 @@ class Setup:
             "none": "None (text only)",
         }
         current = "builtin" if self.get("builtin.stt.enabled") else self.get("stt.provider")
-        if current == "faster_whisper":  # kept for setups made before the built-in engines
-            options["faster_whisper"] = (
-                "Whisper inside the server (uv sync --extra stt --extra cuda)"
-            )
+        if current == "faster_whisper":
+            if importlib.util.find_spec("faster_whisper") is not None:  # set up with the stt extra
+                options["faster_whisper"] = (
+                    "Whisper inside the server (uv sync --extra stt --extra cuda)"
+                )
+            else:  # the shipped default, which a release cannot run
+                current = "builtin"
         stt = self.p.choose("Speech recognition", options, current)
         self.put("builtin.stt.enabled", stt == "builtin")
         # Built-in: nothing else, so turning it off in the dashboard frees the GPU.
