@@ -17,7 +17,7 @@ server:
   dashboard_conversation: false  # show transcripts and replies on the dashboard
   # For boards outside this network (router port forward or IPv6): a second
   # listener with TLS that serves only devices with their own tokens, never the
-  # dashboard. See README, "Reaching the server from outside".
+  # dashboard. See docs/remote-access.md.
   public:
     enabled: false
     hosts: ["0.0.0.0", "::"]
@@ -53,7 +53,7 @@ agent:
     model: openclaw
     agent_id: main
     timeout: 300
-    extra_body: {}          # e.g. {max_tokens: 200}; see README "Performance and hardware"
+    extra_body: {}          # e.g. {max_tokens: 200}; see docs/performance.md
 
 # Used by agent.provider: direct (Hermes manages its own model).
 llm:
@@ -80,7 +80,7 @@ stt:
   keep_audio: false
   keep_audio_days: 3
   # Text that steers recognition toward a writing style (Whisper's initial
-  # prompt), e.g. Cantonese in traditional characters. None by default; see README.
+  # prompt), e.g. Cantonese in traditional characters. None by default; see docs/speech.md.
   prompt: null
 
 vad:
