@@ -475,6 +475,25 @@ A board carried outdoors (on your phone's hotspot or mobile data) is outside the
 
 Keep `server.host: 0.0.0.0` (or set it to the Tailscale address) and the device token, as for any network.
 
+#### When the server also runs a VPN
+
+If the server's computer uses another VPN (Surfshark, NordVPN, ProtonVPN and the like), for privacy or to change its location often, Tailscale and that VPN have to share the machine. Without the steps below they get in each other's way: the VPN may not connect at all ("an issue with your connection"), or Tailscale reaches nothing while the VPN is on. On the server's computer:
+
+1. **Tailscale: no exit node.** An exit node takes over all the computer's traffic, which is what the other VPN does too. In the Tailscale menu choose *Exit nodes, None*, or run `tailscale set --exit-node=`.
+2. **Tailscale: do not use its DNS.** It otherwise answers every name lookup itself, and the VPN cannot reach its own servers. Run `tailscale set --accept-dns=false` (the menu: *Preferences*, turn off *Use Tailscale DNS settings*). Tailscale device names such as `my-server` then no longer resolve; use their `100.x` addresses, which is all the companion needs.
+3. **The VPN: leave Tailscale out of it** (split tunneling; Surfshark calls it *Bypasser*, others *Split tunneling* or *Exclude apps*). Add the Tailscale **service**, `C:\Program Files\Tailscale\tailscaled.exe` on Windows (`tailscaled` on Linux), not the tray program `tailscale-ipn.exe`. Then reconnect the VPN. If the VPN has a kill switch that blocks excluded apps, turn it off.
+
+The server itself (its Python) does not need to be excluded: its traffic to and from boards runs inside Tailscale, so the rest of what the server does (the agent, model downloads, updates) can keep going through the VPN.
+
+Check it with the VPN connected:
+
+```powershell
+tailscale netcheck            # "UDP: true" and a nearest DERP region
+tailscale ping 100.x.y.z      # the board: "via <address>" is direct, "via DERP(…)" is relayed; both work
+```
+
+Changing the VPN's location then does not touch the boards' connection, since Tailscale's own traffic does not go through the VPN. Tested on Windows with Surfshark (WireGuard): six location changes (Japan, Singapore, United States) with a LicheeRV Nano on a phone hotspot, without a single disconnection or a pause of more than three seconds in its live camera view.
+
 #### Without Tailscale: the public listener (advanced)
 
 If you cannot use Tailscale and your home connection has a public IPv4 address (or IPv6), the server can offer boards a port of its own on the Internet. This needs a port forward on the router and breaks when the server's own traffic goes through a VPN or an exit node, so it is for those who can control both.
@@ -500,7 +519,7 @@ Then make that port reachable from the Internet, depending on your connection:
 | A public IPv4 address | Forward TCP port 8766 on the router to the server's address. If the address changes, use dynamic DNS (most routers have it built in, or a free service) for `url`. |
 | IPv6 (at home and on the phone's hotspot) | Allow incoming TCP port 8766 to the server's (stable) IPv6 address in the router's firewall, nothing else. No port forwarding is needed. |
 | Carrier-grade NAT, no IPv6 | Use Tailscale (above). Otherwise a small rented server in between: a relay such as frp or an SSH reverse tunnel to it, or a hosted tunnel (Cloudflare Tunnel). |
-| The server's traffic goes through a VPN or an exit node | Incoming connections usually fail (the replies leave through the VPN). Use Tailscale, or exclude the server from the VPN (split tunneling). |
+| The server's traffic goes through a VPN or an exit node | Incoming connections usually fail (the replies leave through the VPN). Use Tailscale as described in [When the server also runs a VPN](#when-the-server-also-runs-a-vpn), or exclude the server from the VPN (split tunneling). |
 
 And allow the port in the server's firewall, for that port only: on Windows, as administrator, `New-NetFirewallRule -DisplayName "Companion devices" -Direction Inbound -Protocol TCP -LocalPort 8766 -Action Allow -Profile Private`; on Linux, e.g. `sudo ufw allow 8766/tcp`. Never allow the whole program on all ports. Check from outside: on your phone, with Wi-Fi off, open `https://<your address>:8766/health`. The browser warns about the certificate (expected: it is the server's own); it should then say `status ok`.
 
@@ -801,6 +820,7 @@ A session can have several devices attached at once. Every device receives the c
 | Replies take tens of seconds | Usually the agent's prompt processing or reasoning; `/v1/metrics` names the slowest stage. See [Performance and hardware](#performance-and-hardware). |
 | The companion stops talking by itself | Its own voice (or a TV) is taken as you cutting in. Raise `realtime.barge_in_min_speech_ms`, use a microphone with echo cancellation, try `realtime.echo.canceller: nlms`, or set `full_duplex = false` on that device. |
 | It answers its own voice | The echo guard missed it: lower `realtime.echo.guard_similarity`, or move the microphone away from the speaker. |
+| The VPN will not connect while Tailscale runs, or boards are unreachable while the VPN is on | See [When the server also runs a VPN](#when-the-server-also-runs-a-vpn): no Tailscale exit node, `tailscale set --accept-dns=false`, and `tailscaled.exe` excluded from the VPN. |
 | **Set up** finds no board | Wait until it has booted (about 30 s), use a data USB cable and the right port, then **Look again**. `uv run companion edge discover` lists boards on USB; give the address under "another address" otherwise. |
 | A board is set up but does not connect | Its log is under Devices (also when it is offline, once it was connected before). Over USB, `uv run companion edge doctor` shows its Wi-Fi state and log: usually a Wi-Fi network out of reach, or an address of the server it cannot reach (another network, firewall). |
 | A board connects at home but not outside | Easiest: use [Tailscale](#reaching-the-server-from-outside) on the server and the board, and set the board up again with the server's Tailscale address. With the public listener, check `https://<your address>:8766/health` from your phone with Wi-Fi off: no answer means the router or firewall does not let port 8766 in, or your connection has no public address (see [Reaching the server from outside](#reaching-the-server-from-outside)). Set the board up again after turning on the public listener. |
