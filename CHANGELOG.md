@@ -2,12 +2,13 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see the README, "Updating".
 
-## Unreleased
+## 1.3.0 — 2026-10-17
+
+Built-in speech, and fixes for speech from boards. Protocol 1.2 and edge client 1.2.0, both unchanged.
 
 - **Built-in speech**: without an STT or TTS server, the server installs and runs Whisper (faster-whisper) and Irodori-TTS itself, each in an environment of its own under `data/builtin`. Choose **Built-in** in `companion setup`, or install them from the new **Speech** page of the dashboard. Each has an on/off switch that applies at once: off, its process ends and its GPU memory is free; the engines also end with the server. Settings under `builtin`.
 - **Speech server addresses**: an STT URL ending in `/audio/transcriptions` (or a TTS URL ending in `/audio/speech`) is cut back to the API's base; before, the endpoint was added twice and every request failed with 404. Setup now tests the STT and TTS servers you enter, and asks again when one does not answer like an OpenAI API.
 - **`stt.prompt`**: a short text that steers how speech recognition writes, such as Cantonese in traditional characters. Sent with every utterance, also to OpenAI-compatible servers (`prompt`); applies at once. None by default.
-
 - **Speech from boards with speech recognition on another machine**: voice activity detection and the Opus decoder no longer come with the `stt` and `opus` extras, which a server with remote speech recognition does not install. The board's microphone sent audio, but no speech was ever detected (`companion check`: `vad FAILED: onnxruntime is not installed`). Silero VAD's model now comes with the server, and onnxruntime and PyAV are base dependencies; `--extra opus` still works but is no longer needed.
 
 ## 1.2.0
