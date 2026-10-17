@@ -104,23 +104,25 @@ tts:
     irodori:
       seed: 1234            # fixed seed keeps the no-reference voice consistent
 
-# Built-in speech: engines the server installs (data/builtin) and runs itself,
-# for a setup without STT/TTS servers. On, an engine replaces stt.provider or
-# tts.provider (their language, prompt, voice and extra_body still apply); off,
-# its process ends and its GPU memory is free at once. Speech in the dashboard
-# installs them and turns them on and off.
+# Built-in speech: engines the server installs (builtin/stt, builtin/tts) and
+# runs itself, for a setup without STT/TTS servers. On, an engine replaces
+# stt.provider or tts.provider (their language, prompt, voice and extra_body
+# still apply); off, its process ends and its GPU memory is free at once. Speech
+# in the dashboard installs them, turns them on and off and switches models.
+# Models live in builtin/<engine>/models/<name>; one named here that is not
+# there yet is downloaded there first. Voices go in builtin/tts/voices.
 builtin:
   libraries: auto           # auto | cuda | cpu (auto: cuda when an NVIDIA GPU is found)
   start_timeout_s: 900      # a first start downloads the model
   stt:
     enabled: false
-    model: large-v3-turbo
+    model: large-v3-turbo   # a folder in builtin/stt/models, a Whisper size or owner/name
     device: auto            # auto | cuda | cpu
     compute_type: auto
     beam_size: 1
   tts:
     enabled: false
-    checkpoint: Aratako/Irodori-TTS-v4.1-Small-MF   # Japanese; MF = 4 steps
+    checkpoint: Aratako/Irodori-TTS-v4.1-Small-MF   # a folder in builtin/tts/models or owner/name; MF = 4 steps
     device: auto
     precision: fp32         # fp32 | bf16 (bf16 halves the memory, needs CUDA)
 
