@@ -3,7 +3,7 @@
 # Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
 #
 # The device speaks what the companion says in its session, such as proactive
-# remarks (see "Proactive behavior" in the README), including replies to other
+# remarks (see docs/proactive.md), including replies to other
 # clients that joined that session. Useful while a microphone is too noisy.
 
 server = "ws://192.168.1.10:8765/v1/realtime"   # your server (LAN or Tailscale address)
