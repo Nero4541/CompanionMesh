@@ -1,5 +1,5 @@
 # The built-in text-to-speech: Irodori-TTS-Server, installed and run by the
-# Companion Server in a virtual environment of its own (data/builtin/tts).
+# Companion Server in a virtual environment of its own (builtin/tts/.venv).
 # Not a package: `uv sync --project builtin/tts --extra cuda|cpu` installs it.
 
 [project]
