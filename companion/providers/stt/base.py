@@ -18,8 +18,10 @@ class Transcript:
 class STTProvider(Protocol):
     name: str
 
-    async def transcribe(self, audio: np.ndarray, *, language: str | None = None) -> Transcript:
-        """Transcribe mono float32 PCM at 16 kHz."""
+    async def transcribe(
+        self, audio: np.ndarray, *, language: str | None = None, prompt: str | None = None
+    ) -> Transcript:
+        """Transcribe mono float32 PCM at 16 kHz; ``prompt`` steers style and vocabulary."""
         ...
 
     async def warmup(self) -> None: ...
