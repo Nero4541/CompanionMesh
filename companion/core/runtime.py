@@ -17,6 +17,7 @@ from companion import __version__
 from companion.agent.base import AgentBackend
 from companion.audio.segmenter import UtteranceSegmenter
 from companion.audio.vad import VAD, create_vad
+from companion.builtin import ENGINES, WorkerSpec, builtin_for, worker_spec
 from companion.core.bus import EventBus
 from companion.core.config import (
     CompanionConfig,
@@ -108,6 +109,27 @@ def build_tts(config: CompanionConfig) -> TTSProvider | None:
     return OpenAICompatibleTTS(config.tts)
 
 
+def build_builtin(name: str, config: CompanionConfig, url: str) -> Any:
+    """A client for a running built-in engine: the stt/tts settings, its address."""
+    if name == "stt":
+        from companion.providers.stt.openai_compatible import OpenAICompatibleSTT
+
+        stt = OpenAICompatibleSTT(
+            config.stt.model_copy(
+                update={"base_url": url, "api_key_env": None, "model": config.builtin.stt.model}
+            )
+        )
+        stt.name = "builtin_stt"
+        return stt
+    from companion.providers.tts.openai_compatible import OpenAICompatibleTTS
+
+    tts = OpenAICompatibleTTS(
+        config.tts.model_copy(update={"base_url": url, "api_key_env": None, "model": "irodori-tts"})
+    )
+    tts.name = "builtin_tts"
+    return tts
+
+
 def build_vlm(config: CompanionConfig) -> VLMProvider | None:
     if config.vlm.provider == "none":
         return None
@@ -129,11 +151,27 @@ class CompanionRuntime:
         self.store: TranscriptStore = build_store(config)
         self.persona: Persona = load_persona(config.personas_dir, config.agent.persona)
         self.agent: AgentBackend = providers.agent or build_agent(config, self.store)
+        # Built-in engines replace stt/tts while on (not ones passed in, e.g. by tests).
+        self.builtin = builtin_for(config.storage.data_dir)
+        self._managed = {
+            name
+            for name in ENGINES
+            if getattr(providers, name) is None and name not in providers.disabled
+        }
+        self._on_builtin = {n for n in self._managed if getattr(config.builtin, n).enabled}
+        self._builtin_urls: dict[str, str] = {}
+        self._builtin_specs: dict[str, WorkerSpec | None] = {}
+        self._builtin_tasks: dict[str, asyncio.Task[None]] = {}
+        self._closing: set[asyncio.Task[None]] = set()
         self.stt: STTProvider | None = (
-            None if "stt" in providers.disabled else providers.stt or build_stt(config)
+            None
+            if "stt" in providers.disabled or "stt" in self._on_builtin
+            else providers.stt or build_stt(config)
         )
         self.tts: TTSProvider | None = (
-            None if "tts" in providers.disabled else providers.tts or build_tts(config)
+            None
+            if "tts" in providers.disabled or "tts" in self._on_builtin
+            else providers.tts or build_tts(config)
         )
         self.vlm: VLMProvider | None = (
             None if "vlm" in providers.disabled else providers.vlm or build_vlm(config)
@@ -175,6 +213,8 @@ class CompanionRuntime:
             # Load in the background so the HTTP server comes up immediately.
             self._warmup = asyncio.create_task(self._warm_stt())
         self.cameras.apply(self.config, delay=START_DELAY_S)
+        # Also stops engines a previous run in this process left on and this one turns off.
+        self.schedule_builtin()
 
     async def _warm_stt(self) -> None:
         assert self.stt is not None
@@ -194,6 +234,10 @@ class CompanionRuntime:
         warmup = getattr(self, "_warmup", None)
         if warmup is not None:
             warmup.cancel()
+        # The engines themselves keep running: a restart in this process takes them
+        # over, and they end with the process (companion.builtin.shutdown_all).
+        for task in self._builtin_tasks.values():
+            task.cancel()
         for provider in (self.agent, self.stt, self.tts, self.vlm):
             if provider is not None:
                 with contextlib.suppress(Exception):
@@ -201,6 +245,84 @@ class CompanionRuntime:
         self.store.close()
         self.device_logs.close()
         log.info("runtime stopped")
+
+    # -- built-in speech engines (companion.builtin) ----------------------------
+
+    def schedule_builtin(self, *names: str, force: bool = False) -> None:
+        """Bring the built-in engines in line with the config, in the background.
+
+        Only an engine whose settings changed is touched (or every one named,
+        with ``force``); a start still under way for it is cancelled first.
+        """
+        try:
+            loop = asyncio.get_running_loop()
+        except RuntimeError:
+            return
+        for name in names or ENGINES:
+            if name not in self._managed:
+                continue
+            spec = worker_spec(name, self.config)
+            if not force and name in self._builtin_specs and self._builtin_specs[name] == spec:
+                continue
+            self._builtin_specs[name] = spec
+            running = self._builtin_tasks.get(name)
+            if running is not None:
+                running.cancel()
+            self._builtin_tasks[name] = loop.create_task(self._apply_engine(name))
+
+    def uses_builtin(self, name: str) -> bool:
+        """Whether ``name`` (stt or tts) is the running built-in engine right now."""
+        return name in self._on_builtin and getattr(self, name) is not None
+
+    async def builtin_settled(self, name: str) -> None:
+        """Wait until the latest change to engine ``name`` is done (started or stopped)."""
+        task = self._builtin_tasks.get(name)
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError):
+                await asyncio.shield(task)
+
+    async def apply_builtin(self) -> None:
+        """Bring every built-in engine in line with the config and wait for them."""
+        await asyncio.gather(*(self._apply_engine(n) for n in ENGINES if n in self._managed))
+
+    async def _apply_engine(self, name: str) -> None:
+        engine = self.builtin.engines[name]
+        spec = worker_spec(name, self.config)
+        try:
+            if spec is None:
+                if name in self._on_builtin:  # back to what stt/tts.provider says
+                    self._use(
+                        name, build_stt(self.config) if name == "stt" else build_tts(self.config)
+                    )
+                await engine.stop()
+                return
+            url = await engine.ensure(spec, self.config.builtin.start_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("builtin engine failed", extra=kv(engine=name, error=str(exc)))
+            url = None
+        if url is None:
+            self._use(name, None, builtin=True)
+        elif self._builtin_urls.get(name) != url or getattr(self, name) is None:
+            self._use(name, build_builtin(name, self.config, url), builtin=True)
+            self._builtin_urls[name] = url
+
+    def _use(self, name: str, provider: Any, *, builtin: bool = False) -> None:
+        old = getattr(self, name)
+        if old is provider:
+            return
+        setattr(self, name, provider)
+        if builtin:
+            self._on_builtin.add(name)
+        else:
+            self._on_builtin.discard(name)
+            self._builtin_urls.pop(name, None)
+        if old is not None:
+            task = asyncio.get_running_loop().create_task(old.aclose())
+            self._closing.add(task)
+            task.add_done_callback(self._closing.discard)
+        log.info("speech provider", extra=kv(kind=name, provider=getattr(provider, "name", None)))
 
     def new_vad(self) -> VAD:
         return self._vad_factory()
@@ -321,6 +443,8 @@ class CompanionRuntime:
                 session.reconfigure(self.config)
             if "cameras" in applied:
                 self.cameras.apply(self.config)
+            if any(p.split(".")[0] == "builtin" for p in applied):
+                self.schedule_builtin()
             log.info("settings applied", extra=kv(settings=",".join(applied)))
         return applied, pending
 
@@ -574,6 +698,7 @@ class CompanionRuntime:
                 "tts": getattr(self.tts, "name", None),
                 "vlm": getattr(self.vlm, "name", None),
             },
+            "builtin": {name: engine.status.state for name, engine in self.builtin.engines.items()},
             "vision": {
                 "mode": self.config.vision.mode,
                 "enabled": self.config.vision.enabled
