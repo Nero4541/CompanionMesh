@@ -1,7 +1,7 @@
 #!/bin/sh
 # Update the Companion Server to the newest release (or git pull for a clone).
 # Stop the server first. Your .env, local config, data and personas are kept;
-# the replaced files are backed up in data/updates/. See README, "Updating".
+# the replaced files are backed up in data/updates/. See docs/updating.md.
 #
 # Everything is inside main(), so the shell has read the whole script before the
 # update replaces this file.
