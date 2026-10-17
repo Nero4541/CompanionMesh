@@ -1,8 +1,9 @@
 """Built-in speech engines in the dashboard (/v1/admin/builtin).
 
-GET reports each engine (installed, running, GPU memory, log), POST .../install
-installs one in the background, PUT .../{name} turns one on or off by saving
-``builtin.<name>.enabled``; the runtime then starts or stops it at once.
+GET reports each engine (installed, running, GPU memory, its model folders,
+log), POST .../install installs one in the background, PUT .../{name} turns one
+on or off or switches its model by saving ``builtin.<name>.*``; the runtime then
+starts, stops or restarts it at once.
 """
 
 from __future__ import annotations
@@ -12,7 +13,7 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from companion.api.admin import _require_source, _runtime, _save
 from companion.api.auth import require_admin
@@ -37,13 +38,16 @@ def _engine_name(name: str) -> str:
 async def status(request: Request) -> dict[str, Any]:
     runtime = _runtime(request)
     gpu = await asyncio.to_thread(gpu_memory)
-    engines = {
-        name: {
-            **engine.report(getattr(runtime.config.builtin, name).enabled, gpu),
+    engines = {}
+    for name, engine in runtime.builtin.engines.items():
+        settings = getattr(runtime.config.builtin, name)
+        model = settings.model if name == "stt" else settings.checkpoint
+        engines[name] = {
+            **engine.report(settings.enabled, gpu),
             "in_use": runtime.uses_builtin(name),
+            "model": model,
+            "model_folder": model.split("/")[-1],  # models/<this> (downloaded if missing)
         }
-        for name, engine in runtime.builtin.engines.items()
-    }
     return {
         "engines": engines,
         "libraries": resolve_libraries(runtime.config),
@@ -79,18 +83,24 @@ async def install(request: Request, name: str) -> dict[str, Any]:
     return {"state": engine.status.state, "libraries": libraries}
 
 
-class EnableBody(BaseModel):
-    enabled: bool
+class EngineBody(BaseModel):
+    enabled: bool | None = None
+    # A folder in builtin/<name>/models (or what builtin.<name>.model/checkpoint takes).
+    model: str | None = Field(default=None, min_length=1)
 
 
 @router.put("/{name}")
-async def enable(request: Request, name: str, body: EnableBody) -> dict[str, Any]:
-    """Turn an engine on or off (saved in the settings, applied at once)."""
+async def change(request: Request, name: str, body: EngineBody) -> dict[str, Any]:
+    """Turn an engine on or off, or switch its model (saved, applied at once)."""
     runtime = _runtime(request)
     source = _require_source(request)
     desired = source.saved().model_dump(mode="json")
-    desired["builtin"][_engine_name(name)]["enabled"] = body.enabled
+    section = desired["builtin"][_engine_name(name)]
+    if body.enabled is not None:
+        section["enabled"] = body.enabled
+    if body.model is not None:
+        section["model" if name == "stt" else "checkpoint"] = body.model
     result = await _save(runtime, source, desired)
-    if not body.enabled:  # wait for the process to end, so the memory shows as freed
+    if body.enabled is False:  # wait for the process to end, so the memory shows as freed
         await runtime.builtin_settled(name)
     return result
