@@ -281,7 +281,7 @@ def strip_endpoint(url: str, endpoint: str) -> str:
 
 
 class STTConfig(_Section):
-    """Speech recognition (speech to text): turns what you say into text."""
+    """Hearing: speech recognition turns what you say into text."""
 
     provider: Literal["faster_whisper", "openai_compatible", "none"] = "faster_whisper"
     """faster_whisper: recognise speech on this machine. openai_compatible: send audio to a speech
@@ -377,7 +377,7 @@ class VADConfig(_Section):
 
 
 class TTSConfig(_Section):
-    """Speech synthesis (text to speech): gives the companion its voice."""
+    """Speaking: the companion's voice, which reads its replies aloud."""
 
     provider: Literal["openai_compatible", "none"] = "openai_compatible"
     """openai_compatible: a speech server at base_url (e.g. Irodori-TTS-Server). none: text replies
@@ -423,7 +423,7 @@ class TTSConfig(_Section):
 
 
 class BuiltinSTTConfig(_Section):
-    """Built-in speech recognition (faster-whisper), installed and run by the server in builtin/stt.
+    """Built-in hearing: Whisper speech recognition, installed and run by the server in builtin/stt.
     stt.language and stt.prompt still apply.
     """
 
@@ -449,7 +449,7 @@ class BuiltinSTTConfig(_Section):
 
 
 class BuiltinTTSConfig(_Section):
-    """Built-in speech synthesis (Irodori-TTS, Japanese), run by the server in builtin/tts.
+    """Built-in voice: Irodori-TTS (Japanese), installed and run by the server in builtin/tts.
 
     Voices (reference clips, .speaker.safetensors, .pt) go in builtin/tts/voices;
     tts.voice picks one.
