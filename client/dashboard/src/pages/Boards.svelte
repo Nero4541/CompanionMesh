@@ -336,7 +336,7 @@
     <label for="b-pass">Board password</label>
     <div>
       <input id="b-pass" type="password" bind:value={form.password} placeholder="empty: the stock one (root)" autocomplete="off" disabled={installing} />
-      <span class="muted small">Only if you changed it. The stock password is replaced with a random one, kept below.</span>
+      <span class="muted small">Only if you changed it; a password of your own stays as it is. The stock password is replaced with a random one, kept below.</span>
     </div>
   </div>
 
