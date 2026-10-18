@@ -2,6 +2,10 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
+## Unreleased
+
+- **Board passwords stay as they are**: setting a board up (or updating it) replaces the root password only when it is the stock one (or empty). A password of the board's own, or the one this server set before, stays as it is; before, a board logged in with this server's key or with a password you gave got a new random one. The installer now asks the board itself which password it has.
+
 ## 1.4.0 — 2026-10-18
 
 Built-in speech in its own folder with a model picker, every setting explained, and clearer setup questions. Protocol 1.2 and edge client 1.2.0, both unchanged.
