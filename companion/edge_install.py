@@ -11,8 +11,9 @@ What it does, in order (each step reports through ``progress``):
 1. log in: with this server's SSH key, else the password given, the one this
    server set before, or the stock ``root``;
 2. put this server's public key into ``authorized_keys``;
-3. replace the root password with a random one (the stock one is public and the
-   board goes outdoors); the new one is kept in the device registry;
+3. replace the stock root password (or none) with a random one (the stock one is
+   public and the board goes outdoors); the new one is kept in the device registry.
+   A password of the board's own, or the one this server set, stays as it is;
 4. enroll the device (a token of its own) and copy the edge client to
    ``/root/companion-edge/releases/<version>``, ``current`` pointing at it;
 5. write ``edge.toml`` (from the hardware profile; an existing one keeps its
@@ -155,6 +156,29 @@ with open("/etc/shadow.tmp", "w") as f:
 import os
 os.chmod("/etc/shadow.tmp", 0o600)
 os.replace("/etc/shadow.tmp", "/etc/shadow")
+"""
+
+# Says what root's password is: "stock" (the stock one, or none), "known" (the one
+# this server set) or "other" (the board's own); stdin: the stock one, the known one.
+PASSWORD_STATE_PY = r"""
+import crypt, sys
+stock, known = (sys.stdin.read().split("\n") + [""])[:2]
+def matches(word, hashed):
+    try:
+        return crypt.crypt(word, hashed) == hashed
+    except OSError:  # a locked account ("!", "*") is no hash
+        return False
+for line in open("/etc/shadow"):
+    parts = line.rstrip("\n").split(":")
+    if parts[0] == "root":
+        hashed = parts[1]
+        if not hashed or matches(stock, hashed):
+            print("stock")
+        elif known and matches(known, hashed):
+            print("known")
+        else:
+            print("other")
+        break
 """
 
 
@@ -624,7 +648,7 @@ async def install(
 
     report("connect", "run", plan.host)
     key = server_key(data_dir)
-    conn, used_password = await connect(plan.host, key, passwords)
+    conn, _ = await connect(plan.host, key, passwords)
     board = Board(conn)
     try:
         system = await board.run("uname -m; cat /etc/os-release 2>/dev/null | head -1", check=False)
@@ -656,22 +680,34 @@ async def install(
         token: str | None = None
         if plan.keep_token:
             token = await _board_token(board, registry, plan.device_id)
-            report("token", "ok", "kept the token and password it has")
+            report("token", "ok", "kept the token it has")
 
         root_password = enrolled.root_password if enrolled else None
-        if plan.change_password and (
-            used_password == STOCK_PASSWORD or (root_password is None and not plan.keep_token)
-        ):
+        if plan.change_password:
+            # Asked on the board: a login with the key says nothing about the password.
             report("password", "run")
-            new_password = secrets.token_urlsafe(12)
-            out = await board.run(
-                f"python3 -c {shlex.quote(SET_PASSWORD_PY)}", input=new_password, check=False
+            state = await board.run(
+                f"python3 -c {shlex.quote(PASSWORD_STATE_PY)}",
+                input=f"{STOCK_PASSWORD}\n{root_password or ''}",
+                check=False,
             )
-            if "Traceback" in out:
-                report("password", "warn", "could not change it; change it by hand (passwd)")
+            if state.strip() == "stock":
+                new_password = secrets.token_urlsafe(12)
+                out = await board.run(
+                    f"python3 -c {shlex.quote(SET_PASSWORD_PY)}", input=new_password, check=False
+                )
+                if "Traceback" in out:
+                    report("password", "warn", "could not change it; change it by hand (passwd)")
+                else:
+                    root_password = new_password
+                    report("password", "ok", "replaced the stock root password (see the dashboard)")
+            elif state.strip() == "known":
+                report("password", "ok", "kept the one this server set")
+            elif state.strip() == "other":
+                root_password = None  # what this server had is not the board's any more
+                report("password", "ok", "kept the board's own password")
             else:
-                root_password = new_password
-                report("password", "ok", "replaced the root password (see the dashboard)")
+                report("password", "warn", "could not read it; left it as it is")
 
         version = edge_version()
         if token is not None:
