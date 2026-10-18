@@ -2,7 +2,9 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
-## Unreleased
+## 1.4.0 — 2026-10-18
+
+Built-in speech in its own folder with a model picker, every setting explained, and clearer setup questions. Protocol 1.2 and edge client 1.2.0, both unchanged.
 
 - **Every setting explained**: the Configuration page says under each setting, and each group, what it does in plain words, with units, examples and when to change it, for people new to the project. The tags now read **applies now** and **needs restart** (were *live* and *restart*).
 - **Clearer setup questions**: when a server you entered does not answer, setup asks "Save these settings anyway?" (No, or Enter, asks for them again) instead of "Change these settings?". Speech is now two parts that no longer mirror each other: *Hearing* (speech recognition, your voice into text) and *Speaking* (the companion's voice), with "speech recognition server" and "voice server" instead of speech-to-text and text-to-speech.
