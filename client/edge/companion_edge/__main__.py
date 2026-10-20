@@ -20,6 +20,22 @@ from companion_edge.config import EdgeConfig, load
 LOG_FILE_BYTES = 512 * 1024
 
 
+def fix_home() -> None:
+    """Started at boot, HOME is / or unset, and ALSA (aplay, arecord) then misses
+    ~/.asoundrc, where a Bluetooth speaker's name usually is: use the user's own.
+    The installer's service.sh sets it too; this covers older ones."""
+    if os.environ.get("HOME") not in (None, "", "/"):
+        return
+    try:
+        import pwd
+
+        home = pwd.getpwuid(os.getuid()).pw_dir
+    except (ImportError, KeyError, AttributeError):  # not on Windows
+        return
+    if home and home != "/":
+        os.environ["HOME"] = home
+
+
 def check(config: EdgeConfig) -> int:
     ok = True
     for tool, package, needed in (
@@ -85,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         help="log to this file instead of stderr, rotated at 512 KB (3 old files kept)",
     )
     args = parser.parse_args(argv)
+    fix_home()
 
     # With a log file (a service), stderr is left for crashes before logging works.
     handler: logging.Handler = logging.StreamHandler()
