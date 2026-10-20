@@ -39,6 +39,23 @@ class _Section(BaseModel):
     model_config = ConfigDict(extra="forbid", use_attribute_docstrings=True)
 
 
+class ViewerConfig(_Section):
+    """A read-only page at /view/ for your phone on the same Tailscale network (tailnet).
+
+    It shows the conversation (what was heard and said) and the connected devices with what
+    their cameras see. Only devices on the tailnet can open it, reaching this machine at its
+    Tailscale address (100.x); everyone else is refused, and it can change nothing. Needs host
+    0.0.0.0 (or this machine's Tailscale address). See docs/remote-access.md.
+    """
+
+    enabled: bool = False
+    """Open the page /view/ to phones and computers on your tailnet. Applies at once."""
+    cameras: bool = True
+    """Also show what each device's camera sees (its newest picture, and live pictures while
+    someone watches). Off: only the conversation and the list of devices.
+    """
+
+
 class PublicListenerConfig(_Section):
     """A second, locked-down entrance for boards outside your home network.
 
@@ -125,6 +142,7 @@ class ServerConfig(_Section):
     """Show what was said (your words and the replies) on the dashboard. Off, the dashboard sees
     only how long they were, for privacy.
     """
+    viewer: ViewerConfig = ViewerConfig()
     public: PublicListenerConfig = PublicListenerConfig()
 
     def auth_token(self) -> str | None:
@@ -860,6 +878,7 @@ _LIVE_SETTINGS = {
     "metrics.emit_turn": True,
     "cameras": True,  # started, stopped and replaced while running
     "server.dashboard_conversation": True,
+    "server.viewer": True,  # checked on every request of the page
     "stt.keep_audio": True,
     "stt.keep_audio_days": True,
     "stt.prompt": True,  # read on every utterance
