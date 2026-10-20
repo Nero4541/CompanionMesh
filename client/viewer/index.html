@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
+  <title>Companion · viewer</title>
+  <link rel="stylesheet" href="viewer.css">
+</head>
+<body>
+  <header>
+    <h1>Companion</h1>
+    <span id="state" class="pill">…</span>
+  </header>
+
+  <nav>
+    <button data-tab="conversation" class="active">Conversation</button>
+    <button data-tab="devices">Devices</button>
+  </nav>
+
+  <p id="notice" class="notice" hidden></p>
+
+  <section id="conversation">
+    <ol id="lines"></ol>
+    <p id="no-lines" class="muted">Nothing said since the server started (or since this was turned on).</p>
+  </section>
+
+  <section id="devices" hidden>
+    <div id="device-list"></div>
+    <p id="no-devices" class="muted">No device is connected.</p>
+  </section>
+
+  <script src="viewer.js"></script>
+</body>
+</html>
