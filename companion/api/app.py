@@ -9,12 +9,23 @@ from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
 from companion import __version__
-from companion.api import admin, builtin, edge_admin, http, maintain, observe, realtime, updates
+from companion.api import (
+    admin,
+    builtin,
+    edge_admin,
+    http,
+    maintain,
+    observe,
+    realtime,
+    updates,
+    viewer,
+)
 from companion.core.config import CompanionConfig, ConfigSource
 from companion.core.runtime import CompanionRuntime, Providers
 
 CLIENT_DIR = Path(__file__).resolve().parents[2] / "client"
 WEB_CLIENT_DIR = CLIENT_DIR / "web"
+VIEWER_DIR = CLIENT_DIR / "viewer"  # the tailnet's read-only page (server.viewer)
 # Built by `npm run build` in client/dashboard; committed, so no Node is needed.
 DASHBOARD_DIR = CLIENT_DIR / "dashboard" / "dist"
 
@@ -53,9 +64,14 @@ def create_app(
     app.include_router(observe.router)
     app.include_router(maintain.router)
     app.include_router(updates.router)
+    app.include_router(viewer.router)
 
     if config.server.dashboard and DASHBOARD_DIR.is_dir():
         app.mount("/admin", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
+
+    # Always there (the page holds no data): server.viewer can be turned on while running.
+    if VIEWER_DIR.is_dir():
+        app.mount("/view", StaticFiles(directory=VIEWER_DIR, html=True), name="viewer")
 
     if config.server.dev_client and WEB_CLIENT_DIR.is_dir():
         app.mount("/dev", StaticFiles(directory=WEB_CLIENT_DIR, html=True), name="dev-client")
