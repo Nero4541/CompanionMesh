@@ -20,6 +20,9 @@ What it does, in order (each step reports through ``progress``):
    settings and only gets the server and device id), ``edge.env`` with the token;
 6. add the Wi-Fi networks given (with their passphrases hashed, never in plain
    text), on the boot partition too where the image reads them from there;
+6b. if asked, put the board on Tailscale: copy Tailscale to it when it has none
+   (downloaded and checked by this server, see ``companion/tailscale.py``) and
+   join, with an auth key or through a login link shown as the step's detail;
 7. install the service (``S96companion-edge`` or a systemd unit), run
    ``companion-edge --check``, start it and show the first lines of its log.
 """
@@ -212,6 +215,12 @@ class InstallPlan:
     # Update a board this server set up before: keep its token (and root password),
     # only bring its software, settings and Wi-Fi up to date. Works without network.
     keep_token: bool = False
+    # Put the board on Tailscale (needs Internet on the board, through its Wi-Fi):
+    # with this auth key, or else through a login link. tailscale_url is this
+    # server's Tailscale address, which the board then also tries.
+    tailscale: bool = False
+    tailscale_auth_key: str | None = None
+    tailscale_url: str | None = None
 
 
 @dataclass
@@ -325,8 +334,9 @@ def edge_toml(plan: InstallPlan, existing: str | None) -> str:
     else:
         text = existing
     text = toml_set(text, None, "server", plan.server_url)
-    servers = [plan.server_url, plan.public_url] if plan.public_url else []
-    text = toml_set(text, None, "servers", servers)
+    others = [plan.tailscale_url if plan.tailscale else None, plan.public_url]
+    servers = [plan.server_url, *(u for u in others if u and u != plan.server_url)]
+    text = toml_set(text, None, "servers", servers if len(servers) > 1 else [])
     text = toml_set(text, None, "server_cert", SERVER_CERT if plan.server_cert_pem else "")
     text = toml_set(text, None, "token_env", "COMPANION_TOKEN")
     text = toml_set(text, None, "device_id", plan.device_id)
@@ -574,6 +584,12 @@ class Board:
             await sftp.chmod(tmp, mode)
             await sftp.posix_rename(tmp, path)
 
+    async def put(self, local: Path, path: str) -> None:
+        """Copy a (large) file without reading it into memory."""
+        async with self.conn.start_sftp_client() as sftp:
+            await sftp.put(str(local), f"{path}.tmp")
+            await sftp.posix_rename(f"{path}.tmp", path)
+
     async def exists(self, path: str) -> bool:
         out = await self.run(f"test -e {shlex.quote(path)} && echo yes || echo no")
         return out.strip() == "yes"
@@ -617,6 +633,72 @@ async def _board_token(board: Board, registry: DeviceRegistry, device_id: str) -
             "set it up instead of updating it"
         )
     return match[1]
+
+
+TAILSCALE_LOGIN_S = 300.0  # how long the installer waits for someone to open the login link
+
+
+async def _board_tailscale(board: Board, args: str, input: str | None = None) -> dict[str, Any]:
+    """Run the edge client's Tailscale helper on the board; its JSON report."""
+    out = await board.run(
+        f"cd {BOARD_DIR}/current && python3 -m companion_edge.tailscale {args}",
+        input=input,
+        check=False,
+    )
+    try:
+        report = json.loads(out.strip().splitlines()[-1])
+    except (ValueError, IndexError):
+        raise InstallError(f"Tailscale on the board: {out.strip()[:300] or 'no answer'}") from None
+    if "error" in report:
+        raise InstallError(str(report["error"]))
+    return report
+
+
+async def _join_tailscale(
+    board: Board, plan: InstallPlan, data_dir: Path, report: Callable[..., None]
+) -> None:
+    from companion import tailscale
+
+    report("tailscale", "run")
+    state = await _board_tailscale(board, "status")
+    if not state["installed"]:
+        if not state.get("arch"):
+            raise InstallError(f"Tailscale has no build for this board ({state.get('machine')})")
+        report("tailscale", "run", f"getting Tailscale for {state['arch']} from pkgs.tailscale.com")
+        try:
+            package = await tailscale.package(state["arch"], data_dir)
+        except tailscale.PackageError as exc:
+            raise InstallError(str(exc)) from exc
+        report("tailscale", "run", f"copying {package.name} to the board")
+        remote = f"{BOARD_DIR}/{package.name}"
+        await board.put(package.path, remote)
+        try:
+            state = await _board_tailscale(board, f"install {shlex.quote(remote)} {package.sha256}")
+        finally:
+            await board.run(f"rm -f {shlex.quote(remote)}", check=False)
+    key = plan.tailscale_auth_key
+    report("tailscale", "run", "joining the tailnet")
+    state = await _board_tailscale(
+        board,
+        f"up --hostname {shlex.quote(plan.device_id)}" + (" --auth-key-stdin" if key else ""),
+        input=key or "",
+    )
+    deadline = time.monotonic() + TAILSCALE_LOGIN_S
+    while state.get("state") != "Running" and time.monotonic() < deadline:
+        if state.get("auth_url"):
+            report("tailscale", "run", f"Open this link to let the board in: {state['auth_url']}")
+        await asyncio.sleep(3.0)
+        state = await _board_tailscale(board, "status")
+    if state.get("state") == "Running":
+        where = ", ".join(state.get("ips") or [])
+        report("tailscale", "ok", f"on the tailnet as {state.get('hostname')} ({where})")
+    else:
+        report(
+            "tailscale",
+            "warn",
+            f"not on the tailnet yet ({state.get('state') or 'not running'}): finish it under "
+            "Devices, Maintenance once the board is connected",
+        )
 
 
 async def install(
@@ -807,6 +889,12 @@ async def install(
             )
             report("wifi", "ok", "saved" + (" (also on the boot partition)" if boot else ""))
 
+        if plan.tailscale:
+            try:
+                await _join_tailscale(board, plan, data_dir, report)
+            except InstallError as exc:  # the board works without it, at home
+                report("tailscale", "warn", str(exc))
+
         report("service", "run")
         if systemd:
             await board.write("/etc/systemd/system/companion-edge.service", SYSTEMD_UNIT)
@@ -964,7 +1052,13 @@ def run_cli(args: Any, config: Any) -> int:
         if (args.ask_password)
         else None
     )
+    auth_key = (
+        getpass.getpass("Tailscale auth key (Enter: open a login link instead): ").strip()
+        if args.tailscale
+        else ""
+    )
     public_url, cert_pem = public_reach(config)
+    tailnet = tailscale_addresses()
     plan = InstallPlan(
         device_id=args.name,
         host=host,
@@ -978,10 +1072,17 @@ def run_cli(args: Any, config: Any) -> int:
         password=password or None,
         change_password=not args.keep_password,
         keep_token=args.edge_command == "update",
+        tailscale=args.tailscale,
+        tailscale_auth_key=auth_key or None,
+        tailscale_url=f"ws://{tailnet[0]}:{config.server.port}/v1/realtime" if tailnet else None,
     )
+    links: set[str] = set()
 
     def show(step: str, status: str, detail: str) -> None:
         if status == "run":
+            if "https://" in detail and detail not in links:  # a link to open now
+                links.add(detail)
+                print(f"     {step:<9} {detail}")
             return
         mark = {"ok": "ok  ", "warn": "WARN", "fail": "FAIL"}.get(status, status)
         first, *rest = detail.splitlines() or [""]
