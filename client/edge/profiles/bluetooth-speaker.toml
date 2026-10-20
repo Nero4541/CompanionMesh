@@ -2,7 +2,9 @@
 #
 # Copy to edge.toml, set `server`, and put COMPANION_TOKEN in the environment.
 #
-# Pair the speaker once (bluetoothctl: pair, trust, connect), run
+# Easiest: pair the speaker from the dashboard (Devices, Maintenance, Bluetooth
+# speaker), which also sets output_device = "bluetooth" and keeps it connected.
+# By hand: pair the speaker once (bluetoothctl: pair, trust, connect), run
 # `bluealsa -p a2dp-source`, and give the speaker an ALSA name, e.g. in ~/.asoundrc:
 #
 #   pcm.speaker {
