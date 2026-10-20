@@ -18,7 +18,7 @@ The Devices page also has, per device, its **Log**, **Camera**, **Diagnostics** 
 
 The **Events** page shows what the server is doing as it happens: devices connecting and leaving, state changes, attention decisions with their reasons, camera observations, turns, errors and saved settings, with filters and a pause. What people say is not part of it unless `server.dashboard_conversation: true`: otherwise transcripts and replies show only their length.
 
-The **Conversations** page shows what the companion heard and said, per conversation, while `server.dashboard_conversation` is on (from then on; nothing is kept while it is off), and the recordings kept with `stt.keep_audio: true`: each utterance as the server received it, what speech recognition made of it and what became of it, to listen to when the companion mishears.
+The **Conversations** page shows what the companion heard and said, newest first and per conversation, while `server.dashboard_conversation` is on (from then on; nothing is kept while it is off). With `stt.keep_audio: true` each line you said has its recording next to it (**Listen**, with its length and how long recognition took), and utterances that never got an answer (dropped as the companion's own voice, or nothing recognized) show among the lines, greyed out: listen to them when the companion mishears. With the conversation off, only the recordings show. The page also says where phones open the read-only viewer (`server.viewer`, see [Reaching the server from outside](remote-access.md#following-on-your-phone)).
 
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
