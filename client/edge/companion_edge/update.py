@@ -47,13 +47,18 @@ def layout(package_dir: Path | None = None) -> tuple[Path, Path] | None:
     return base, release
 
 
-def package_url(realtime_url: str, version: str) -> str:
-    """The server's package URL, from the realtime URL the client is connected to."""
+def server_url(realtime_url: str, path: str) -> str:
+    """``path`` on the server, from the realtime URL the client is connected to."""
     match = re.match(r"^(ws|wss)://([^/]+)/", realtime_url)
     if not match:
         raise UpdateError(f"cannot tell the server's address from {realtime_url!r}")
     scheme = "https" if match[1] == "wss" else "http"
-    return f"{scheme}://{match[2]}/v1/edge/package/{version}.tar.gz"
+    return f"{scheme}://{match[2]}{path}"
+
+
+def package_url(realtime_url: str, version: str) -> str:
+    """The server's package URL, from the realtime URL the client is connected to."""
+    return server_url(realtime_url, f"/v1/edge/package/{version}.tar.gz")
 
 
 def download(url: str, token: str | None, context: ssl.SSLContext | None) -> bytes:
