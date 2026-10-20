@@ -5,7 +5,9 @@ A board carried outdoors (on your phone's hotspot or mobile data) is outside the
 **Recommended: [Tailscale](https://tailscale.com) on the server and the board.** Both connect out to Tailscale, so it works behind carrier-grade NAT, on any hotspot or public Wi-Fi, with a VPN on the server and without touching the router or the firewall; the server's Tailscale address stays the same wherever the board is, and traffic between them is encrypted.
 
 1. **Server:** install Tailscale and sign in. `tailscale ip -4` shows its address (`100.x.y.z`).
-2. **Board:** install Tailscale and sign in to the same account (tailnet). On Sipeed's LicheeRV Nano image (no package manager), copy the static `riscv64` binaries from [pkgs.tailscale.com](https://pkgs.tailscale.com/stable/#static) to `/usr/sbin/` and start `tailscaled` at boot with its state on the SD card, since `/run` is cleared at every start, for example as `/etc/init.d/S45tailscale`:
+2. **Board:** the dashboard does it for you: tick **Put the board on Tailscale** when you set it up under **Boards**, or press **Install and join** in the device's **Maintenance** tab while it is connected at home. Without an auth key, a login link shows: open it and approve the board in the same account as the server. The board gets Tailscale from this server if it has none, joins as its device name without taking the tailnet's DNS (`--accept-dns=false`), and from then on also tries the server's Tailscale address.
+
+   By hand instead: install Tailscale and sign in to the same account (tailnet). On Sipeed's LicheeRV Nano image (no package manager), copy the static `riscv64` binaries from [pkgs.tailscale.com](https://pkgs.tailscale.com/stable/#static) to `/usr/sbin/` and start `tailscaled` at boot with its state on the SD card, since `/run` is cleared at every start, for example as `/etc/init.d/S45tailscale`:
 
    ```sh
    #!/bin/sh
