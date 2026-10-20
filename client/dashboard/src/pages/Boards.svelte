@@ -54,6 +54,8 @@
     wifi: [{ ssid: "", password: "" }],
     password: "",
     keep: true, // a board set up before: update it, keeping its token and password
+    tailscale: false,
+    tailscaleKey: "", // empty: the board shows a login link instead
   });
   let formTop = $state(null);
   let job = $state(null);
@@ -97,7 +99,12 @@
       w.ssid && w.password && (w.password.length < 8 || w.password.length > 63) ? "8 to 63 characters" : null,
     ),
   );
-  const ready = $derived(nameOk && host && /^wss?:\/\//.test(serverUrl) && !wifiErrors.some(Boolean));
+  const keyBad = $derived(
+    form.tailscale && form.tailscaleKey.trim() !== "" && !/^tskey-[A-Za-z0-9_-]+$/.test(form.tailscaleKey.trim()),
+  );
+  const ready = $derived(
+    nameOk && host && /^wss?:\/\//.test(serverUrl) && !wifiErrors.some(Boolean) && !keyBad,
+  );
   const localOnly = $derived(info && ["127.0.0.1", "localhost", "::1"].includes(info.listening));
   const replacing = $derived(enrolled?.some((d) => d.device_id === form.device_id));
   const updating = $derived(replacing && form.keep);
@@ -120,6 +127,8 @@
       wifi: form.wifi.filter((w) => w.ssid.trim()).map((w) => ({ ssid: w.ssid.trim(), password: w.password || null })),
       password: form.password || null,
       keep_token: Boolean(updating),
+      tailscale: form.tailscale,
+      tailscale_auth_key: (form.tailscale && form.tailscaleKey.trim()) || null,
     };
     try {
       const { job: id } = await api("/edge/install", {
@@ -145,6 +154,7 @@
       }
       if (job.state !== "running") {
         form.password = "";
+        form.tailscaleKey = "";
         for (const w of form.wifi) w.password = "";
         loadEnrolled();
         return;
@@ -154,6 +164,11 @@
   }
 
   const MARK = { run: "…", ok: "✓", warn: "!", fail: "✗" };
+
+  // A step's detail as text and links (the Tailscale login link must be clickable).
+  function parts(detail) {
+    return detail.split(/(https:\/\/\S+)/).map((text, i) => ({ text, link: i % 2 === 1 }));
+  }
 
   // Tailscale addresses (100.64.0.0/10) reach the server from anywhere on the tailnet.
   function tailnet(url) {
@@ -333,6 +348,30 @@
       <span class="muted small">Home Wi-Fi and your phone's hotspot. The first one is preferred. Networks the board knows already are kept.</span>
     </div>
 
+    <span class="label">Tailscale</span>
+    <div>
+      <label class="keep">
+        <input type="checkbox" bind:checked={form.tailscale} disabled={installing} />
+        Put the board on Tailscale, so it reaches this server from anywhere
+      </label>
+      {#if form.tailscale}
+        <input type="password" bind:value={form.tailscaleKey} placeholder="auth key (empty: a login link)" autocomplete="off" spellcheck="false" disabled={installing} />
+        {#if keyBad}<span class="err small">an auth key starts with tskey-</span>{/if}
+        <span class="muted small">
+          The board needs Internet for it (one of the Wi-Fi networks above in reach). Without a key, a link shows
+          below while it is set up: open it and approve the board in your Tailscale account. A key (Tailscale admin
+          console, Settings, Keys) needs no link. Tailscale is copied to the board if it has none (about 70 MB).
+        </span>
+        {#if info && !info.tailscale_urls?.length}
+          <span class="err small">This server is not on Tailscale itself: install it here too and sign in to the
+            same account, or the board cannot reach it that way.</span>
+        {:else if info}
+          <span class="muted small">The board also tries this server's Tailscale address,
+            <code>{info.tailscale_urls[0]}</code>.</span>
+        {/if}
+      {/if}
+    </div>
+
     <label for="b-pass">Board password</label>
     <div>
       <input id="b-pass" type="password" bind:value={form.password} placeholder="empty: the stock one (root)" autocomplete="off" disabled={installing} />
@@ -351,7 +390,7 @@
         <li class={s.status}>
           <span class="mark">{MARK[s.status] ?? ""}</span>
           <strong>{s.step}</strong>
-          {#if s.detail}<pre>{s.detail}</pre>{/if}
+          {#if s.detail}<pre>{#each parts(s.detail) as p}{#if p.link}<a href={p.text} target="_blank" rel="noopener noreferrer">{p.text}</a>{:else}{p.text}{/if}{/each}</pre>{/if}
         </li>
       {/each}
     </ol>
