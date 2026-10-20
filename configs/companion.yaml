@@ -15,6 +15,11 @@ server:
   # they only answer this machine; the device token above never grants access.
   admin_token_env: COMPANION_ADMIN_TOKEN
   dashboard_conversation: false  # show transcripts and replies on the dashboard
+  # A read-only page at /view/ for phones on this machine's Tailscale network:
+  # the conversation and what the devices' cameras see. See docs/remote-access.md.
+  viewer:
+    enabled: false
+    cameras: true
   # For boards outside this network (router port forward or IPv6): a second
   # listener with TLS that serves only devices with their own tokens, never the
   # dashboard. See docs/remote-access.md.
