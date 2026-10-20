@@ -8,13 +8,22 @@ connected through now cannot be removed remotely (that would cut it off).
 
 from __future__ import annotations
 
+import os
 import re
+import signal
 import subprocess
+import sys
+import time
 from pathlib import Path
 from typing import Any
 
 CONFIG = Path("/etc/wpa_supplicant.conf")
 BOOT_COPY = Path("/boot/wpa_supplicant.conf")
+INTERFACE = "wlan0"
+PROC = Path("/proc")
+# udhcpc: SIGUSR2 releases the lease, SIGUSR1 renews (Linux numbers where Python lacks them).
+RELEASE = getattr(signal, "SIGUSR2", 12)
+RENEW = getattr(signal, "SIGUSR1", 10)
 _NETWORK = re.compile(r"network=\{(.*?)\n\s*\}", re.S)
 
 
@@ -54,6 +63,62 @@ def current_ssid() -> str | None:
         return None
     match = re.search(r"^ssid=(.*)$", out, re.M)
     return match[1] if match else None
+
+
+def link(interface: str = INTERFACE) -> str | None:
+    """The network the board is connected to (wpa_state COMPLETED), or None."""
+    try:
+        out = subprocess.run(
+            ["wpa_cli", "-i", interface, "status"], capture_output=True, text=True, timeout=5
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
+        return None
+    if not re.search(r"^wpa_state=COMPLETED$", out, re.M):
+        return None
+    match = re.search(r"^ssid=(.*)$", out, re.M)
+    return match[1] if match else None
+
+
+def dhcp_clients(interface: str = INTERFACE, proc: Path | None = None) -> list[int]:
+    """The udhcpc processes that look after ``interface``."""
+    pids = []
+    for entry in (proc or PROC).iterdir():
+        if not entry.name.isdigit():
+            continue
+        try:
+            args = (entry / "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        names = [os.path.basename(a.decode(errors="replace")) for a in args if a]
+        if names and names[0] == "udhcpc" and any(interface in a for a in names[1:]):
+            pids.append(int(entry.name))
+    return pids
+
+
+def renew_address(interface: str = INTERFACE) -> int:
+    """Have udhcpc give up the address it has and ask the network for a new one.
+
+    Moved to another network, wpa_supplicant does not tell udhcpc, which keeps
+    the old network's lease (and only renews it with that network's server), so
+    the board is cut off. SIGUSR2 releases the lease, SIGUSR1 then asks afresh
+    (a DISCOVER). The pause between them matters: pending signals are delivered
+    lowest number first, so sent together the renew would come before the release.
+    Returns how many udhcpc processes were asked.
+    """
+    pids = dhcp_clients(interface)
+    for pid in pids:
+        try:
+            os.kill(pid, RELEASE)
+        except OSError:
+            pass
+    if pids:
+        time.sleep(1.0)
+    for pid in pids:
+        try:
+            os.kill(pid, RENEW)
+        except OSError:
+            pass
+    return len(pids)
 
 
 def render(add: list[dict[str, Any]], keep: list[tuple[str, str]]) -> str:
@@ -113,3 +178,21 @@ def change(
             ["wpa_cli", "-i", "wlan0", "reconfigure"], capture_output=True, timeout=10, check=False
         )
     return state(config)
+
+
+def main(argv: list[str] | None = None) -> int:
+    """For the server's installer over SSH: ``link`` prints the network, ``renew``
+    asks udhcpc for a new address (printing how many it asked)."""
+    args = sys.argv[1:] if argv is None else argv
+    if args == ["link"]:
+        print(link() or "")
+    elif args == ["renew"]:
+        print(renew_address())
+    else:
+        print("usage: python3 -m companion_edge.wifi link|renew", file=sys.stderr)
+        return 2
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
