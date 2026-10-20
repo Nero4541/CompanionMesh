@@ -152,7 +152,22 @@ def apply_update(current: EdgeConfig, update: dict[str, Any]) -> EdgeConfig:
     return replace(current, **changes)
 
 
+def with_server(current: EdgeConfig, url: str) -> EdgeConfig:
+    """``current`` also trying ``url``, after the addresses it has.
+
+    Not a remote setting (the addresses are read-only): the device adds the
+    server's Tailscale address itself once it has joined the tailnet, so the
+    address it reaches the server by now stays first.
+    """
+    urls = current.server_urls()
+    if url in urls:
+        return current
+    return replace(current, servers=[*urls, url])
+
+
 def _toml_value(value: Any) -> str:
+    if isinstance(value, list):
+        return "[" + ", ".join(_toml_value(v) for v in value) + "]"
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (int, float)):
