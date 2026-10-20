@@ -112,6 +112,8 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
             | ev.DEVICE_UPDATE_RESULT
             | ev.DEVICE_RESTART_RESULT
             | ev.DEVICE_WIFI_RESULT
+            | ev.DEVICE_BLUETOOTH_RESULT
+            | ev.DEVICE_TAILSCALE_RESULT
         ):
             waiting = device.settings_requests.pop(str(payload.get("request_id")), None)
             if waiting is not None and not waiting.done():
