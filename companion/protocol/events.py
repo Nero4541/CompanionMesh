@@ -1,4 +1,4 @@
-"""Event type names of the realtime protocol (1.2).
+"""Event type names of the realtime protocol (1.3).
 
 Client -> server
     session.start            payload: {session_id?, join?, roles?}
@@ -57,6 +57,17 @@ Client -> server
     device.restart.result    payload: {request_id, ok}  (1.2)
     device.wifi.result       payload: {request_id, ok, networks: [ssid], current, error?}
                              (1.2) answer to device.wifi.set
+    device.bluetooth.result  payload: {request_id, ok, error?, controller, tools,
+                             speaker: {address, name, paired, connected} | null,
+                             devices: [{address, name, paired, connected}],
+                             found?: [{address, name, paired}], pcm, output_device,
+                             restarting}  (1.3) answer to device.bluetooth; restarting:
+                             the device plays to another output now and reconnects
+    device.tailscale.result  payload: {request_id, ok, error?, installed, arch, machine,
+                             running, state, auth_url, ips, hostname, dns_name, tailnet,
+                             version, tun, joining, server_added, through_tailscale,
+                             servers}  (1.3) answer to device.tailscale; state is
+                             Tailscale's (NeedsLogin, Starting, Running, ...)
 
 Server -> client
     session.started          payload: {session_id, history, protocol, devices, ...}
@@ -112,9 +123,21 @@ Server -> client
     device.wifi.set          payload: {request_id, add: [{ssid, psk?}], remove: [ssid]}
                              (1.2) psk is the 64-hex-digit WPA key, never the password;
                              both lists empty: just report the networks
+    device.bluetooth         payload: {request_id, action, address?, seconds?}  (1.3)
+                             action: state | scan (seconds, then also report what is
+                             in reach) | pair (pair, trust and connect the speaker at
+                             address; play to it) | remove (forget address; if it was
+                             the speaker, play to the output from before)
+    device.tailscale         payload: {request_id, action, package?, sha256?, auth_key?,
+                             server_url?}  (1.3) action: state | install (download
+                             GET /v1/edge/tailscale/<package> from this server, check
+                             it, install it, then join) | up (join; without auth_key
+                             the answer carries the login link) | logout. server_url:
+                             the server's Tailscale address, which the device adds to
+                             its addresses once it is on the tailnet
 """
 
-PROTOCOL_VERSION = "1.2"
+PROTOCOL_VERSION = "1.3"
 
 # client -> server
 SESSION_START = "session.start"
@@ -140,6 +163,8 @@ DEVICE_DIAGNOSTICS = "device.diagnostics"
 DEVICE_UPDATE_RESULT = "device.update.result"
 DEVICE_RESTART_RESULT = "device.restart.result"
 DEVICE_WIFI_RESULT = "device.wifi.result"
+DEVICE_BLUETOOTH_RESULT = "device.bluetooth.result"
+DEVICE_TAILSCALE_RESULT = "device.tailscale.result"
 
 # server -> client
 SESSION_STARTED = "session.started"
@@ -170,4 +195,6 @@ DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
 DEVICE_UPDATE = "device.update"
 DEVICE_RESTART = "device.restart"
 DEVICE_WIFI_SET = "device.wifi.set"
+DEVICE_BLUETOOTH = "device.bluetooth"
+DEVICE_TAILSCALE = "device.tailscale"
 CAMERA_LIVE = "camera.live"
