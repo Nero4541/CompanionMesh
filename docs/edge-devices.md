@@ -19,6 +19,8 @@ For a LicheeRV Nano (or another board whose image logs in as `root` over SSH and
 
 **Set up** logs in over SSH (the stock password, or one you give), puts this server's own SSH key on the board and replaces the stock root password with a random one (shown under **Boards**: the stock one is public and the board goes outdoors); a password of the board's own, or one this server set before, stays as it is. It gives the board a **token of its own**, copies this server's edge client to it (the board needs no Internet), writes `edge.toml` from the profile (a board set up before keeps its settings; a reflashed one gets back the settings it last reported), adds the Wi-Fi networks with their keys hashed (also on the boot partition, where Sipeed's image reads them from), installs a service that starts at boot and restarts the client if it stops, checks the tools and starts it. The same from a terminal: `uv run companion edge install --name walker --wifi "Home" --wifi "Phone"` (`uv run companion edge discover` lists boards on USB).
 
+Tick **Put the board on Tailscale** to have it reach this server from anywhere (see [Reaching the server from outside](remote-access.md)): the board needs Internet for it, through one of the Wi-Fi networks in the form. Tailscale is copied to it if it has none (this server downloads the static build from pkgs.tailscale.com and checks it), and it joins your tailnet with an auth key if you give one, or else through a link that shows under the step: open it and approve the board. It then also tries this server's Tailscale address. From a terminal: `--tailscale`.
+
 To change a board that was set up before but cannot connect (a new Wi-Fi network, another server address) or to bring its software up to date without the network, plug it in again and press **Update over USB** under **Boards** (or `uv run companion edge update --name walker --wifi "New network"`): it keeps the board's token and password and only updates its software, settings and Wi-Fi networks.
 
 A board's own token works only for its name. **Lock out** under **Boards** makes it stop working at once and closes the board's connection, for example when a board is lost; set the board up again to let it back in.
@@ -77,7 +79,7 @@ What the edge client does:
 - **Network loss:** reconnects with exponential backoff, resumes the same session (the id is stored on disk), and keeps at most `buffer_s` seconds of microphone audio while offline. The server keeps the session for `server.session_linger_s` (60 s) after the last device drops and replays what the device missed, e.g. a reply that finished meanwhile.
 - **Heartbeat:** `device.status` every `heartbeat_s` with CPU temperature, free memory, Wi-Fi signal, uptime and buffer level; `/v1/status` lists every connected device with its latest status.
 
-**Bluetooth speakers** work through [bluez-alsa](https://github.com/arkq/bluez-alsa): pair the speaker with `bluetoothctl`, run `bluealsa -p a2dp-source`, and point `output_device` at an ALSA PCM for it, e.g. in `~/.asoundrc`:
+**Bluetooth speakers** work through [bluez-alsa](https://github.com/arkq/bluez-alsa). The easiest way is the device's **Maintenance** tab (see below), which pairs the speaker and sets everything up. By hand: pair the speaker with `bluetoothctl`, run `bluealsa -p a2dp-source`, and point `output_device` at an ALSA PCM for it, e.g. in `~/.asoundrc`:
 
 ```text
 pcm.speaker {
@@ -92,11 +94,13 @@ The protocol has nothing board-specific: any client that speaks it (another SBC,
 
 ## Looking after boards
 
-Everything below works wherever the board is, over its own connection (companion-edge 1.2):
+Everything below works wherever the board is, over its own connection (companion-edge 1.2; Bluetooth and Tailscale 1.3):
 
 - **Log** (Devices → Log): what the board logged, including what it logged while offline (sent when it is back), kept per board in `data/devices/<id>/edge.log` also after it disconnects.
 - **Diagnostics**: versions, its own checks, memory, disk, network, Wi-Fi and kernel messages, from a fixed list of read-only commands (there is no remote shell).
 - **Camera**: its newest picture, **Take a picture now**, and **Live**: pictures in a row while you watch (as fast as the board manages, at most 2 a second; about one a second on a LicheeRV Nano), which stop by themselves soon after you leave the page. Live pictures only update the view; they do not go to the agent.
 - **Maintenance**: **Update** to the edge client this server has (downloaded from the server, checked, installed next to the old one; if the new version cannot connect after three starts, the board goes back to the old one by itself), restart the client or reboot the board, add and remove Wi-Fi networks (not the one it uses now), and speaker and microphone tests.
+- **Bluetooth speaker** (Maintenance): put the speaker in pairing mode, press **Look for speakers** and **Pair**, or type its address (some boards, the LicheeRV Nano among them, find nothing when looking but pair by address). The board pairs, trusts and connects it, defines the ALSA device `bluetooth` in `/etc/asound.conf`, plays through it with a 300 ms lead-in from then on, and keeps it connected, also after a reboot or when the speaker was off (`bluetooth.sh` next to `edge.toml`, started at boot; it also turns Wi-Fi power saving off, which makes Bluetooth audio stutter on boards where both share a chip). **Forget** goes back to the output it had before. The board needs BlueZ and bluez-alsa (Sipeed's LicheeRV Nano image has both).
+- **Tailscale** (Maintenance): whether the board is on a tailnet, as which name and address; **Install and join** (or **Join**) puts it on, with an auth key or through a login link that shows on the page. Once on, it also tries this server's Tailscale address, so it reaches it away from home. **Leave the tailnet** takes it off, but not while it reaches this server through Tailscale.
 
 When a board cannot connect at all, plug it in by USB and run `uv run companion edge doctor`: it shows the board's version, whether the client runs, its checks, settings, log, Wi-Fi and clock. Set it up again to fix settings or Wi-Fi.
