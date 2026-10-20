@@ -26,6 +26,12 @@ A board carried outdoors (on your phone's hotspot or mobile data) is outside the
 
 Keep `server.host: 0.0.0.0` (or set it to the Tailscale address) and the device token, as for any network.
 
+## Following on your phone
+
+With Tailscale on the server and on your phone (same account), turn on `server.viewer.enabled` (Configuration, applies at once) and open `http://<the server's Tailscale address>:8765/view/` on the phone; the dashboard's **Conversations** page shows the address. It is a read-only page: the conversation as it happens (newest first) and the connected devices, with what their cameras see (the newest picture, and **Live** for about one a second while you watch; `server.viewer.cameras: false` leaves the cameras out). It cannot change anything.
+
+Only devices on the tailnet get in, and only at the server's Tailscale address: everyone else, on your home network too, is refused. Tailscale is what checks who they are, so anyone you share the server with in your tailnet sees it as well. The server must listen beyond this machine (`server.host: 0.0.0.0`, as for boards). The words are kept on the server while the viewer is on, even with `server.dashboard_conversation` off (the dashboard still does not show them then).
+
 ## When the server also runs a VPN
 
 If the server's computer uses another VPN (Surfshark, NordVPN, ProtonVPN and the like), for privacy or to change its location often, Tailscale and that VPN have to share the machine. Without the steps below they get in each other's way: the VPN may not connect at all ("an issue with your connection"), or Tailscale reaches nothing while the VPN is on. On the server's computer:
