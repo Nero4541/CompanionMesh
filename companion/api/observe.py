@@ -3,12 +3,14 @@
 - device logs (``device.log``) and diagnostics (``device.diagnostics``);
 - the newest frame of each camera, and asking it for a fresh one;
 - the conversation and the recordings of what was heard, when the settings
-  ``server.dashboard_conversation`` / ``stt.keep_audio`` allow it;
+  ``server.dashboard_conversation`` / ``stt.keep_audio`` allow it, and where
+  phones open the tailnet's read-only page (``server.viewer``);
 - images kept by ``vision.store_images``.
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 import time
 from typing import Any
@@ -147,9 +149,23 @@ async def capture(request: Request, device_id: str) -> dict[str, Any]:
 @router.get("/conversation")
 async def conversation(request: Request, after: int = 0) -> dict[str, Any]:
     runtime = _runtime(request)
+    enabled = runtime.config.server.dashboard_conversation
+    return {"enabled": enabled, "lines": runtime.feed.conversation(after=after) if enabled else []}
+
+
+@router.get("/viewer")
+async def viewer(request: Request) -> dict[str, Any]:
+    """The tailnet's read-only page (server.viewer): on or off, and where phones open it."""
+    from companion import edge_install
+
+    runtime = _runtime(request)
+    settings = runtime.config.server
+    addresses = await asyncio.to_thread(edge_install.tailscale_addresses)
     return {
-        "enabled": runtime.config.server.dashboard_conversation,
-        "lines": runtime.feed.conversation(after=after),
+        "enabled": settings.viewer.enabled,
+        "cameras": settings.viewer.cameras,
+        "listening": settings.host,
+        "urls": [f"http://{a}:{settings.port}/view/" for a in addresses],
     }
 
 
