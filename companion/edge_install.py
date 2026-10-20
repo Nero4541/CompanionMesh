@@ -77,6 +77,10 @@ DIR={BOARD_DIR}
 set -a
 . "$DIR/edge.env"
 set +a
+# Started at boot, HOME is / (Buildroot's init) or unset (systemd), and ALSA
+# reads ~/.asoundrc (a Bluetooth speaker's name, say) from HOME: the client runs
+# as root, so it is root's.
+export HOME=/root
 child=
 trap 'kill "$child" 2>/dev/null; wait "$child"; exit 0' TERM INT
 while true; do
@@ -635,6 +639,28 @@ async def _board_token(board: Board, registry: DeviceRegistry, device_id: str) -
     return match[1]
 
 
+WIFI_SETTLE_S = 20.0  # how long the installer waits for Wi-Fi to connect after a change
+
+
+async def _board_wifi(board: Board, command: str) -> str:
+    """The edge client's Wi-Fi helper on the board: ``link`` (the network) or ``renew``."""
+    out = await board.run(
+        f"cd {BOARD_DIR}/current && python3 -m companion_edge.wifi {command}", check=False
+    )
+    lines = out.strip().splitlines()
+    return lines[-1].strip() if lines and "Traceback" not in out else ""
+
+
+async def _wifi_settled(board: Board) -> str:
+    """The network the board connects to after a change, once it has (or "")."""
+    deadline = time.monotonic() + WIFI_SETTLE_S
+    while True:
+        await asyncio.sleep(3.0)  # reconfigure first drops the network it had
+        now = await _board_wifi(board, "link")
+        if now or time.monotonic() >= deadline:
+            return now
+
+
 TAILSCALE_LOGIN_S = 300.0  # how long the installer waits for someone to open the login link
 
 
@@ -881,13 +907,23 @@ async def install(
             if boot:  # Sipeed's image copies it from the boot partition at every start
                 await board.write("/boot/wpa_supplicant.conf", config, mode=0o600)
                 await board.run("touch /boot/wifi.sta", check=False)
+            before = await _board_wifi(board, "link")
             await board.run(
                 "wpa_cli -i wlan0 reconfigure >/dev/null 2>&1 || "
                 "(test -x /etc/init.d/S30wifi && "
                 "/etc/init.d/S30wifi restart >/dev/null 2>&1) || true",
                 check=False,
             )
-            report("wifi", "ok", "saved" + (" (also on the boot partition)" if boot else ""))
+            now = await _wifi_settled(board)
+            detail = "saved" + (" (also on the boot partition)" if boot else "")
+            if now and now != before:
+                # udhcpc keeps the old network's address when the network changes:
+                # ask it for a new one (only then, not to drop an SSH session over Wi-Fi).
+                await _board_wifi(board, "renew")
+                detail += f"; connected to {now}, with a new address"
+            elif now:
+                detail += f"; connected to {now}"
+            report("wifi", "ok", detail)
 
         if plan.tailscale:
             try:
