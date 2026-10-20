@@ -146,7 +146,13 @@ class CompanionRuntime:
         providers = providers or Providers()
         self.config = config
         self.bus = EventBus()
-        self.feed = AdminFeed(self.bus, show_text=lambda: self.config.server.dashboard_conversation)
+        self.feed = AdminFeed(
+            self.bus,
+            show_text=lambda: self.config.server.dashboard_conversation,
+            keep_said=lambda: (
+                self.config.server.dashboard_conversation or self.config.server.viewer.enabled
+            ),
+        )
         self.store: TranscriptStore = build_store(config)
         self.persona: Persona = load_persona(config.personas_dir, config.agent.persona)
         self.agent: AgentBackend = providers.agent or build_agent(config, self.store)
