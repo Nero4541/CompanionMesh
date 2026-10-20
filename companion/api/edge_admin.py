@@ -77,6 +77,11 @@ async def version() -> dict[str, Any]:
     return {"version": edge_install.edge_version()}
 
 
+def _tailscale_urls(runtime: CompanionRuntime) -> list[str]:
+    port = runtime.config.server.port
+    return [f"ws://{a}:{port}/v1/realtime" for a in edge_install.tailscale_addresses()]
+
+
 @router.get("/setup")
 async def setup_info(request: Request, scan: bool = True) -> dict[str, Any]:
     """What the Add device form offers: boards on USB, server URLs, profiles."""
@@ -87,6 +92,7 @@ async def setup_info(request: Request, scan: bool = True) -> dict[str, Any]:
     return {
         "boards": boards,
         "server_urls": [f"ws://{a}:{port}/v1/realtime" for a in addresses],
+        "tailscale_urls": await asyncio.to_thread(_tailscale_urls, runtime),
         "profiles": edge_install.profiles(),
         "edge_version": edge_install.edge_version(),
         "listening": runtime.config.server.host,
@@ -166,6 +172,8 @@ class InstallBody(BaseModel):
     wifi: list[WifiBody] = Field(default_factory=list)
     password: str | None = None
     keep_token: bool = False  # update a board set up before (software, settings, Wi-Fi)
+    tailscale: bool = False  # put it on Tailscale (an auth key, or a login link)
+    tailscale_auth_key: str | None = Field(default=None, pattern=r"^tskey-[A-Za-z0-9_-]+$")
 
 
 @router.post("/install", status_code=202)
@@ -202,6 +210,9 @@ async def start_install(request: Request, body: InstallBody) -> dict[str, Any]:
         wifi=[edge_install.WifiNetwork(n.ssid, n.password or None) for n in body.wifi],
         password=body.password or None,
         keep_token=body.keep_token,
+        tailscale=body.tailscale,
+        tailscale_auth_key=body.tailscale_auth_key or None,
+        tailscale_url=next(iter(_tailscale_urls(runtime)), None),
     )
     job = Job(id=uuid.uuid4().hex[:12], device_id=body.device_id, host=body.host)
 
