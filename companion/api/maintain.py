@@ -1,8 +1,9 @@
 """Admin API for looking after devices remotely (/v1/admin/devices/{id}/...).
 
 Update the edge client, restart it or the whole board, change its Wi-Fi
-networks, and test its speaker and microphone. All of it travels over the
-device's own connection (protocol 1.2), so it works wherever the device is.
+networks, pair a Bluetooth speaker, put it on Tailscale, and test its speaker
+and microphone. All of it travels over the device's own connection (protocol
+1.2, Bluetooth and Tailscale 1.3), so it works wherever the device is.
 """
 
 from __future__ import annotations
@@ -19,15 +20,16 @@ from companion.core.runtime import CompanionRuntime
 router = APIRouter(prefix="/v1/admin/devices", dependencies=[Depends(require_admin)])
 
 OLD_DEVICE = "the device did not answer (companion-edge 1.2 or newer does)"
+NEWER_DEVICE = "the device did not answer: update it first (companion-edge 1.3 or newer does)"
 
 
 def _runtime(request: Request) -> CompanionRuntime:
     return request.app.state.runtime
 
 
-def _error(exc: Exception) -> HTTPException:
+def _error(exc: Exception, old: str = OLD_DEVICE) -> HTTPException:
     if isinstance(exc, TimeoutError):
-        return HTTPException(status_code=504, detail=OLD_DEVICE)
+        return HTTPException(status_code=504, detail=old)
     if isinstance(exc, CompanionError):
         return HTTPException(
             status_code=404 if exc.code == "not_connected" else 409, detail=str(exc)
@@ -94,6 +96,99 @@ async def change_wifi(request: Request, device_id: str, body: WifiBody) -> dict[
     except (TimeoutError, CompanionError) as exc:
         raise _error(exc) from exc
     return _refused(result)
+
+
+Address = Field(pattern=r"^[0-9A-Fa-f]{2}([:-][0-9A-Fa-f]{2}){5}$")
+
+
+class ScanBody(BaseModel):
+    seconds: float = Field(default=10.0, ge=3, le=30)
+
+
+class BluetoothDeviceBody(BaseModel):
+    address: str = Address
+
+
+@router.get("/{device_id}/bluetooth")
+async def bluetooth(request: Request, device_id: str) -> dict[str, Any]:
+    try:
+        return _refused(await _runtime(request).device_bluetooth(device_id, "state"))
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
+
+
+@router.post("/{device_id}/bluetooth/scan")
+async def bluetooth_scan(request: Request, device_id: str, body: ScanBody) -> dict[str, Any]:
+    """What is in reach: a speaker shows only while it is in pairing mode."""
+    try:
+        return _refused(
+            await _runtime(request).device_bluetooth(device_id, "scan", seconds=body.seconds)
+        )
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
+
+
+@router.post("/{device_id}/bluetooth/pair")
+async def bluetooth_pair(
+    request: Request, device_id: str, body: BluetoothDeviceBody
+) -> dict[str, Any]:
+    """Pair, trust and connect a speaker; the device plays through it from now on."""
+    try:
+        return _refused(
+            await _runtime(request).device_bluetooth(device_id, "pair", address=body.address)
+        )
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
+
+
+@router.post("/{device_id}/bluetooth/remove")
+async def bluetooth_remove(
+    request: Request, device_id: str, body: BluetoothDeviceBody
+) -> dict[str, Any]:
+    """Forget a device; for the speaker, the device goes back to its output from before."""
+    try:
+        return _refused(
+            await _runtime(request).device_bluetooth(device_id, "remove", address=body.address)
+        )
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
+
+
+class TailscaleBody(BaseModel):
+    # From the Tailscale admin console (Settings, Keys); empty: a login link instead.
+    auth_key: str | None = Field(default=None, pattern=r"^tskey-[A-Za-z0-9_-]+$")
+
+
+@router.get("/{device_id}/tailscale")
+async def tailscale_state(request: Request, device_id: str) -> dict[str, Any]:
+    try:
+        return _refused(await _runtime(request).device_tailscale(device_id, "state"))
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
+
+
+@router.post("/{device_id}/tailscale")
+async def tailscale_up(request: Request, device_id: str, body: TailscaleBody) -> dict[str, Any]:
+    """Put the device on Tailscale (installing it first if it has none)."""
+    from companion.tailscale import PackageError
+
+    try:
+        result = await _runtime(request).device_tailscale(
+            device_id, "up", auth_key=body.auth_key or None
+        )
+    except PackageError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
+    return _refused(result)
+
+
+@router.post("/{device_id}/tailscale/logout")
+async def tailscale_logout(request: Request, device_id: str) -> dict[str, Any]:
+    try:
+        return _refused(await _runtime(request).device_tailscale(device_id, "logout"))
+    except (TimeoutError, CompanionError) as exc:
+        raise _error(exc, NEWER_DEVICE) from exc
 
 
 class SpeakerBody(BaseModel):
