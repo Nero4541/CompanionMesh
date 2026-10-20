@@ -67,6 +67,7 @@ LOG_SHIP_S = 2.0  # how often new log lines go to the server
 CONNECT_TIMEOUT_S = 10.0  # per address, so the next one is tried soon
 LIVE_MAX_S = 60.0  # one camera.live keeps pictures coming at most this long
 UNREACHABLE_LOG_S = 600.0  # the same "server unreachable" is logged this rarely
+WIFI_CHECK_S = 5.0  # how often the Wi-Fi network is looked at (see _wifi_loop)
 UPDATE_CONNECT_S = 120.0  # a new version that cannot connect this long exits (see update.py)
 # websockets 14 renamed the argument for request headers.
 HEADERS_ARG = (
@@ -670,6 +671,28 @@ class EdgeClient:
         with contextlib.suppress(websockets.WebSocketException):
             await ws.send(protocol.text("device.wifi.result", result))
 
+    async def _wifi_loop(self) -> None:
+        """A new address whenever the board moves to another Wi-Fi network.
+
+        udhcpc keeps the old network's lease when wpa_supplicant switches (the
+        hotspot went away and home came in range, or networks were changed from
+        the dashboard), which cuts the board off until a reboot.
+        """
+        last: str | None = None
+        while True:
+            ssid = await asyncio.to_thread(wifi.link)
+            if ssid is not None:
+                if last is not None and ssid != last:
+                    asked = await asyncio.to_thread(wifi.renew_address)
+                    log.info(
+                        "Wi-Fi moved from %r to %r; asked %d DHCP client(s) for a new address",
+                        last,
+                        ssid,
+                        asked,
+                    )
+                last = ssid
+            await asyncio.sleep(WIFI_CHECK_S)
+
     def _files(self) -> Path:
         """Where the device keeps its own files: next to its edge.toml."""
         if self.config_path is None:
@@ -931,6 +954,8 @@ class EdgeClient:
         if self.camera is not None:
             await self.camera.start()
             tasks.append(asyncio.create_task(self._camera_loop()))
+        if wifi.CONFIG.is_file():
+            tasks.append(asyncio.create_task(self._wifi_loop()))
         backoff = 1.0
         waiting_logged = False
         last_reason, last_logged = "", 0.0
