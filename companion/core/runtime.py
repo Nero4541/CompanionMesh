@@ -51,6 +51,9 @@ log = logging.getLogger(__name__)
 DEVICE_CONFIG_TIMEOUT_S = 15.0
 DIAGNOSTICS_TIMEOUT_S = 30.0
 UPDATE_TIMEOUT_S = 180.0  # download and unpack on a slow board
+BLUETOOTH_TIMEOUT_S = 75.0  # find, pair, trust and connect a speaker
+TAILSCALE_TIMEOUT_S = 60.0  # start tailscaled and wait for a login link
+TAILSCALE_INSTALL_TIMEOUT_S = 900.0  # ~40 MB over a board's Wi-Fi, unpacked onto its SD card
 
 
 @dataclass
@@ -566,6 +569,74 @@ class CompanionRuntime:
                     "device_id": device_id,
                     "added": [n["ssid"] for n in add],
                     "removed": remove,
+                    **_brief(result),
+                },
+            )
+        return result
+
+    async def device_bluetooth(
+        self, device_id: str, action: str, *, address: str | None = None, seconds: float = 10.0
+    ) -> dict[str, Any]:
+        """A device's Bluetooth: state, scan, pair (its speaker from now on) or remove."""
+        payload: dict[str, Any] = {"action": action}
+        if address:
+            payload["address"] = address
+        if action == "scan":
+            payload["seconds"] = seconds
+        timeout = seconds + 20 if action == "scan" else BLUETOOTH_TIMEOUT_S
+        _, result = await self._ask_device(device_id, ev.DEVICE_BLUETOOTH, payload, timeout)
+        if action in ("pair", "remove"):
+            await self.notice(
+                "device_bluetooth",
+                {"device_id": device_id, "action": action, "address": address, **_brief(result)},
+            )
+        return result
+
+    async def device_tailscale(
+        self, device_id: str, action: str, *, auth_key: str | None = None
+    ) -> dict[str, Any]:
+        """A device's Tailscale: state, up (installing it first if needed) or logout.
+
+        The server's own Tailscale address goes along, so a device on the tailnet
+        adds it to the addresses it tries (and reaches this server when away).
+        """
+        from companion import edge_install, tailscale
+
+        addresses = await asyncio.to_thread(edge_install.tailscale_addresses)
+        common: dict[str, Any] = {}
+        if addresses:
+            common["server_url"] = f"ws://{addresses[0]}:{self.config.server.port}/v1/realtime"
+        payload: dict[str, Any] = {"action": action, **common}
+        timeout = TAILSCALE_TIMEOUT_S
+        if action == "up":
+            _, state = await self._ask_device(
+                device_id,
+                ev.DEVICE_TAILSCALE,
+                {"action": "state", **common},
+                DEVICE_CONFIG_TIMEOUT_S,
+            )
+            if not state.get("ok"):
+                return state
+            if not state.get("installed"):
+                arch = state.get("arch")
+                if not arch:
+                    raise CompanionError(
+                        f"Tailscale has no build for this board ({state.get('machine')})",
+                        code="unsupported",
+                    )
+                package = await tailscale.package(str(arch), self.config.storage.data_dir)
+                payload.update(action="install", package=package.name, sha256=package.sha256)
+                timeout = TAILSCALE_INSTALL_TIMEOUT_S
+            if auth_key:
+                payload["auth_key"] = auth_key
+        _, result = await self._ask_device(device_id, ev.DEVICE_TAILSCALE, payload, timeout)
+        if action in ("up", "logout"):
+            await self.notice(
+                "device_tailscale",
+                {
+                    "device_id": device_id,
+                    "action": payload["action"],
+                    "state": result.get("state"),
                     **_brief(result),
                 },
             )
