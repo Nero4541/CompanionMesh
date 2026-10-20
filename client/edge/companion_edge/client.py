@@ -15,9 +15,11 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import ipaddress
 import json
 import logging
 import os
+import re
 import ssl
 import time
 import uuid
@@ -30,11 +32,13 @@ import websockets
 
 from companion_edge import (
     __version__,
+    bluetooth,
     diagnostics,
     logship,
     protocol,
     settings,
     status,
+    tailscale,
     update,
     wifi,
 )
@@ -542,6 +546,10 @@ class EdgeClient:
             self._start_live(p)
         elif kind == "device.wifi.set":
             self._spawn(self._change_wifi(self.ws, p))
+        elif kind == "device.bluetooth":
+            self._spawn(self._bluetooth(self.ws, p))
+        elif kind == "device.tailscale":
+            self._spawn(self._tailscale(self.ws, p))
         elif kind == "device.config.set":
             await self._apply_settings(p)
             if self.restart_requested:
@@ -661,6 +669,144 @@ class EdgeClient:
             result.update(ok=False, error=str(exc))
         with contextlib.suppress(websockets.WebSocketException):
             await ws.send(protocol.text("device.wifi.result", result))
+
+    def _files(self) -> Path:
+        """Where the device keeps its own files: next to its edge.toml."""
+        if self.config_path is None:
+            raise ValueError("started without --config, so there is no folder to keep it in")
+        return self.config_path.parent
+
+    def _use_output(self, device: str, lead_in_ms: int) -> bool:
+        """Play to another ALSA device from now on; True if that needs a restart."""
+        if self.config_path is None:
+            return False
+        new = settings.apply_update(
+            self.config, {"audio": {"output_device": device, "output_lead_in_ms": lead_in_ms}}
+        )
+        if settings.to_dict(new) == settings.to_dict(self.config):
+            return False
+        settings.save(self.config_path, self.config, new)
+        return True
+
+    async def _bluetooth(self, ws: Any, p: dict[str, Any]) -> None:
+        """device.bluetooth: list, scan, pair (and play to) or forget a speaker."""
+        result: dict[str, Any] = {"request_id": p.get("request_id"), "ok": True}
+        action = str(p.get("action") or "state")
+        address = str(p.get("address") or "")
+        restart = False
+        try:
+            audio = self.config.audio
+            if action == "scan":
+                seconds = min(max(float(p.get("seconds") or 10), 3.0), 30.0)
+                result["found"] = await asyncio.to_thread(bluetooth.scan, seconds)
+            if action == "pair":
+                state = await asyncio.to_thread(
+                    bluetooth.pair,
+                    address,
+                    self._files(),
+                    previous_output=audio.output_device,
+                    previous_lead_in=audio.output_lead_in_ms,
+                )
+                log.info("paired the Bluetooth speaker %s", address)
+                lead_in = max(audio.output_lead_in_ms, bluetooth.LEAD_IN_MS)
+                restart = await asyncio.to_thread(self._use_output, bluetooth.PCM, lead_in)
+            elif action == "remove":
+                state, before = await asyncio.to_thread(bluetooth.remove, address, self._files())
+                log.info("forgot the Bluetooth device %s", address)
+                if before and audio.output_device == bluetooth.PCM:
+                    restart = await asyncio.to_thread(
+                        self._use_output,
+                        str(before.get("previous_output") or "default"),
+                        int(before.get("previous_lead_in_ms") or 0),
+                    )
+            else:
+                base = self.config_path.parent if self.config_path else Path.cwd()
+                state = await asyncio.to_thread(bluetooth.state, base)
+            result.update(state)
+        except (bluetooth.BluetoothError, OSError, ValueError) as exc:
+            result.update(ok=False, error=str(exc))
+            log.warning("Bluetooth %s failed: %s", action, exc)
+        result["output_device"] = self.config.audio.output_device
+        result["restarting"] = restart
+        with contextlib.suppress(websockets.WebSocketException):
+            await ws.send(protocol.text("device.bluetooth.result", result))
+        if restart:
+            log.info("speaker output changed; restarting with it")
+            self.restart_requested = True
+            await ws.close()
+
+    def _through_tailscale(self) -> bool:
+        """Whether the server is reached through Tailscale (a 100.64.0.0/10 address) now."""
+        match = re.match(r"^wss?://\[?([^\]/]+?)\]?(:\d+)?/", self.route or "")
+        try:
+            return match is not None and ipaddress.ip_address(match[1]) in ipaddress.ip_network(
+                "100.64.0.0/10"
+            )
+        except ValueError:
+            return False
+
+    def _add_server(self, url: Any, report: dict[str, Any]) -> bool:
+        """Joined: also try the server's Tailscale address from now on (also when away)."""
+        if not isinstance(url, str) or not url.startswith(("ws://", "wss://")):
+            return False
+        if report.get("state") != "Running" or url in self.config.server_urls():
+            return False
+        new = settings.with_server(self.config, url)
+        if self.config_path is not None:
+            settings.save(self.config_path, self.config, new)
+        self.config = new
+        log.info("the server's Tailscale address %s is tried too from now on", url)
+        return True
+
+    async def _tailscale(self, ws: Any, p: dict[str, Any]) -> None:
+        """device.tailscale: report, install (from this server) and join, or leave."""
+        result: dict[str, Any] = {"request_id": p.get("request_id"), "ok": True}
+        action = str(p.get("action") or "state")
+        try:
+            if action == "install":
+                name = str(p.get("package") or "")
+                if not tailscale.PACKAGE.match(name) or self.route is None:
+                    raise tailscale.TailscaleError(f"not a Tailscale package: {name!r}")
+                archive = self._files() / name
+                log.info("downloading %s from the server", name)
+                await asyncio.to_thread(
+                    tailscale.download,
+                    update.server_url(self.route, f"/v1/edge/tailscale/{name}"),
+                    self.config.token(),
+                    self._ssl_context(self.route),
+                    archive,
+                )
+                try:
+                    await asyncio.to_thread(tailscale.install, archive, str(p.get("sha256") or ""))
+                finally:
+                    archive.unlink(missing_ok=True)
+                log.info("installed Tailscale from %s", name)
+                action = "up"
+            if action == "up":
+                key = p.get("auth_key")
+                report = await asyncio.to_thread(
+                    tailscale.up, self.config.device_id, str(key) if key else None
+                )
+            elif action == "logout":
+                if self._through_tailscale():
+                    raise tailscale.TailscaleError(
+                        "the board reaches the server through Tailscale now; leaving would cut "
+                        "it off (do it over USB, or while it is on the home network)"
+                    )
+                report = await asyncio.to_thread(tailscale.logout)
+            else:
+                report = await asyncio.to_thread(tailscale.status)
+            result.update(report)
+            result["server_added"] = await asyncio.to_thread(
+                self._add_server, p.get("server_url"), report
+            )
+        except (tailscale.TailscaleError, update.UpdateError, OSError, ValueError) as exc:
+            result.update(ok=False, error=str(exc))
+            log.warning("Tailscale %s failed: %s", action, exc)
+        result["through_tailscale"] = self._through_tailscale()
+        result["servers"] = self.config.server_urls()
+        with contextlib.suppress(websockets.WebSocketException):
+            await ws.send(protocol.text("device.tailscale.result", result))
 
     async def _send_diagnostics(self, ws: Any, request_id: str) -> None:
         sections = await diagnostics.collect(self.config, self.config_path, self.log_file)
