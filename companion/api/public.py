@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 from companion import __version__
 from companion.api import realtime
 from companion.api.auth import Identity
-from companion.api.http import edge_package_response
+from companion.api.http import edge_package_response, tailscale_package_response
 from companion.core.config import PublicListenerConfig
 from companion.core.logging import kv
 from companion.core.runtime import CompanionRuntime
@@ -106,9 +106,7 @@ def create_public_app(runtime: CompanionRuntime) -> FastAPI:
     async def health() -> JSONResponse:
         return JSONResponse({"status": "ok"})
 
-    @app.get("/v1/edge/package/{name}")
-    async def package(request: Request, name: str) -> Response:
-        """The edge client for device.update; enrolled devices only."""
+    def enrolled_only(request: Request) -> None:
         address = request.client.host if request.client else "?"
         if config.trusted_proxy:
             forwarded = request.headers.get("cf-connecting-ip") or request.headers.get(
@@ -120,7 +118,18 @@ def create_public_app(runtime: CompanionRuntime) -> FastAPI:
         if runtime.devices.identify(header_token(request)) is None:
             guard.failed(address)
             raise HTTPException(status_code=401, detail="missing or wrong device token")
+
+    @app.get("/v1/edge/package/{name}")
+    async def package(request: Request, name: str) -> Response:
+        """The edge client for device.update; enrolled devices only."""
+        enrolled_only(request)
         return edge_package_response(name)
+
+    @app.get("/v1/edge/tailscale/{name}")
+    async def tailscale_package(request: Request, name: str) -> Response:
+        """Tailscale for device.tailscale; enrolled devices only."""
+        enrolled_only(request)
+        return tailscale_package_response(request, name)
 
     @app.websocket("/v1/realtime")
     async def device_realtime(ws: WebSocket) -> None:
