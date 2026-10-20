@@ -13,10 +13,14 @@ bound to their device id.
 
 The admin API has its own token (``server.admin_token_env``), so a device
 token cannot change the server. Without it, only this machine is admitted.
+
+The read-only viewer (``server.viewer``) admits devices on the tailnet that
+reach this machine at its Tailscale address, and this machine itself.
 """
 
 from __future__ import annotations
 
+import ipaddress
 import secrets
 from dataclasses import dataclass
 
@@ -87,6 +91,31 @@ def from_this_machine(conn: Request | WebSocket) -> bool:
     """
     peer = conn.client.host if conn.client else ""
     return peer in LOOPBACK_HOSTS and _hostname(conn.headers.get("host", "")) in LOOPBACK_HOSTS
+
+
+# Tailscale gives devices addresses from these ranges (its IPv4 one is carrier-grade NAT space).
+TAILNET = (ipaddress.ip_network("100.64.0.0/10"), ipaddress.ip_network("fd7a:115c:a1e0::/48"))
+
+
+def on_tailnet(address: str | None) -> bool:
+    try:
+        ip = ipaddress.ip_address((address or "").split("%")[0])
+    except ValueError:
+        return False
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        ip = ip.ipv4_mapped
+    return any(ip in net for net in TAILNET)
+
+
+def from_tailnet(conn: Request | WebSocket) -> bool:
+    """A peer on the tailnet that reached this machine at its own Tailscale address.
+
+    Both ends are checked: a 100.x source alone could also come from a network
+    that uses carrier-grade NAT addresses itself.
+    """
+    peer = conn.client.host if conn.client else None
+    local = conn.scope.get("server")
+    return on_tailnet(peer) and bool(local) and on_tailnet(local[0])
 
 
 def admin_refusal(conn: Request | WebSocket) -> tuple[int, str] | None:
