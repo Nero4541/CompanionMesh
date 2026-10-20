@@ -48,6 +48,23 @@ async def edge_package(name: str) -> Response:
     return edge_package_response(name)
 
 
+def tailscale_package_response(request: Request, name: str) -> Response:
+    """A Tailscale package this server downloaded and checked (for device.tailscale)."""
+    from fastapi.responses import FileResponse
+
+    from companion import tailscale
+
+    found = tailscale.cached(_runtime(request).config.storage.data_dir, name)
+    if found is None:
+        raise HTTPException(status_code=404, detail="no such Tailscale package here")
+    return FileResponse(found.path, media_type="application/gzip")
+
+
+@protected.get("/v1/edge/tailscale/{name}")
+async def tailscale_package(request: Request, name: str) -> Response:
+    return tailscale_package_response(request, name)
+
+
 @protected.get("/v1/config")
 async def config(request: Request) -> dict[str, Any]:
     return _runtime(request).config.public_view()
