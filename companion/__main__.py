@@ -69,6 +69,11 @@ def _parser() -> argparse.ArgumentParser:
     inst.add_argument(
         "--keep-password", action="store_true", help="do not replace the stock root password"
     )
+    inst.add_argument(
+        "--tailscale",
+        action="store_true",
+        help="put the board on Tailscale (an auth key is asked; Enter: a login link instead)",
+    )
     upd.add_argument("--name", required=True, help="the device's id (letters, digits, - _ .)")
     upd.add_argument("--host", help="the board's address (default: the board found on USB)")
     upd.add_argument(
@@ -93,6 +98,11 @@ def _parser() -> argparse.ArgumentParser:
     )
     upd.add_argument(
         "--keep-password", action="store_true", help="do not replace the stock root password"
+    )
+    upd.add_argument(
+        "--tailscale",
+        action="store_true",
+        help="put the board on Tailscale (an auth key is asked; Enter: a login link instead)",
     )
     cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
     cam.add_argument(
