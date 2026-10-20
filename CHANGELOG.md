@@ -4,6 +4,10 @@ What changed in each release of the Companion Server and its edge client. The ne
 
 ## Unreleased
 
+Protocol 1.3 (additive), edge client 1.3.0.
+
+- **Bluetooth speakers from the dashboard**: a device's **Maintenance** tab pairs a Bluetooth speaker (look for speakers in pairing mode, or type the address), plays through it from then on and keeps it connected, also after a reboot; **Forget** goes back to the output from before. Needs BlueZ and bluez-alsa on the board (Sipeed's LicheeRV Nano image has both).
+- **Tailscale for boards from the dashboard**: **Put the board on Tailscale** when setting it up over USB (also `companion edge install --tailscale`), or **Install and join** in the Maintenance tab. The server downloads Tailscale's static build for the board from pkgs.tailscale.com, checks it and copies it over; the board joins with an auth key or through a login link shown on the page, and then also tries the server's Tailscale address, so it reaches the server away from home.
 - **Board passwords stay as they are**: setting a board up (or updating it) replaces the root password only when it is the stock one (or empty). A password of the board's own, or the one this server set before, stays as it is; before, a board logged in with this server's key or with a password you gave got a new random one. The installer now asks the board itself which password it has.
 
 ## 1.4.0 — 2026-10-18
