@@ -35,14 +35,17 @@
 | `POST /v1/admin/devices/{id}/diagnostics` | Ask a device for its diagnostics (admin token) |
 | `GET /v1/admin/devices/{id}/frame`, `GET /v1/admin/frames`, `POST /v1/admin/devices/{id}/capture` | A camera's newest frame; which devices sent one; ask for a fresh one (admin token) |
 | `POST /v1/admin/devices/{id}/update`, `/restart`, `/speaker-test`, `/mic-test`; `GET`/`PUT .../wifi` | Look after a device remotely (admin token) |
+| `GET /v1/admin/devices/{id}/bluetooth`, `POST .../bluetooth/scan` `{seconds}`, `.../bluetooth/pair` `{address}`, `.../bluetooth/remove` `{address}` | A device's Bluetooth speaker: state, what is in reach, pair (it plays through it from then on), forget (admin token) |
+| `GET /v1/admin/devices/{id}/tailscale`, `POST .../tailscale` `{auth_key?}`, `POST .../tailscale/logout` | A device's Tailscale: state (with the login link while it waits for one), install if needed and join, leave (admin token) |
+| `GET /v1/edge/tailscale/<name>` | A Tailscale package this server downloaded and checked, for `device.tailscale` (device token) |
 | `GET /v1/admin/conversation`, `GET /v1/admin/recordings`, `GET /v1/admin/recordings/{id}/audio` | What was said (with `server.dashboard_conversation`), recordings (with `stt.keep_audio`) (admin token) |
 | `GET /v1/admin/vision/images`, `GET /v1/admin/vision/images/{day}/{name}` | Images kept by `vision.store_images` (admin token) |
 | `GET /v1/admin/updates`, `GET /v1/admin/updates/latest` | Version, update log and changelog; the newest release on GitHub (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
-## Realtime protocol (1.2)
+## Realtime protocol (1.3)
 
-1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer.
+1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard).
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -69,6 +72,8 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | → | `device.update.result` | `{request_id?, ok, version, restarting?, error?, previous?, connected?}`: answer to `device.update`; sent again with `connected: true` by the new version once connected (1.2) |
 | → | `device.restart.result` | `{request_id, ok}` (1.2) |
 | → | `device.wifi.result` | `{request_id, ok, networks, current, error?}`: answer to `device.wifi.set` (1.2) |
+| → | `device.bluetooth.result` | `{request_id, ok, error?, controller, tools, speaker, devices, found?, pcm, output_device, restarting}`: answer to `device.bluetooth`; `restarting`: it plays to another output now and reconnects (1.3) |
+| → | `device.tailscale.result` | `{request_id, ok, error?, installed, arch, running, state, auth_url, ips, hostname, tailnet, version, server_added, through_tailscale, servers}`: answer to `device.tailscale` (1.3) |
 | → | `audio.output.played` | `{turn_id}`: playback finished; the server resumes listening |
 | → | `audio.output.progress` | `{turn_id, seq, state: "started", pos?}`: a clip began playing; `pos` = mic stream position at that moment |
 | → | `audio.output.stopped` | `{turn_id, reason?}`: answer to `audio.output.stop` |
@@ -104,5 +109,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `device.restart` | `{request_id, what: "client" or "board"}` (1.2) |
 | ← | `camera.live` | `{seconds, fps}`: send pictures (reason `live`) about `fps` times a second for `seconds`, for the dashboard's live view only; again to extend, `seconds: 0` stops (1.2) |
 | ← | `device.wifi.set` | `{request_id, add: [{ssid, psk?}], remove: [ssid]}`: `psk` is the WPA key (64 hex digits), never the password; both empty: just report (1.2) |
+| ← | `device.bluetooth` | `{request_id, action, address?, seconds?}`: `state`, `scan` (for `seconds`), `pair` (pair, trust, connect and play through the speaker at `address`), `remove` (1.3) |
+| ← | `device.tailscale` | `{request_id, action, package?, sha256?, auth_key?, server_url?}`: `state`, `install` (download `GET /v1/edge/tailscale/<package>`, check it, install it, then join), `up` (join), `logout`; `server_url` is the server's Tailscale address, which the device adds to its addresses once on the tailnet (1.3) |
 
 A session can have several devices attached at once. Every device receives the conversation events; speech audio goes only to `speaker` devices, and only the device that sent `audio.input.start` feeds the microphone. The session ends when its last `mic` or `speaker` device disconnects; remaining camera devices then receive `session.ended` and are disconnected (a camera alone does not keep a conversation alive). Simple clients stay simple: a client that declares no roles gets `mic` and `speaker`, one that does not ask for `full_duplex` is treated as half duplex, and vision traffic only appears after a client sends `vision.enable`. Clients and server must ignore event types they do not know. The namespaces `conversation.*`, `audio.*`, `vision.*`, `memory.*`, `agent.*`, `system.*`, `session.*` and `device.*` are reserved.
