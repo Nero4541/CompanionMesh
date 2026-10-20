@@ -39,6 +39,8 @@
 | `GET /v1/admin/devices/{id}/tailscale`, `POST .../tailscale` `{auth_key?}`, `POST .../tailscale/logout` | A device's Tailscale: state (with the login link while it waits for one), install if needed and join, leave (admin token) |
 | `GET /v1/edge/tailscale/<name>` | A Tailscale package this server downloaded and checked, for `device.tailscale` (device token) |
 | `GET /v1/admin/conversation`, `GET /v1/admin/recordings`, `GET /v1/admin/recordings/{id}/audio` | What was said (with `server.dashboard_conversation`), recordings (with `stt.keep_audio`) (admin token) |
+| `GET /v1/admin/viewer` | Whether the read-only viewer is on and its addresses on the tailnet (admin token) |
+| `GET /v1/view/state`, `GET /v1/view/conversation?after=`, `GET /v1/view/devices/{id}/frame`, `POST /v1/view/devices/{id}/live` `{seconds}` | The read-only viewer behind `/view/` (with `server.viewer.enabled`): conversations and devices, the conversation's lines, a camera's newest picture, live pictures while watching. Only from the tailnet, at the server's Tailscale address (no token) |
 | `GET /v1/admin/vision/images`, `GET /v1/admin/vision/images/{day}/{name}` | Images kept by `vision.store_images` (admin token) |
 | `GET /v1/admin/updates`, `GET /v1/admin/updates/latest` | Version, update log and changelog; the newest release on GitHub (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
