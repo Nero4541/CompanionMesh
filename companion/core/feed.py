@@ -12,7 +12,9 @@ is for.
 
 With ``dashboard_conversation`` on, the feed also keeps the conversation itself
 (what was heard and answered, per session) for the dashboard's Conversations
-page; nothing of it is kept while the setting is off.
+page, and with ``server.viewer`` on for the tailnet's read-only page; nothing of
+it is kept while both are off. Each page asks for it only while its own setting
+is on.
 """
 
 from __future__ import annotations
@@ -51,13 +53,19 @@ def _private_free(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 class AdminFeed:
-    def __init__(self, bus: EventBus, show_text: Callable[[], bool] = lambda: False) -> None:
+    def __init__(
+        self,
+        bus: EventBus,
+        show_text: Callable[[], bool] = lambda: False,
+        keep_said: Callable[[], bool] | None = None,
+    ) -> None:
         self._recent: deque[dict[str, Any]] = deque(maxlen=KEEP)
         self._viewers: set[asyncio.Queue[dict[str, Any]]] = set()
         self._ids = itertools.count(1)
         self._said: deque[dict[str, Any]] = deque(maxlen=KEEP_SAID)
         self._said_ids = itertools.count(1)
         self.show_text = show_text
+        self.keep_said = keep_said or show_text
         bus.subscribe("", self._on_event)
 
     def said(
@@ -70,8 +78,8 @@ class AdminFeed:
         recording_id: str | None = None,
         **extra: Any,
     ) -> None:
-        """Note a line of the conversation (only while the dashboard may show it)."""
-        if not self.show_text() or not text:
+        """Note a line of the conversation (only while a page may show it)."""
+        if not self.keep_said() or not text:
             return
         self._said.append(
             {
@@ -87,7 +95,8 @@ class AdminFeed:
         )
 
     def conversation(self, *, after: int = 0) -> list[dict[str, Any]]:
-        if not self.show_text():
+        """The lines kept (the caller checks that its page may show them)."""
+        if not self.keep_said():
             return []
         return [line for line in self._said if line["id"] > after]
 
