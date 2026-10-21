@@ -16,6 +16,7 @@
   <nav>
     <button data-tab="conversation" class="active">Conversation</button>
     <button data-tab="devices">Devices</button>
+    <button data-tab="people">People</button>
   </nav>
 
   <p id="notice" class="notice" hidden></p>
@@ -30,6 +31,39 @@
     <p id="no-devices" class="muted">No device is connected.</p>
   </section>
 
+  <section id="people" hidden>
+    <form id="people-login" hidden>
+      <p class="muted">Adding or changing people needs the dashboard's admin token
+        (<code>COMPANION_ADMIN_TOKEN</code> in the server's .env). It is kept on this phone only.</p>
+      <p id="people-refused" class="notice" hidden></p>
+      <input id="people-token" type="password" autocomplete="off" placeholder="Admin token" aria-label="Admin token">
+      <button type="submit">Sign in</button>
+    </form>
+    <div id="people-main" hidden>
+      <p id="people-message" class="notice" hidden></p>
+      <h2>Here now</h2>
+      <ul id="people-here" class="plain"></ul>
+      <h2>Known people</h2>
+      <p class="row muted">Camera for faces <select id="people-camera" aria-label="Camera"></select></p>
+      <div id="people-list"></div>
+      <h2>Add a person</h2>
+      <form id="people-add" class="stack">
+        <input id="add-name" placeholder="Name" aria-label="Name">
+        <select id="add-role" aria-label="Role">
+          <option value="acquaintance">acquaintance</option>
+          <option value="user">the user (you)</option>
+        </select>
+        <label><input id="add-consent" type="checkbox"> They agreed to be recognised</label>
+        <button type="submit">Add</button>
+      </form>
+      <p class="muted">Then <strong>Face</strong>: the person looks at the chosen camera for about ten
+        seconds, alone in view. <strong>Voice</strong>: record them speaking alone for 30 to 60 seconds
+        (the phone's recorder opens).</p>
+      <button id="people-logout" class="small">Forget the token</button>
+    </div>
+  </section>
+
   <script src="viewer.js"></script>
+  <script src="people.js"></script>
 </body>
 </html>
