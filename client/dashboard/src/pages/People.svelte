@@ -337,6 +337,16 @@
                   </button>
                 {/if}
                 <button class="small" onclick={() => (editing = { id: p.id, name: p.name, role: p.role, notes: p.notes })}>Edit</button>
+                {#if p.voice_candidates}
+                  <button
+                    class="small"
+                    title="Heard lately while voice, face and lips agreed"
+                    onclick={() => act(`cand:${p.id}`, () => api(`/people/${p.id}/voice/candidates`, { method: "POST" }),
+                      (r) => `${p.name}: ${r.added} voice samples added.`)}
+                  >
+                    Add {p.voice_candidates} heard voice samples
+                  </button>
+                {/if}
                 {#if p.face_samples}<button class="small" onclick={() => clear(p, "face")}>Clear face</button>{/if}
                 {#if p.voice_clips}<button class="small" onclick={() => clear(p, "voice")}>Clear voice</button>{/if}
                 <button class="small" onclick={() => remove(p)}>Forget</button>
