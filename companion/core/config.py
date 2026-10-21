@@ -791,6 +791,11 @@ class CameraConfig(_Section):
     """Join this conversation instead of the most recently started one."""
     enable_vision: bool = True
     """Switch vision on in the conversation it joins."""
+    perception_fps: float = Field(default=10.0, ge=0, le=30)
+    """With perception on: how many pictures a second are looked at for faces (a stream, .../video
+    or rtsp://, gives new ones that often; a snapshot address is asked each time). 15 or more lets
+    it tell who is talking from lip movement. 0 = only the pictures sent to the conversation.
+    """
 
     @field_validator("url")
     @classmethod
@@ -808,6 +813,79 @@ class CameraConfig(_Section):
         username = os.environ.get(self.username_env) if self.username_env else None
         password = os.environ.get(self.password_env) if self.password_env else None
         return username or None, password or None
+
+
+class PeopleConfig(_Section):
+    """People the companion knows by face and voice: the user and acquaintances, by name.
+
+    Their face and voice samples stay in data/people on this machine; they are never sent to the
+    agent or to any online service. Add people on the People page. See docs/people.md.
+    """
+
+    face_threshold: float = Field(default=0.45, gt=0, lt=1)
+    """How alike (0 to 1) a face must be to someone's saved face samples to count as them. Higher
+    mistakes fewer strangers for people you know, but recognises them less often.
+    """
+    face_margin: float = Field(default=0.10, ge=0, lt=1)
+    """How much closer a face must be to the best-matching person than to the next one. Keeps
+    two similar-looking people from being mixed up.
+    """
+    voice_threshold: float = Field(default=0.5, gt=0, lt=1)
+    """How alike (0 to 1) a voice must be to someone's saved voice samples to count as them.
+    """
+    voice_margin: float = Field(default=0.15, ge=0, lt=1)
+    """How much closer a voice must be to the best-matching person than to the next one before
+    the voice alone is trusted.
+    """
+    max_face_samples: int = Field(default=40, ge=1, le=200)
+    """The most face samples kept per person (spread over angles and time)."""
+    stranger_retention_h: float = Field(default=24.0, gt=0)
+    """Hours a stranger's face is remembered (to recognise the same stranger again, and so they
+    can be added as a person later). Then it is deleted.
+    """
+
+
+class PerceptionConfig(_Section):
+    """Who is around: faces seen by the cameras, tracked and named (user, acquaintance or stranger).
+
+    Runs the built-in perception engine (builtin/perception: face recognition, and voice
+    recognition for who said what). The People page installs it. See docs/people.md.
+    """
+
+    enabled: bool = False
+    """Recognise people on the cameras. Starts the perception engine (about 0.6 GB of graphics
+    memory with a GPU). Off: its process stops at once.
+    """
+    device: Literal["auto", "cuda", "cpu"] = "auto"
+    """Where the engine runs: cuda = NVIDIA graphics card (fast), cpu = processor (slow), auto =
+    the graphics card when there is one.
+    """
+    face_model: str = "buffalo_l"
+    """The face models: a folder in builtin/perception/models. buffalo_l (InsightFace) is
+    downloaded there first if it is missing; it is for non-commercial use only.
+    """
+    voice_model: str = "speaker-diarization-community-1"
+    """The voice model: a folder in builtin/perception/models holding pyannote's
+    speaker-diarization-community-1, or none for faces only. It is gated on Hugging Face: accept
+    its terms and put HF_TOKEN in .env to have it downloaded, or download it into that folder.
+    """
+    min_face_px: int = Field(default=40, ge=8)
+    """Faces smaller than this many pixels (box height) are tracked but never used to recognise
+    or add someone.
+    """
+    left_after_s: float = Field(default=60.0, gt=0)
+    """Someone not seen on any camera for this many seconds counts as gone."""
+    picture_check: bool = True
+    """Ask the vision model (vlm) once about every unknown face that stays: a real person, or a
+    poster or a face on a screen? Pictures are then ignored. Without a vision model, faces that
+    never move for minutes count as pictures.
+    """
+    static_picture_s: float = Field(default=180.0, gt=0)
+    """Without a vision model: an unknown face that stays exactly in place this many seconds is
+    taken for a picture.
+    """
+    enrol_seconds: float = Field(default=10.0, gt=0, le=60)
+    """How long "look at the camera" collects face samples when adding someone."""
 
 
 class MetricsConfig(_Section):
@@ -836,6 +914,8 @@ class CompanionConfig(_Section):
     attention: AttentionConfig = AttentionConfig()
     realtime: RealtimeConfig = RealtimeConfig()
     metrics: MetricsConfig = MetricsConfig()
+    people: PeopleConfig = PeopleConfig()
+    perception: PerceptionConfig = PerceptionConfig()
     cameras: list[CameraConfig] = Field(default_factory=list)
     """IP cameras and phones the server watches itself. Easier to manage on the Cameras page."""
     personas_dir: Path = Field(default="personas", validate_default=True)
@@ -917,6 +997,8 @@ _LIVE_SETTINGS = {
     "stt.keep_audio_days": True,
     "stt.prompt": True,  # read on every utterance
     "builtin": True,  # engines start, stop and restart while running
+    "people": True,  # read on every match
+    "perception": True,  # the engine starts, stops and restarts while running
 }
 
 
