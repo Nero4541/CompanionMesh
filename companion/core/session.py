@@ -52,6 +52,7 @@ from companion.vision.pipeline import TurnImage, VisionChannel
 if TYPE_CHECKING:
     from companion.core.config import CompanionConfig
     from companion.core.runtime import CompanionRuntime
+    from companion.perception.speakers import Speaker
 
 __all__ = ["DEFAULT_ROLES", "Device", "Outbox", "Session", "State", "parse_roles"]
 
@@ -552,9 +553,28 @@ class Session:
         await self.interrupt("new_utterance")
         self._speech_end = TurnTimings.now()
         self._timings = TurnTimings(speech_end=self._speech_end)
-        self._start_turn(self._voice_turn(utterance.audio))
+        # The speech ended when the silence that closed it began.
+        ended = time.time() - self.runtime.config.vad.min_silence_ms / 1000
+        self._start_turn(self._voice_turn(utterance.audio, ended))
 
-    async def _voice_turn(self, audio: np.ndarray) -> None:
+    def _attribute(self, audio: np.ndarray, ended: float | None) -> asyncio.Task[Any] | None:
+        """Who said it (perception.speakers), worked out while speech is recognised."""
+        perception = self.runtime.perception
+        if ended is None or not self.runtime.config.perception.speakers or not perception.ready:
+            return None
+        start = ended - audio.size / SAMPLE_RATE
+        return asyncio.create_task(perception.attribute(audio, start, ended))
+
+    async def _speaker(self, task: asyncio.Task[Any] | None) -> Speaker | None:
+        if task is None:
+            return None
+        try:
+            return await asyncio.wait_for(task, timeout=5.0)
+        except (TimeoutError, CompanionError) as exc:
+            log.warning("speaker unknown", extra=kv(session=self.session_id, error=str(exc)))
+            return None
+
+    async def _voice_turn(self, audio: np.ndarray, ended: float | None = None) -> None:
         stt = self.runtime.stt
         if stt is None:  # the built-in engine is still starting, or was turned off
             await self.emit_error(
@@ -565,9 +585,12 @@ class Session:
         await self.set_state(State.TRANSCRIBING, deadline_s=self.realtime.transcribe_timeout_s)
         started = time.perf_counter()
         prompt = self.runtime.config.stt.prompt
+        attributing = self._attribute(audio, ended)
         try:
             transcript = await stt.transcribe(audio, **({"prompt": prompt} if prompt else {}))
         except CompanionError as exc:
+            if attributing is not None:
+                attributing.cancel()
             await self.emit_error(exc)
             await self.rest("transcription failed")
             return
@@ -594,6 +617,8 @@ class Session:
                 text=transcript.text,
             ),
         )
+        if (not transcript.text or echo) and attributing is not None:
+            attributing.cancel()
         if not transcript.text:
             await self.rest("nothing recognized")
             return
@@ -605,15 +630,20 @@ class Session:
             self.metrics.count("echo_dropped")
             await self.rest("echo")
             return
-        await self.emit(ev.CONVERSATION_TRANSCRIPT, {"text": transcript.text, "final": True})
+        speaker = await self._speaker(attributing)
+        heard: dict[str, Any] = {"text": transcript.text, "final": True}
+        if speaker is not None:
+            heard["speaker"] = speaker.to_payload()
+        await self.emit(ev.CONVERSATION_TRANSCRIPT, heard)
         self.runtime.feed.said(
             self.session_id,
             "user",
             transcript.text,
             device_id=self._mic.device.device_id if self._mic else None,
             recording_id=recording_id,
+            **({"speaker": speaker.to_payload()} if speaker is not None else {}),
         )
-        await self.run_turn(transcript.text)
+        await self.run_turn(transcript.text, speaker=speaker)
 
     async def _keep_recording(
         self, audio: np.ndarray, text: str, outcome: str, stt_s: float
@@ -765,8 +795,12 @@ class Session:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._turn
 
-    async def run_turn(self, user_text: str) -> str:
-        """Run one conversational turn; returns the assistant text."""
+    async def run_turn(self, user_text: str, *, speaker: Speaker | None = None) -> str:
+        """Run one conversational turn; returns the assistant text.
+
+        With a ``speaker`` (perception.speakers), the agent sees who said it:
+        「...」 (Yukari, the user); the stored transcript keeps the words alone.
+        """
         rt = self.runtime
         turn_id = uuid.uuid4().hex[:12]
         self._turn_id = turn_id
@@ -795,7 +829,9 @@ class Session:
         # stored transcript keeps the user's own words and never the image.
         prefix = "\n\n".join(p for p in (self._take_context_notes(), seen.user_prefix) if p)
         seen.user_prefix = prefix or None
-        text = f"{prefix}\n\nUser: {user_text}" if prefix else user_text
+        said = speaker.label(user_text) if speaker is not None else user_text
+        lead = "Said" if speaker is not None else "User"
+        text = f"{prefix}\n\n{lead}: {said}" if prefix else said
         if seen.images:
             messages[-1] = {
                 "role": "user",
@@ -808,7 +844,7 @@ class Session:
                 await self.emit(
                     ev.VISION_FRAME_USED, {"frame_id": image.frame_id, "turn_id": turn_id}
                 )
-        elif seen.user_prefix:
+        elif seen.user_prefix or speaker is not None:
             messages[-1] = {"role": "user", "content": text}
 
         parts: list[str] = []
