@@ -19,6 +19,7 @@
 | `POST /v1/admin/people/{id}/face` `{camera?, track_id?, seconds?}`, `DELETE .../face` | Face samples from a camera (the person looks at it) or from a face tracked now; delete them (admin token) |
 | `POST /v1/admin/people/{id}/voice` (an audio file as the body), `DELETE .../voice` | Voice samples from a recording of the person speaking alone; delete them (admin token) |
 | `POST /v1/admin/people/promote` `{track_id, name, role, consent}` | Add the stranger in view as a person (admin token) |
+| `POST /v1/admin/people/{id}/voice/candidates` | Add the voice samples heard lately with voice, face and lips agreeing (admin token) |
 | `POST /v1/admin/people/identify?camera=` (or a JPEG as the body) | Who the faces in a picture are (admin token) |
 | `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
 | `GET /v1/admin/phone`, `POST /v1/admin/phone` `{renew?}` | Addresses that log a phone in to the dashboard (with the admin token in them); make the admin token if there is none, or a new one (saved in `.env`, used at once) (admin token) |
@@ -54,7 +55,7 @@
 
 ## Realtime protocol (1.4)
 
-1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard). 1.4 added `presence.update` (who is around, with perception on); older clients ignore it.
+1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard). 1.4 added `presence.update` (who is around, with perception on) and `speaker` on `conversation.transcript`; older clients ignore them.
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -111,6 +112,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.capture.request` | `{request_id, reason}`: to `camera` devices: send a fresh `manual` frame now |
 | ← | `attention.state` | `{proactive, quiet, speech_blockers}` |
 | ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
+| ← | `conversation.transcript` `speaker` | With `perception.speakers`: `{person_id, name, role, confidence, on_screen, how}` (1.4); role: user, acquaintance, stranger, media or unknown |
 | ← | `presence.update` | `{people: [{person_id, name, role, since, last_seen_s, camera, track_id?}], tracks: [{track_id, camera, person_id, name, role, kind, since, last_seen, frames, box, yaw}]}` (1.4, with `perception.enabled`): who is here changed |
 | ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
 | ← | `device.config.set` | `{request_id, config}`: new settings from the admin dashboard; check them, save them and answer `device.config.result` (1.1) |
