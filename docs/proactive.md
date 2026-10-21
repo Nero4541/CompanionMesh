@@ -35,3 +35,29 @@ The rules that keep it polite are deterministic; no model can override them:
 The companion never reacts to its own voice: audio input is ignored while it speaks. A proactive turn that is still waiting for the agent keeps listening, so you can simply start talking, and your turn takes over. Set `attention.debug: true` to see every decision and its reasons in the dev client.
 
 With slow local models, a proactive turn takes as long as any other turn; the agent's reply is only spoken once it is complete.
+
+## Explicit decisions
+
+Free text with `[SILENT]` leaves room for mistakes: models answer anyway, or offer two alternatives. With `attention.decisions: true` (off by default) a proactive turn asks the agent for one JSON object instead, with the event, who is around (with [people](people.md) on), what has been going on and the time:
+
+```json
+{"action": "reply", "text": "...", "reason": "the user has been gaming for two hours and it is late"}
+{"action": "silent", "reason": "nothing new"}
+{"action": "remember", "note": "Kenta visited at 20:10", "reason": "worth keeping, not worth saying"}
+```
+
+`reply` is spoken; `remember` is kept as an episodic note (like `remember` above); `silent` says nothing. The answer is read leniently (the first JSON object in it, code fences and text around it ignored); anything else counts as silent, and is logged and counted as `proactive_unparsed` (Latency page). A bare `[SILENT]` still means silent. The guards above still come first: no answer can make the companion speak when they say no.
+
+**Triage model** (`attention.triage`, off by default): a small, fast model on an OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio) is asked the same question first; only when it does not choose silent is the agent asked. That keeps slow agent turns for events that matter.
+
+```yaml
+attention:
+  decisions: true
+  triage:
+    enabled: true
+    base_url: http://127.0.0.1:11434/v1
+    model: qwen3:1.7b
+    extra_body: {chat_template_kwargs: {enable_thinking: false}}
+```
+
+Each decision (by the agent or the triage model, with its reason) shows on the dashboard's **Events** page as `attention.proactive`.
