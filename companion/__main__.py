@@ -1,4 +1,4 @@
-"""Command line entry point: ``uv run companion [serve|check|setup|edge|camera]``."""
+"""Command line entry point: ``uv run companion [serve|check|setup|edge|camera|replay]``."""
 
 from __future__ import annotations
 
@@ -103,6 +103,14 @@ def _parser() -> argparse.ArgumentParser:
         "--tailscale",
         action="store_true",
         help="put the board on Tailscale (an auth key is asked; Enter: a login link instead)",
+    )
+    from companion.perception import replay
+
+    replay.add_arguments(
+        sub.add_parser(
+            "replay",
+            help="feed a recorded session (video, audio, labels) through perception offline",
+        )
     )
     cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
     cam.add_argument(
@@ -479,6 +487,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.command == "check":
         return asyncio.run(_check(config))
+    if args.command == "replay":
+        from companion.perception import replay
+
+        return replay.run_cli(args, config)
     if args.command == "edge":
         from companion import edge_install
 
