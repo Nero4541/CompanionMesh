@@ -34,8 +34,10 @@ from companion.attention.engine import AttentionEvent
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.perception.client import FrameFaces, PerceptionBackend, wav_bytes
+from companion.perception.glance import PerceptionState, marked_picture, marks_for, parse, question
 from companion.perception.registry import ROLE_TEXT, Match, PeopleRegistry
 from companion.perception.speakers import Speaker, attribute
+from companion.perception.timeline import Fired, Timeline
 from companion.perception.tracker import FaceTracker, Track, jpeg_thumbnail, talking_track
 from companion.protocol import events as ev
 
@@ -47,6 +49,13 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 STRANGER_CHECK_S = 1.5  # an unknown face this long gets its one picture check
+FRESH_FRAME_S = 5.0  # a glance looks only at a picture at most this old
+SAME_PICTURE = 1.0  # mean difference of thumbnails below which a picture is "the same"
+LOOK_QUESTION = (
+    "People in this camera picture are marked: {legend}. Describe in two or three short "
+    "sentences what is happening: who is there, what they are doing, anything notable. Use the "
+    "names given; do not guess who unmarked people are."
+)
 CANDIDATE_S = 1.5  # utterances this long, with voice, face and lips agreeing, are voice samples
 MAX_CANDIDATES = 20
 HOUSEKEEPING_S = 5.0
@@ -133,6 +142,17 @@ class PerceptionService:
         self.picture_asks = 0
         # Voice samples heard with voice, face and lips agreeing: person id -> [(emb, wav)].
         self.voice_candidates: dict[str, list[tuple[np.ndarray, bytes]]] = {}
+        # Glances: who is doing what (perception.glance), and the timeline they feed.
+        self.state = PerceptionState()
+        self.timeline = Timeline(
+            config.storage.data_dir / "timeline.db",
+            min_switch_s=config.timeline.min_switch_s,
+            retention_days=config.timeline.retention_days,
+        )
+        self._glance_task: asyncio.Task[None] | None = None
+        self._glanced: dict[str, np.ndarray] = {}  # camera -> thumbnail of the last glance
+        self._glance_turn = 0
+        self._last_sample = 0.0
 
     # -- state -------------------------------------------------------------------
 
@@ -410,6 +430,14 @@ class PerceptionService:
                 )
         if gone:
             await self._presence_changed(gone[0].camera)
+        if (
+            self.config.timeline.enabled
+            and now - self._last_sample >= self.config.timeline.sample_s
+        ):
+            self._last_sample = now
+            await self.sample_presence(now)
+            self.timeline.flush(now)
+        self.state.forget_older(now - self.config.perception.left_after_s)
         if now - self._last_saved >= SAVE_STRANGERS_S:
             self._last_saved = now
             await asyncio.to_thread(
@@ -442,7 +470,9 @@ class PerceptionService:
     # -- cameras the server pulls itself --------------------------------------------------
 
     def apply(self) -> None:
-        """Pull frames from exactly the running server cameras with a perception_fps."""
+        """Pull frames from exactly the running server cameras with a perception_fps; glance
+        and keep the timeline as the settings say."""
+        self._apply_timeline()
         wanted: dict[str, float] = {}
         if self.ready:
             running = self.runtime.cameras.running_ids()
@@ -461,6 +491,145 @@ class PerceptionService:
                         self._pull(camera_id, fps), name=f"perception {camera_id}"
                     )
                     self._loops[camera_id] = (fps, task)
+
+    def _apply_timeline(self) -> None:
+        from companion.attention.engine import resolve_zone
+        from companion.perception.timeline import WatchRule
+
+        config = self.config
+        self.timeline.min_switch_s = config.timeline.min_switch_s
+        self.timeline.retention_days = config.timeline.retention_days
+        self.timeline.zone = resolve_zone(config.attention.quiet_hours.timezone)
+        self.timeline.rules = [WatchRule.from_dict(r.model_dump()) for r in config.timeline.rules]
+        if config.timeline.enabled:
+            with contextlib.suppress(OSError, Exception):
+                self.timeline.open()
+        glance = self.ready and config.perception.glance
+        running = self._glance_task is not None and not self._glance_task.done()
+        if glance and not running:
+            with contextlib.suppress(RuntimeError):
+                self._glance_task = asyncio.get_running_loop().create_task(
+                    self._glance_loop(), name="glances"
+                )
+        elif not glance and running:
+            assert self._glance_task is not None
+            self._glance_task.cancel()
+            self._glance_task = None
+
+    # -- glances --------------------------------------------------------------------------
+
+    def glance_interval(self) -> float:
+        configured = self.config.perception.glance_s
+        if configured:
+            return configured
+        return 1.0 if getattr(self.runtime.vlm, "name", "") == "builtin_vlm" else 10.0
+
+    async def _glance_loop(self) -> None:
+        while True:
+            began = time.monotonic()
+            cameras = [c for c, (_, at) in self.frames.items() if time.time() - at <= FRESH_FRAME_S]
+            if cameras and self._vlm_asker() is not None:
+                self._glance_turn += 1
+                camera = sorted(cameras)[self._glance_turn % len(cameras)]
+                try:
+                    await self.glance(camera)
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # a vision model error: try again next time
+                    log.warning("glance failed", extra=kv(camera=camera, error=str(exc)))
+            elapsed = time.monotonic() - began
+            await asyncio.sleep(max(0.05, self.glance_interval() - elapsed))
+
+    async def glance(self, camera: str, *, force: bool = False) -> Any:
+        """One glance at ``camera``'s newest picture; None when skipped (same picture)."""
+        ask = self._vlm_asker()
+        frame = self.frames.get(camera)
+        if ask is None or frame is None:
+            return None
+        jpeg, at = frame
+        thumb = await asyncio.to_thread(jpeg_thumbnail, jpeg)
+        last = self._glanced.get(camera)
+        if not force and last is not None and float(np.abs(thumb - last).mean()) < SAME_PICTURE:
+            return None
+        self._glanced[camera] = thumb
+        tracker = self.trackers.get(camera)
+        marks = marks_for(tracker.active if tracker else [])
+        side = self.config.vlm.max_image_side
+        picture = await asyncio.to_thread(marked_picture, jpeg, marks, side)
+        began = time.perf_counter()
+        answer = str(
+            await ask([picture], question(marks), max_tokens=self.config.perception.glance_tokens)
+        )
+        result = parse(answer, marks, camera, at)
+        result.seconds = time.perf_counter() - began
+        self.state.take(result)
+        if not result.parsed:
+            log.info("glance not understood", extra=kv(camera=camera, answer=answer[:80]))
+        if self.config.timeline.enabled:
+            for g in result.people:
+                if g.person_id and g.name:
+                    for fired in self.timeline.add(
+                        g.person_id, g.name, g.role, g.activity, at, posture=g.posture
+                    ):
+                        await self._fired(fired, camera)
+        return result
+
+    async def _fired(self, fired: Fired, camera: str) -> None:
+        episode = fired.episode
+        await self._event(
+            "long_activity",
+            fired.description(self.timeline.zone),
+            fired.rule.salience,
+            camera,
+            rule=fired.rule.id,
+            person=episode.name,
+            activity=episode.activity,
+            minutes=round(episode.minutes),
+        )
+
+    async def sample_presence(self, now: float) -> None:
+        """Presence samples for the timeline: away when out of view, present without glances."""
+        glancing = self.config.perception.glance and self._vlm_asker() is not None
+        for person in self.registry.people():
+            here = self.present.get(person.id)
+            camera = here.camera if here else ""
+            if here is None:
+                if person.role == "user" or person.id in self.timeline.current:
+                    activity = "away"
+                else:
+                    continue
+            elif glancing:
+                continue
+            else:
+                activity = "present"
+            for fired in self.timeline.add(person.id, person.name, person.role, activity, now):
+                await self._fired(fired, camera)
+
+    async def look(self, camera: str | None = None) -> dict[str, Any]:
+        """A fresh look at a camera: its newest picture and, with a vision model, what it shows."""
+        cameras = sorted(self.frames, key=lambda c: -self.frames[c][1])
+        if camera is None:
+            camera = cameras[0] if cameras else None
+        if camera is None or camera not in self.frames:
+            raise CompanionError("no picture from any camera yet", code="no_frame")
+        jpeg, at = self.frames[camera]
+        tracker = self.trackers.get(camera)
+        marks = marks_for(tracker.active if tracker else [])
+        out: dict[str, Any] = {
+            "camera": camera,
+            "at": at,
+            "jpeg": jpeg,
+            "people": [{"mark": m.letter, "who": m.label} for m in marks],
+            "description": None,
+        }
+        ask = self._vlm_asker()
+        if ask is not None:
+            picture = await asyncio.to_thread(marked_picture, jpeg, marks)
+            legend = "; ".join(f"[{m.letter}] {m.label}" for m in marks) or "nobody"
+            text = str(await ask([picture], LOOK_QUESTION.format(legend=legend), max_tokens=200))
+            out["description"] = text.strip()
+            self.state.description[camera] = (time.time(), out["description"])
+        return out
 
     async def _pull(self, camera_id: str, fps: float) -> None:
         step = 1.0 / fps
@@ -612,9 +781,24 @@ class PerceptionService:
             },
             "pictures": self.registry.pictures(),
             "strangers": len(self.registry.strangers()),
+            "glance": {
+                "enabled": self.config.perception.glance,
+                "running": self._glance_task is not None and not self._glance_task.done(),
+                "interval_s": self.glance_interval(),
+                "glances": self.state.glances,
+                "unparsed": self.state.unparsed,
+                "last_seconds": self.state.last_seconds,
+            },
         }
 
     async def close(self) -> None:
+        if self._glance_task is not None:
+            self._glance_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await self._glance_task
+            self._glance_task = None
+        with contextlib.suppress(Exception):
+            self.timeline.close()
         for _, task in self._loops.values():
             task.cancel()
         self._loops.clear()
