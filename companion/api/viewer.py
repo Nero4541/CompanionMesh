@@ -19,7 +19,17 @@ from companion.api.auth import from_tailnet, from_this_machine
 from companion.core.errors import CompanionError
 from companion.core.runtime import CompanionRuntime
 
-LINE_FIELDS = ("id", "t", "session_id", "role", "text", "device_id", "typed", "cancelled")
+LINE_FIELDS = (
+    "id",
+    "t",
+    "session_id",
+    "role",
+    "text",
+    "device_id",
+    "typed",
+    "cancelled",
+    "speaker",
+)
 
 
 def _runtime(request: Request) -> CompanionRuntime:
