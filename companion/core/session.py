@@ -52,6 +52,7 @@ from companion.vision.pipeline import TurnImage, VisionChannel
 if TYPE_CHECKING:
     from companion.core.config import CompanionConfig
     from companion.core.runtime import CompanionRuntime
+    from companion.perception.routing import Route
     from companion.perception.speakers import Speaker
 
 __all__ = ["DEFAULT_ROLES", "Device", "Outbox", "Session", "State", "parse_roles"]
@@ -205,6 +206,8 @@ class Session:
         self._speak = speak
         self.attention = AttentionEngine(runtime.config.attention)
         self._context_notes: list[AttentionEvent] = []
+        # Sentences not meant for the companion (routing), for the next turn: (when, line).
+        self._overheard: list[tuple[float, str]] = []
         # Events emitted while every conversation device is away (session
         # linger); replayed to the device that comes back. Bounded.
         self._backlog: deque[Envelope] = deque(maxlen=200)
@@ -631,19 +634,92 @@ class Session:
             await self.rest("echo")
             return
         speaker = await self._speaker(attributing)
+        route = await self._route(speaker, transcript.text)
         heard: dict[str, Any] = {"text": transcript.text, "final": True}
+        extra: dict[str, Any] = {}
         if speaker is not None:
-            heard["speaker"] = speaker.to_payload()
-        await self.emit(ev.CONVERSATION_TRANSCRIPT, heard)
+            extra["speaker"] = speaker.to_payload()
+        if route is not None:
+            extra["route"] = route.route
+        await self.emit(ev.CONVERSATION_TRANSCRIPT, {**heard, **extra})
         self.runtime.feed.said(
             self.session_id,
             "user",
             transcript.text,
             device_id=self._mic.device.device_id if self._mic else None,
             recording_id=recording_id,
-            **({"speaker": speaker.to_payload()} if speaker is not None else {}),
+            **extra,
         )
+        if route is not None and route.route != "turn":
+            await self._not_for_me(route, speaker, transcript.text)
+            return
         await self.run_turn(transcript.text, speaker=speaker)
+
+    async def _route(self, speaker: Speaker | None, text: str) -> Route | None:
+        """Whether a sentence is meant for the companion (routing.enabled); None when off."""
+        from companion.perception.routing import FACING_YAW, decide
+
+        cfg = self.runtime.config.routing
+        if not cfg.enabled:
+            return None
+        persona = self.runtime.persona
+        names = cfg.wake_names or [n for n in (persona.display_name, persona.name) if n]
+        last = self.attention.state.last_agent_speech_at
+        since = (self.attention.clock() - last).total_seconds() if last else None
+        facing = False
+        if speaker is not None and speaker.track_id and cfg.facing_cameras:
+            track = self.runtime.perception.find_track(speaker.track_id)
+            facing = (
+                track is not None
+                and track.camera in cfg.facing_cameras
+                and track.yaw is not None
+                and abs(track.yaw) < FACING_YAW
+            )
+        route = decide(
+            speaker,
+            text,
+            wake_names=names,
+            since_companion_spoke_s=since,
+            followup_s=cfg.followup_s,
+            people_around=len(self.runtime.perception.people_here()),
+            facing=facing,
+            alone_means_addressed=cfg.alone_means_addressed,
+            answer_acquaintances=cfg.answer_acquaintances,
+            answer_strangers=cfg.answer_strangers,
+        )
+        payload = {
+            **route.to_payload(),
+            "speaker": speaker.to_payload() if speaker is not None else None,
+        }
+        log.info(
+            "routing decision",
+            extra=kv(session=self.session_id, route=route.route, why="; ".join(route.reasons)),
+        )
+        await self.runtime.bus.publish(
+            make_event(ev.ROUTING_DECISION, {**payload, "session_id": self.session_id})
+        )
+        if cfg.debug:
+            await self.emit_to(self.devices, ev.ROUTING_DECISION, payload)
+        return route
+
+    async def _not_for_me(self, route: Route, speaker: Speaker | None, text: str) -> None:
+        """A sentence not meant for the companion: kept as context, or only logged."""
+        if route.route == "context" and speaker is not None:
+            self.attention.note_user_turn()  # people are talking: no remarks right now
+            self._overheard.append((time.time(), f"{speaker.describe()}: 「{text}」"))
+            del self._overheard[:-10]
+            if speaker.role == "stranger":
+                await self.on_attention_event(
+                    AttentionEvent(
+                        kind="stranger_spoke",
+                        description="Someone the companion does not know (a stranger) spoke.",
+                        salience=0.5,
+                        source="perception",
+                        at=self.attention.clock(),
+                        data={"text_length": len(text)},
+                    )
+                )
+        await self.rest("not for the companion")
 
     async def _keep_recording(
         self, audio: np.ndarray, text: str, outcome: str, stt_s: float
@@ -1042,12 +1118,19 @@ class Session:
             n for n in self._context_notes if (now - n.at).total_seconds() <= CONTEXT_NOTE_MAX_AGE_S
         ]
         self._context_notes = []
-        if not notes:
-            return None
-        lines = "\n".join(
-            f"- {round((now - n.at).total_seconds())} s ago: {n.description}" for n in notes
-        )
-        return f"Noticed since the user's last message:\n{lines}"
+        wall = time.time()
+        overheard = [(t, line) for t, line in self._overheard if wall - t <= CONTEXT_NOTE_MAX_AGE_S]
+        self._overheard = []
+        parts = []
+        if notes:
+            lines = "\n".join(
+                f"- {round((now - n.at).total_seconds())} s ago: {n.description}" for n in notes
+            )
+            parts.append(f"Noticed since the user's last message:\n{lines}")
+        if overheard:
+            lines = "\n".join(f"- {round(wall - t)} s ago, {line}" for t, line in overheard)
+            parts.append(f"Overheard (not said to you):\n{lines}")
+        return "\n\n".join(parts) or None
 
     async def set_quiet(self, quiet: bool) -> None:
         self.attention.set_quiet(quiet)
