@@ -252,6 +252,9 @@ perception:
   picture_check: true       # ask the vlm whether an unknown face is a poster or screen
   static_picture_s: 180     # without a vlm: a face that never moves is a picture
   enrol_seconds: 10
+  glance: false             # the vlm glances at the cameras: who is doing what
+  glance_s: null            # null: 1 s with builtin.vlm, 10 s with another vision model
+  glance_tokens: 120
 
 # Answer only what is meant for the companion (needs perception.speakers):
 # talk between people becomes "overheard" context, strangers' words context,
@@ -265,6 +268,19 @@ routing:
   answer_strangers: false
   facing_cameras: []        # cameras next to the speaker: a face turned to it = addressed
   debug: false              # send routing.decision to clients
+
+# What each person has been doing (from glances, or present/away without them),
+# and rules that turn long activities into events. See docs/people.md.
+timeline:
+  enabled: false
+  sample_s: 60              # presence samples
+  min_switch_s: 120         # a different activity must last this long to end an episode
+  retention_days: 7
+  rules:
+    - {id: gaming-2h, activity: gaming, min_minutes: 120}
+    - {id: computer-90min, activity: desk_computer, min_minutes: 90}
+    - {id: phone-in-bed-late, activity: phone, posture: lying_down, after: "00:30", before: "05:00"}
+    - {id: back-after-4h, activity: away, min_minutes: 240, when: after, person: user}
 
 # IP cameras and phones the server watches itself (or use the dashboard's
 # Cameras page). Logins come from .env, never from the URL.
