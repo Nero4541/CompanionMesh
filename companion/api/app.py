@@ -18,6 +18,7 @@ from companion.api import (
     http,
     maintain,
     observe,
+    people,
     realtime,
     updates,
     viewer,
@@ -75,6 +76,7 @@ def create_app(
     app.include_router(admin.router)
     app.include_router(admin.events_router)
     app.include_router(builtin.router)
+    app.include_router(people.router)
     app.include_router(edge_admin.router)
     app.include_router(observe.router)
     app.include_router(maintain.router)
