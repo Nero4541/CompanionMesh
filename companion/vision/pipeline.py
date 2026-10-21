@@ -190,6 +190,9 @@ class VisionChannel:
             self.runtime.frames[device_id] = LastFrame(
                 data, str(payload.get("mime") or "image/jpeg"), reason
             )
+            # Faces (perception.enabled): every picture, also live ones; skipped while busy.
+            if str(payload.get("mime") or "image/jpeg") == "image/jpeg":
+                self.runtime.perception.offer_frame(device_id, data)
         if reason == "live":
             return "accepted"  # for the dashboard's live view only, not for vision
         manual = reason in MANUAL_REASONS
@@ -273,6 +276,12 @@ class VisionChannel:
         )
         status = await self._status(frame_id, "accepted")
         change = self.scene.observe(frame_hash, frame.received_at, frame.device_id)
+        if (
+            change is not None
+            and change.kind == "activity_resumed"
+            and self.runtime.perception.ready
+        ):
+            change = None  # perception tells who came back (user_returned, person_arrived)
         if change is not None:
             await self.session.on_attention_event(change)
         elif event is not None and self.mode == "agent":
