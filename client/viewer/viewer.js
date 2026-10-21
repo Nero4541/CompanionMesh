@@ -63,7 +63,10 @@ function renderLines() {
     li.className = `line ${line.role === "user" ? "user" : "assistant"}`;
     const meta = document.createElement("span");
     meta.className = "meta";
-    const who = line.role === "user" ? (line.typed ? "typed" : "heard") : "companion";
+    const SPEAKER = { stranger: "a stranger", media: "TV / media", unknown: "someone" };
+    const sp = line.speaker;
+    const heard = sp ? sp.name ?? SPEAKER[sp.role] ?? "heard" : "heard";
+    const who = line.role === "user" ? (line.typed ? "typed" : heard) : "companion";
     meta.textContent = [time(line.t), who, line.device_id, line.cancelled ? "cut off" : null]
       .filter(Boolean)
       .join(" · ");
