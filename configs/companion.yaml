@@ -244,6 +244,19 @@ perception:
   static_picture_s: 180     # without a vlm: a face that never moves is a picture
   enrol_seconds: 10
 
+# Answer only what is meant for the companion (needs perception.speakers):
+# talk between people becomes "overheard" context, strangers' words context,
+# the TV is only logged. See docs/people.md.
+routing:
+  enabled: false
+  wake_names: []            # empty: the persona's display name and file name
+  followup_s: 20            # after the companion spoke, anyone known may answer it
+  alone_means_addressed: true
+  answer_acquaintances: true
+  answer_strangers: false
+  facing_cameras: []        # cameras next to the speaker: a face turned to it = addressed
+  debug: false              # send routing.decision to clients
+
 # IP cameras and phones the server watches itself (or use the dashboard's
 # Cameras page). Logins come from .env, never from the URL.
 cameras: []
