@@ -230,6 +230,101 @@ class FaceStep:
         return {"faces_engine_ms": float(np.mean(self.ms))} if self.ms else {}
 
 
+class SpeakerStep:
+    """Who said each utterance: its voice, the faces in view and their lips (FaceStep first).
+
+    Scores utterances of a second or more: a labelled person must be named; a
+    stranger or the TV must not be taken for anyone known. TV lines taken for
+    the user are counted on their own (it must never happen).
+    """
+
+    name = "speakers"
+
+    def __init__(
+        self,
+        backend: Any,
+        registry: Any,
+        *,
+        voice_threshold: float = 0.5,
+        voice_margin: float = 0.15,
+        left_after_s: float = 60.0,
+    ) -> None:
+        self.backend = backend
+        self.registry = registry
+        self.voice_threshold = voice_threshold
+        self.voice_margin = voice_margin
+        self.left_after_s = left_after_s
+
+    async def frame(self, frame: VideoFrame, ctx: ReplayContext) -> None:
+        return None
+
+    async def utterance(
+        self, utterance: LabelledUtterance, audio: np.ndarray, ctx: ReplayContext
+    ) -> dict[str, Any]:
+        from companion.perception.speakers import attribute
+        from companion.perception.tracker import talking_track
+
+        voice = voice_to = None
+        if audio.size >= 1600 and self.registry.voice_people():
+            emb = await self.backend.voice(audio)
+            if emb is not None:
+                voice = self.registry.match_voice(emb, self.voice_threshold, 0.0)
+                voice_to = self.registry.voice_similarities(emb)
+        tracker = ctx.shared.get("tracker")
+        visible, talking, around = [], None, {}
+        if tracker is not None:
+            visible = tracker.visible_between(utterance.start, utterance.end)
+            talking, _ = talking_track(visible, utterance.start, utterance.end, tracker.fps)
+            for track in tracker.tracks.values():
+                recent = track.last_t >= utterance.start - self.left_after_s
+                if track.person_id and track.name and recent and track.first_t <= utterance.end:
+                    around[track.person_id] = (track.name, track.role)
+        speaker = attribute(
+            duration_s=utterance.duration_s,
+            voice=voice,
+            voice_to=voice_to,
+            visible=visible,
+            talking=talking,
+            around=around,
+            voice_margin=self.voice_margin,
+        )
+        ctx.shared.setdefault("speakers", []).append(speaker)
+        return {
+            "speaker": speaker.name or speaker.role,
+            "speaker_role": speaker.role,
+            "how": speaker.how,
+            "confidence": speaker.confidence,
+            "voice": None if voice is None else voice.closest,
+            "voice_score": None if voice is None else voice.score,
+            "voice_margin": None if voice is None else voice.margin,
+        }
+
+    def summary(self, ctx: ReplayContext, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        from collections import Counter
+
+        def right(row: dict[str, Any]) -> bool:
+            if row["label"] in ctx.labels.people:
+                return bool(row["speaker"] == row["label"])
+            return row["speaker_role"] in ("stranger", "media", "unknown")
+
+        long = [r for r in rows if r["end"] - r["start"] >= 1.0]
+        short = [r for r in rows if r["end"] - r["start"] < 1.0]
+        confusion: Counter[str] = Counter(f"{r['label']} -> {r['speaker']}" for r in long)
+        hows: Counter[str] = Counter(f"{r['how']}:{'right' if right(r) else 'wrong'}" for r in long)
+        return {
+            "utterances_1s": len(long),
+            "right_1s": sum(right(r) for r in long),
+            "accuracy_1s": sum(right(r) for r in long) / len(long) if long else None,
+            "right_short": sum(right(r) for r in short),
+            "short": len(short),
+            "media_as_user": sum(
+                1 for r in rows if r["label"] == "media" and r["speaker_role"] == "user"
+            ),
+            "confusion_1s": dict(sorted(confusion.items())),
+            "how_1s": dict(sorted(hows.items())),
+        }
+
+
 async def run_replay(
     labels: Labels,
     steps: Sequence[Step],
@@ -411,6 +506,15 @@ def run_cli(args: Any, config: Any) -> int:
                         face_threshold=people.face_threshold,
                         face_margin=people.face_margin,
                         min_face_px=config.perception.min_face_px,
+                    )
+                )
+                steps.append(
+                    SpeakerStep(
+                        backend,
+                        registry,
+                        voice_threshold=people.voice_threshold,
+                        voice_margin=people.voice_margin,
+                        left_after_s=config.perception.left_after_s,
                     )
                 )
             return steps
