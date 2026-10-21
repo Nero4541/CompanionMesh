@@ -325,6 +325,85 @@ class SpeakerStep:
         }
 
 
+class RoutingStep:
+    """Whether each utterance would be answered (SpeakerStep first).
+
+    No turn may come from a line not addressed to the companion (talk between
+    people, strangers, the TV); addressed lines must still be answered.
+    """
+
+    name = "routing"
+
+    def __init__(
+        self,
+        *,
+        wake_names: list[str] | None = None,
+        followup_s: float = 20.0,
+        alone_means_addressed: bool = True,
+        left_after_s: float = 60.0,
+    ) -> None:
+        self.wake_names = wake_names or []
+        self.followup_s = followup_s
+        self.alone_means_addressed = alone_means_addressed
+        self.left_after_s = left_after_s
+
+    async def frame(self, frame: VideoFrame, ctx: ReplayContext) -> None:
+        return None
+
+    def _around(self, ctx: ReplayContext, utterance: LabelledUtterance) -> int:
+        tracker = ctx.shared.get("tracker")
+        if tracker is None:
+            return 0
+        known, strangers = set(), 0
+        for track in tracker.tracks.values():
+            if track.kind != "person" or track.first_t > utterance.end:
+                continue
+            if track.person_id and track.last_t >= utterance.start - self.left_after_s:
+                known.add(track.person_id)
+            elif not track.person_id and track.last_t >= utterance.end - 1.0:
+                strangers += 1
+        return len(known) + strangers
+
+    async def utterance(
+        self, utterance: LabelledUtterance, audio: np.ndarray, ctx: ReplayContext
+    ) -> dict[str, Any]:
+        from companion.perception.routing import decide
+
+        speakers = ctx.shared.get("speakers") or [None]
+        route = decide(
+            speakers[-1],
+            utterance.text,
+            wake_names=self.wake_names,
+            since_companion_spoke_s=None,
+            followup_s=self.followup_s,
+            people_around=self._around(ctx, utterance),
+            facing=False,
+            alone_means_addressed=self.alone_means_addressed,
+        )
+        return {"route": route.route, "route_why": route.reasons[0] if route.reasons else ""}
+
+    def summary(self, ctx: ReplayContext, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        from collections import Counter
+
+        people = ctx.labels.people
+        not_meant = [r for r in rows if not r["addressed"]]
+        addressed = [r for r in rows if r["addressed"]]
+
+        def kind(row: dict[str, Any]) -> str:
+            if row["label"] in ("media", "stranger"):
+                return str(row["label"])
+            return "known" if row["label"] in people else "unknown"
+
+        return {
+            "utterances": len(rows),
+            "not_addressed": len(not_meant),
+            "turns_not_addressed": sum(1 for r in not_meant if r["route"] == "turn"),
+            "addressed": len(addressed),
+            "addressed_answered": sum(1 for r in addressed if r["route"] == "turn"),
+            "routes": dict(sorted(Counter(f"{kind(r)}:{r['route']}" for r in rows).items())),
+        }
+
+
 async def run_replay(
     labels: Labels,
     steps: Sequence[Step],
@@ -443,6 +522,12 @@ def add_arguments(parser: Any) -> None:
         "built-in one with the perception settings",
     )
     parser.add_argument("--no-faces", action="store_true", help="do not look at faces")
+    parser.add_argument(
+        "--wake-name",
+        action="append",
+        default=[],
+        help="a name of the companion that means it is spoken to (repeatable)",
+    )
 
 
 async def _backend(args: Any, config: Any) -> tuple[Any, Any]:
@@ -514,6 +599,14 @@ def run_cli(args: Any, config: Any) -> int:
                         registry,
                         voice_threshold=people.voice_threshold,
                         voice_margin=people.voice_margin,
+                        left_after_s=config.perception.left_after_s,
+                    )
+                )
+                steps.append(
+                    RoutingStep(
+                        wake_names=config.routing.wake_names or args.wake_name,
+                        followup_s=config.routing.followup_s,
+                        alone_means_addressed=config.routing.alone_means_addressed,
                         left_after_s=config.perception.left_after_s,
                     )
                 )
