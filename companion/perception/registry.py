@@ -378,13 +378,21 @@ class PeopleRegistry:
         best[index.voice_owner] = sims
         return self._decide(best, index.people, threshold, margin)
 
+    def voice_similarities(self, embedding: np.ndarray) -> dict[str, float]:
+        """Similarity of a voice to each person with voice samples, by person id."""
+        index = self._index
+        if not len(index.voices) or index.voices.shape[1] != np.asarray(embedding).size:
+            return {}
+        sims = index.voices @ _unit(embedding)
+        return {index.people[i].id: float(s) for i, s in zip(index.voice_owner, sims, strict=True)}
+
     @staticmethod
     def _decide(best: np.ndarray, people: list[Person], threshold: float, margin: float) -> Match:
         order = np.argsort(-best)
         top = float(best[order[0]])
         second = float(best[order[1]]) if len(order) > 1 else -1.0
         person = people[int(order[0])]
-        gap = top - max(second, 0.0) if second > -1.0 else top
+        gap = top - second if len(order) > 1 else top
         if top >= threshold and top - second >= margin:
             return Match(person.id, person.name, person.role, top, gap, person.name)
         return Match(None, None, "stranger", top, gap, person.name)
