@@ -47,6 +47,7 @@ def _person(runtime: CompanionRuntime, person: Person) -> dict[str, Any]:
     return {
         **person.public(),
         **runtime.perception.registry.counts(person.id),
+        "voice_candidates": len(runtime.perception.voice_candidates.get(person.id, [])),
         "here": here is not None,
         "camera": here.camera if here else None,
     }
@@ -137,6 +138,7 @@ async def delete(request: Request, person_id: str) -> dict[str, Any]:
     _found(runtime, person_id)
     runtime.perception.registry.delete(person_id)
     runtime.perception.present.pop(person_id, None)
+    runtime.perception.voice_candidates.pop(person_id, None)
     log.info("person deleted", extra=kv(person=person_id))
     return {"deleted": person_id}
 
@@ -262,6 +264,18 @@ async def add_voice(request: Request, person_id: str) -> dict[str, Any]:
         "left_out": len(clips) - len(keep),
         "voice_samples": total or registry.counts(person_id)["voice_samples"],
     }
+
+
+@router.post("/{person_id}/voice/candidates")
+async def add_candidates(request: Request, person_id: str) -> dict[str, Any]:
+    """Add the voice samples heard lately with voice, face and lips agreeing."""
+    runtime = _runtime(request)
+    _found(runtime, person_id)
+    queue = runtime.perception.voice_candidates.pop(person_id, [])
+    total = runtime.perception.registry.counts(person_id)["voice_samples"]
+    for emb, clip in queue:
+        total = runtime.perception.registry.add_voice(person_id, emb, clip)
+    return {"added": len(queue), "voice_samples": total}
 
 
 @router.delete("/{person_id}/voice")
