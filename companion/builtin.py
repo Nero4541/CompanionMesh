@@ -1,10 +1,11 @@
-"""Built-in engines the server installs and runs itself: speech (STT, TTS) and vision (VLM).
+"""Built-in engines the server installs and runs itself: speech (STT, TTS) and perception.
 
 Each engine is a small project under ``builtin/<name>`` with its own locked
 dependencies, installed with uv into ``builtin/<name>/.venv`` and run as a
-child process that serves the OpenAI audio or chat API on 127.0.0.1. Its models live
-next to it in ``builtin/<name>/models``. The runtime talks to it as to any
-other OpenAI-compatible server.
+child process that serves HTTP on 127.0.0.1: the speech engines the OpenAI
+audio API (the runtime talks to them as to any other OpenAI-compatible
+server), perception its own small API for faces and voices. Its models live
+next to it in ``builtin/<name>/models``.
 
 Turning an engine off ends its process, which frees all of its GPU memory at
 once. An engine also exits by itself when the server goes away, however it
@@ -42,9 +43,10 @@ from companion.core.logging import kv
 log = logging.getLogger(__name__)
 
 PROJECTS = Path(__file__).resolve().parents[1] / "builtin"
-ENGINES = ("stt", "tts", "vlm")
+ENGINES = ("stt", "tts", "perception")
+SPEECH = ("stt", "tts")  # engines that stand in for stt.provider / tts.provider
 # Engines whose PyTorch has to be named for a CPU install (STT runs on CPU without extras).
-TORCH_ENGINES = ("tts", "vlm")
+TORCH_ENGINES = ("tts", "perception")
 LOG_LINES = 200
 STOP_WAIT_S = 5.0
 
@@ -126,6 +128,8 @@ class WorkerSpec:
 
 
 def engine_enabled(name: str, config: CompanionConfig) -> bool:
+    if name == "perception":
+        return config.perception.enabled
     return bool(getattr(config.builtin, name).enabled)
 
 
@@ -133,7 +137,7 @@ def engine_enabled(name: str, config: CompanionConfig) -> bool:
 ENGINE_SETTINGS = {
     "stt": ("builtin.stt", "model"),
     "tts": ("builtin.tts", "checkpoint"),
-    "vlm": ("builtin.vlm", "model"),
+    "perception": ("perception", "face_model"),
 }
 
 
@@ -148,22 +152,18 @@ def engine_model(name: str, config: CompanionConfig) -> str:
 def worker_spec(name: str, config: CompanionConfig) -> WorkerSpec | None:
     """The engine ``name`` as the config wants it, or None when it is off."""
     libraries = resolve_libraries(config)
-    if name == "vlm":
-        vlm = config.builtin.vlm
-        if not vlm.enabled:
+    if name == "perception":
+        perception = config.perception
+        if not perception.enabled:
             return None
         return WorkerSpec(
             args=(
-                "--model",
-                vlm.model,
+                "--faces",
+                perception.face_model,
+                "--voice",
+                perception.voice_model,
                 "--device",
-                vlm.device,
-                "--precision",
-                vlm.precision,
-                "--fused",
-                "on" if vlm.fused else "off",
-                "--max-side",
-                str(max(1280, config.vlm.max_image_side)),
+                perception.device,
             ),
             libraries=libraries,
         )
