@@ -224,8 +224,8 @@ metrics:
 people:
   face_threshold: 0.45      # how alike a face must be to someone's samples
   face_margin: 0.10         # and this far ahead of the next person
-  voice_threshold: 0.5
-  voice_margin: 0.15
+  voice_threshold: 0.3      # voices are less alike than faces
+  voice_margin: 0.05
   max_face_samples: 40
   stranger_retention_h: 24  # unknown faces are forgotten after this
 
@@ -234,6 +234,7 @@ people:
 # .env, or download it into builtin/perception/models. See docs/people.md.
 perception:
   enabled: false
+  speakers: false           # who said each sentence (voice, faces, lips), told to the agent
   device: auto              # auto | cuda | cpu
   face_model: buffalo_l
   voice_model: speaker-diarization-community-1   # or none
