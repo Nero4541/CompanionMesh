@@ -109,6 +109,10 @@ Server -> client
     attention.state          payload: {proactive, quiet, speech_blockers}
     attention.decision       payload: {kind, description, salience, source,
                              decision, reasons}  (only with attention.debug)
+    attention.proactive      payload: {kind, action, reason, parsed, by, session_id}
+                             (1.4, event bus / dashboard only) what the agent (by: agent)
+                             or the triage model (by: triage) decided about an event,
+                             with attention.decisions: reply | silent | remember
     routing.decision         payload: {route, reasons, speaker}  (1.4, only with
                              routing.debug) why a sentence was answered or not
     presence.update          payload: {people: [{person_id, name, role, since,
@@ -203,6 +207,7 @@ ATTENTION_STATE = "attention.state"
 ATTENTION_DECISION = "attention.decision"
 PRESENCE_UPDATE = "presence.update"
 ROUTING_DECISION = "routing.decision"
+ATTENTION_PROACTIVE = "attention.proactive"
 METRICS_TURN = "metrics.turn"
 DEVICE_CONFIG_SET = "device.config.set"
 DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
