@@ -81,7 +81,10 @@ Server -> client
     system.ping              payload: {ping_id, t_server}  (clock sync and round trip)
     system.error             payload: {code, message, recoverable}
     audio.vad                payload: {state: "speech_start" | "speech_end"}
-    conversation.transcript  payload: {text, final}
+    conversation.transcript  payload: {text, final, speaker?}  speaker (1.4, with
+                             perception.speakers): {person_id, name, role, confidence,
+                             on_screen, how}; role: user | acquaintance | stranger |
+                             media | unknown
     conversation.response.start  payload: {turn_id, proactive?, reason?}
     conversation.response.delta  payload: {turn_id, text}
     conversation.response.done   payload: {turn_id, text, cancelled, reason?, heard_text?}
