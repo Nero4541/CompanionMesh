@@ -1,0 +1,59 @@
+# The built-in perception: faces (InsightFace's buffalo_l models on onnxruntime)
+# and voices (pyannote's WeSpeaker model), installed and run by the Companion
+# Server in a virtual environment of its own (builtin/perception/.venv).
+# Not a package: `uv sync --project builtin/perception --extra cuda|cpu` installs it.
+
+[project]
+name = "companion-builtin-perception"
+version = "1.0.0"
+description = "Faces and voices for the Companion Server's perception"
+requires-python = ">=3.11,<3.12"
+dependencies = [
+    "numpy>=1.26,<3",
+    "opencv-python-headless>=4.9",
+    "pyannote.audio>=4.0.7,<4.1",
+    "soundfile>=0.12",
+    "fastapi>=0.115",
+    "uvicorn>=0.32",
+    # Model downloads trust the OS certificate store (proxies, antivirus HTTPS scanning).
+    "truststore>=0.10",
+]
+
+[project.optional-dependencies]
+# onnxruntime-gpu finds CUDA 12 and cuDNN 9 through PyTorch's own copies.
+cuda = [
+    "torch>=2.8.0,<2.9.0",
+    "torchaudio>=2.8.0,<2.9.0",
+    "onnxruntime-gpu>=1.22,<1.24",
+]
+cpu = [
+    "torch>=2.8.0,<2.9.0",
+    "torchaudio>=2.8.0,<2.9.0",
+    "onnxruntime>=1.22,<1.24",
+]
+
+[tool.uv]
+package = false
+conflicts = [[{ extra = "cuda" }, { extra = "cpu" }]]
+# pyannote.audio reads files with torchcodec, whose builds follow PyTorch's: 0.7 goes with 2.8.
+constraint-dependencies = ["torchcodec>=0.7,<0.8"]
+
+[tool.uv.sources]
+torch = [
+    { index = "pytorch-cu128", extra = "cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+torchaudio = [
+    { index = "pytorch-cu128", extra = "cuda", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+    { index = "pytorch-cpu", extra = "cpu", marker = "sys_platform == 'linux' or sys_platform == 'win32'" },
+]
+
+[[tool.uv.index]]
+name = "pytorch-cu128"
+url = "https://download.pytorch.org/whl/cu128"
+explicit = true
+
+[[tool.uv.index]]
+name = "pytorch-cpu"
+url = "https://download.pytorch.org/whl/cpu"
+explicit = true
