@@ -1299,9 +1299,18 @@ class Session:
                 lines.append("People here now: " + "; ".join(people) + ".")
             else:
                 lines.append("Nobody is in view of the cameras.")
-        timeline = getattr(self.runtime, "timeline", None)
-        if timeline is not None:
-            lines.extend(timeline.context_lines())
+        if self.runtime.config.timeline.enabled:
+            lines.extend(perception.timeline.context_lines())
+        doing = perception.state.doing if perception.ready else {}
+        if doing:
+            now = time.time()
+            parts = [
+                f"{d.name or 'a stranger'}: {d.activity.replace('_', ' ')}"
+                f" for {max(1, round((now - d.since) / 60))} min"
+                + (f", looking at {d.looking_at}" if d.looking_at else "")
+                for d in doing.values()
+            ]
+            lines.append("Doing now: " + "; ".join(parts) + ".")
         lines.append("Time now: " + datetime.now(zone).strftime("%A %H:%M") + ".")
         return lines
 
