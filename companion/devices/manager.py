@@ -130,6 +130,14 @@ class CameraManager:
             raise CompanionError(f"camera {camera_id!r} is not running")
         return await asyncio.wait_for(running.device.source.grab(), PROBE_TIMEOUT_S)
 
+    def running_ids(self) -> set[str]:
+        return {cid for cid, r in self._running.items() if not r.task.done()}
+
+    def source(self, camera_id: str) -> Any:
+        """The open frame source of a running camera (None while it is still opening)."""
+        running = self._running.get(camera_id)
+        return running.device.source if running is not None else None
+
     def status(self) -> list[dict[str, Any]]:
         out: list[dict[str, Any]] = []
         for camera in self._configured:
