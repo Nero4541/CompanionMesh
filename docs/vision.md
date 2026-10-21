@@ -71,7 +71,7 @@ cameras:
     enabled: true
 ```
 
-Each camera names its own login variables, so cameras with different logins work side by side. Credentials in a camera's `url` are refused here, because the URL is shown on the dashboard and in `/v1/config`.
+Each camera names its own login variables, so cameras with different logins work side by side. With [perception](people.md) on, the server also looks for faces on each of these cameras `perception_fps` times a second (10 by default), straight from the camera's stream. Credentials in a camera's `url` are refused here, because the URL is shown on the dashboard and in `/v1/config`.
 
 **Visual events.** Frames sent because something changed carry what the camera's detector saw (`event: {kind, score, area}`). They are prioritized: frames you asked for come first, then big changes, then routine frames. Vetted change frames skip the duplicate check, and important ones skip the rate limit. In VLM mode, frames wait in a small priority queue, and stale routine frames are dropped when the model is busy. Changes become events for the [attention engine](proactive.md): in VLM mode with the model's description of the frame, in agent mode as "something moved", with the frame itself handed to the agent if it comes to a proactive turn. A clear change can lead to one; small movements stay context.
 
