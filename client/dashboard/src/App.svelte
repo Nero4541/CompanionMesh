@@ -12,6 +12,7 @@
   import People from "./pages/People.svelte";
   import Personas from "./pages/Personas.svelte";
   import Speech from "./pages/Speech.svelte";
+  import Timeline from "./pages/Timeline.svelte";
   import Updates from "./pages/Updates.svelte";
   import Vision from "./pages/Vision.svelte";
 
@@ -21,6 +22,8 @@
     { id: "config", label: "Configuration", component: Config },
     { id: "speech", label: "Speech", component: Speech },
     { id: "people", label: "People", component: People },
+    { id: "vision", label: "Vision", component: Vision },
+    { id: "timeline", label: "Timeline", component: Timeline },
     { id: "personas", label: "Personas", component: Personas },
     { id: "cameras", label: "Cameras", component: Cameras },
     { id: "devices", label: "Devices", component: Devices },
