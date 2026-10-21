@@ -53,6 +53,7 @@ Use a shorter `vad.min_silence_ms` (e.g. 700) for snappier turns if you speak in
 |---|---|
 | Whisper `large-v3-turbo`, fp16 | ~2.3 GB |
 | Irodori-TTS `v4.1-Small`, fp32 | ~4 GB |
+| Perception engine (faces and voices, [people](people.md)) | ~0.6 GB |
 | Built-in VLM, Mage-VL 4B in FP8 (RTX 40 series and newer) | ~6.4 GB with its fused kernels (BF16 on older cards: ~9 GB) |
 | Other VLM | depends on the model; small models (a few billion parameters) are enough |
 | LLM | depends on model and context size; usually by far the largest |
