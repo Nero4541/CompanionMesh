@@ -219,6 +219,30 @@ metrics:
   window: 200                   # samples kept per stage for percentiles
   emit_turn: false              # also send per-turn timings to clients (metrics.turn)
 
+# People the companion knows (the dashboard's People page adds them). Face and
+# voice samples stay in data/people; the agent only gets names. See docs/people.md.
+people:
+  face_threshold: 0.45      # how alike a face must be to someone's samples
+  face_margin: 0.10         # and this far ahead of the next person
+  voice_threshold: 0.5
+  voice_margin: 0.15
+  max_face_samples: 40
+  stranger_retention_h: 24  # unknown faces are forgotten after this
+
+# Who is around: faces on every camera, tracked and named, by the built-in
+# perception engine (builtin/perception). The voice model is gated: HF_TOKEN in
+# .env, or download it into builtin/perception/models. See docs/people.md.
+perception:
+  enabled: false
+  device: auto              # auto | cuda | cpu
+  face_model: buffalo_l
+  voice_model: speaker-diarization-community-1   # or none
+  min_face_px: 40
+  left_after_s: 60          # out of view this long = gone
+  picture_check: true       # ask the vlm whether an unknown face is a poster or screen
+  static_picture_s: 180     # without a vlm: a face that never moves is a picture
+  enrol_seconds: 10
+
 # IP cameras and phones the server watches itself (or use the dashboard's
 # Cameras page). Logins come from .env, never from the URL.
 cameras: []
@@ -227,3 +251,4 @@ cameras: []
 #    username_env: CAMERA_USERNAME
 #    password_env: CAMERA_PASSWORD
 #    mode: change                             # change | periodic (with interval_s)
+#    perception_fps: 10                       # with perception on: pictures a second for faces
