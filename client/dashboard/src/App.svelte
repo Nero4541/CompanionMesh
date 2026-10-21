@@ -9,6 +9,7 @@
   import Events from "./pages/Events.svelte";
   import Metrics from "./pages/Metrics.svelte";
   import Overview from "./pages/Overview.svelte";
+  import People from "./pages/People.svelte";
   import Personas from "./pages/Personas.svelte";
   import Speech from "./pages/Speech.svelte";
   import Updates from "./pages/Updates.svelte";
@@ -19,7 +20,7 @@
     { id: "metrics", label: "Latency", component: Metrics },
     { id: "config", label: "Configuration", component: Config },
     { id: "speech", label: "Speech", component: Speech },
-    { id: "vision", label: "Vision", component: Vision },
+    { id: "people", label: "People", component: People },
     { id: "personas", label: "Personas", component: Personas },
     { id: "cameras", label: "Cameras", component: Cameras },
     { id: "devices", label: "Devices", component: Devices },
