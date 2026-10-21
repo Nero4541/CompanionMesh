@@ -117,6 +117,119 @@ class MediaStep:
         }
 
 
+def _jpeg(rgb: np.ndarray) -> bytes:
+    import io
+
+    from PIL import Image
+
+    out = io.BytesIO()
+    Image.fromarray(rgb).save(out, format="JPEG", quality=90)
+    return out.getvalue()
+
+
+class FaceStep:
+    """Faces through the perception engine and the tracker, as the server does it.
+
+    Scores the labelled faces: the track whose box covers a labelled face is
+    named (after all its frames have voted) and compared with the label.
+    """
+
+    name = "faces"
+
+    def __init__(
+        self,
+        backend: Any,
+        registry: Any,
+        *,
+        face_threshold: float = 0.45,
+        face_margin: float = 0.10,
+        min_face_px: int = 40,
+    ) -> None:
+        from companion.perception.tracker import FaceTracker
+
+        self.backend = backend
+        self.registry = registry
+        self.tracker = FaceTracker(
+            "replay",
+            lambda e: registry.match_face(e, face_threshold, face_margin),
+            min_face_px=min_face_px,
+            history_s=1e9,  # keep every track for the summary
+        )
+        self.ms: list[float] = []
+        self.spots: list[tuple[str, str | None]] = []  # (label, track id or None)
+        self._next_label = 0
+
+    async def frame(self, frame: VideoFrame, ctx: ReplayContext) -> None:
+        from companion.perception.tracker import iou, thumbnail
+
+        jpeg = await asyncio.to_thread(_jpeg, frame.rgb)
+        found = await self.backend.faces(jpeg)
+        self.ms.append(found.ms)
+        thumb = await asyncio.to_thread(thumbnail, frame.rgb)
+        self.tracker.update(frame.t, found.faces, thumb)
+        ctx.shared["tracker"] = self.tracker
+        labels = ctx.labels.faces
+        while self._next_label < len(labels) and labels[self._next_label].t <= frame.t + 1e-3:
+            label = labels[self._next_label]
+            self._next_label += 1
+            if frame.t - label.t > 0.5:
+                continue  # no frame close enough to this label
+            best, best_iou = None, 0.3
+            for track in self.tracker.tracks.values():
+                if track.last_t == frame.t:
+                    overlap = iou(label.box, track.box)
+                    if overlap > best_iou:
+                        best, best_iou = track.id, overlap
+            self.spots.append((label.who, best))
+
+    async def utterance(
+        self, utterance: LabelledUtterance, audio: np.ndarray, ctx: ReplayContext
+    ) -> dict[str, Any]:
+        return {}
+
+    def _got(self, track_id: str | None) -> str:
+        track = self.tracker.tracks.get(track_id) if track_id else None
+        if track is None:
+            return "missed"
+        if track.kind == "picture":
+            return "picture"
+        return track.name or "stranger"
+
+    def summary(self, ctx: ReplayContext, rows: list[dict[str, Any]]) -> dict[str, Any]:
+        from collections import Counter
+
+        role = ctx.labels.role_of
+        confusion: Counter[str] = Counter()
+        by_track: dict[str, Counter[str]] = {}
+        right = role_right = 0
+        for who, track_id in self.spots:
+            got = self._got(track_id)
+            confusion[f"{who} -> {got}"] += 1
+            right += got == who
+            role_right += role(got) == role(who)
+            if track_id is not None:
+                by_track.setdefault(track_id, Counter())[who] += 1
+        tracks_right = sum(
+            self._got(tid) == votes.most_common(1)[0][0] for tid, votes in by_track.items()
+        )
+        tracks = self.tracker.tracks.values()
+        return {
+            "tracks": len(self.tracker.tracks),
+            "tracks_named": sum(1 for t in tracks if t.person_id),
+            "labelled_faces": len(self.spots),
+            "faces_right": right,
+            "faces_role_right": role_right,
+            "faces_missed": sum(1 for _, t in self.spots if t is None),
+            "labelled_tracks": len(by_track),
+            "labelled_tracks_right": tracks_right,
+            "track_accuracy": tracks_right / len(by_track) if by_track else None,
+            "confusion": dict(sorted(confusion.items())),
+        }
+
+    def timing(self) -> dict[str, float]:
+        return {"faces_engine_ms": float(np.mean(self.ms))} if self.ms else {}
+
+
 async def run_replay(
     labels: Labels,
     steps: Sequence[Step],
@@ -191,6 +304,10 @@ async def run_replay(
         "summary": {s.name: s.summary(ctx, rows) for s in steps},
     }
     report = _round(report)
+    for step in steps:
+        extra = getattr(step, "timing", None)
+        if extra is not None:
+            timing.update(extra())
     timing["total_s"] = time.perf_counter() - began
     if ctx.frames:
         timing["ms_per_frame"] = 1000 * timing["frames_s"] / ctx.frames
@@ -222,6 +339,42 @@ def add_arguments(parser: Any) -> None:
     parser.add_argument("--fps", type=float, default=10.0, help="frames per second to look at")
     parser.add_argument("--out", type=Path, help="write the report (JSON) here")
     parser.add_argument("--repeat", type=int, default=1, help="run N times and compare")
+    parser.add_argument(
+        "--people", type=Path, help="people folder (default: data/people of this config)"
+    )
+    parser.add_argument(
+        "--engine",
+        help="a running perception engine (http://127.0.0.1:<port>); default: start the "
+        "built-in one with the perception settings",
+    )
+    parser.add_argument("--no-faces", action="store_true", help="do not look at faces")
+
+
+async def _backend(args: Any, config: Any) -> tuple[Any, Any]:
+    """The perception engine to use: the one at --engine, or the built-in one started now."""
+    from companion.perception.client import EngineClient
+
+    if args.engine:
+        client = EngineClient(args.engine)
+        await client.health()
+        return client, None
+    from companion.builtin import Engine, worker_spec
+
+    spec = worker_spec(
+        "perception",
+        config.model_copy(
+            update={"perception": config.perception.model_copy(update={"enabled": True})}
+        ),
+    )
+    engine = Engine("perception")
+    assert spec is not None
+    url = await engine.ensure(spec, config.builtin.start_timeout_s)
+    if url is None:
+        print(f"perception engine: {engine.status.state} {engine.status.error or ''}")
+        return None, None
+    client = EngineClient(url.removesuffix("/v1"))
+    await client.health()
+    return client, engine
 
 
 def run_cli(args: Any, config: Any) -> int:
@@ -236,21 +389,50 @@ def run_cli(args: Any, config: Any) -> int:
         print("error: nothing to replay: no video and no utterances")
         return 2
 
-    def make_steps() -> list[Step]:
-        return [MediaStep()]
+    from companion.perception.registry import PeopleRegistry
 
-    report = asyncio.run(
-        run_repeated(
-            labels,
-            make_steps,
-            args.repeat,
-            fps=args.fps,
-            video=args.video,
-            audio_path=args.audio,
-            start=args.start,
-            end=args.end,
-        )
-    )
+    registry = PeopleRegistry(args.people or config.storage.data_dir / "people")
+    people = config.people
+
+    async def main() -> dict[str, Any]:
+        backend, engine = None, None
+        if not args.no_faces:
+            backend, engine = await _backend(args, config)
+            if backend is None:
+                raise SystemExit("error: the perception engine is not available")
+
+        def make_steps() -> list[Step]:
+            steps: list[Step] = [MediaStep()]
+            if backend is not None:
+                steps.append(
+                    FaceStep(
+                        backend,
+                        registry,
+                        face_threshold=people.face_threshold,
+                        face_margin=people.face_margin,
+                        min_face_px=config.perception.min_face_px,
+                    )
+                )
+            return steps
+
+        try:
+            return await run_repeated(
+                labels,
+                make_steps,
+                args.repeat,
+                fps=args.fps,
+                video=args.video,
+                audio_path=args.audio,
+                start=args.start,
+                end=args.end,
+            )
+        finally:
+            if backend is not None:
+                await backend.aclose()
+            if engine is not None:
+                await engine.stop()
+
+    report = asyncio.run(main())
     text = json.dumps(report, ensure_ascii=False, indent=1)
     if args.out:
         args.out.write_text(text, encoding="utf-8")
