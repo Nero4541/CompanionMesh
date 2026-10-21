@@ -193,6 +193,15 @@ attention:
   context_threshold: 0.4
   speak_threshold: 0.6
   debug: false              # send each decision and its reasons to clients
+  decisions: false          # ask for JSON: reply / silent / remember (instead of [SILENT])
+  triage:                   # a small, fast model asked first (needs decisions)
+    enabled: false
+    base_url: http://127.0.0.1:11434/v1
+    api_key_env: TRIAGE_API_KEY
+    model: default
+    timeout: 30
+    max_tokens: 200
+    extra_body: {}
 
 # Full-duplex conversation (v0.5). Clients that keep the microphone open while
 # the companion speaks (full_duplex in audio.input.start) can cut in.
