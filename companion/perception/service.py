@@ -33,9 +33,10 @@ import numpy as np
 from companion.attention.engine import AttentionEvent
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
-from companion.perception.client import FrameFaces, PerceptionBackend
+from companion.perception.client import FrameFaces, PerceptionBackend, wav_bytes
 from companion.perception.registry import ROLE_TEXT, Match, PeopleRegistry
-from companion.perception.tracker import FaceTracker, Track, jpeg_thumbnail
+from companion.perception.speakers import Speaker, attribute
+from companion.perception.tracker import FaceTracker, Track, jpeg_thumbnail, talking_track
 from companion.protocol import events as ev
 
 if TYPE_CHECKING:
@@ -46,6 +47,8 @@ if TYPE_CHECKING:
 log = logging.getLogger(__name__)
 
 STRANGER_CHECK_S = 1.5  # an unknown face this long gets its one picture check
+CANDIDATE_S = 1.5  # utterances this long, with voice, face and lips agreeing, are voice samples
+MAX_CANDIDATES = 20
 HOUSEKEEPING_S = 5.0
 SAVE_STRANGERS_S = 60.0
 PICTURE_QUESTION = (
@@ -128,6 +131,8 @@ class PerceptionService:
         self._housekeeping: asyncio.Task[None] | None = None
         self._last_saved = 0.0
         self.picture_asks = 0
+        # Voice samples heard with voice, face and lips agreeing: person id -> [(emb, wav)].
+        self.voice_candidates: dict[str, list[tuple[np.ndarray, bytes]]] = {}
 
     # -- state -------------------------------------------------------------------
 
@@ -475,6 +480,65 @@ class PerceptionService:
                 last = jpeg
                 await self.analyse(camera_id, jpeg, time.time())
             await asyncio.sleep(max(0.0, step - (time.monotonic() - began)))
+
+    # -- who spoke ---------------------------------------------------------------------
+
+    async def attribute(self, audio: np.ndarray, start: float, end: float) -> Speaker | None:
+        """Who said the utterance heard from ``start`` to ``end`` (None with perception off)."""
+        backend = self.backend
+        if not self.ready or backend is None:
+            return None
+        people = self.config.people
+        voice = voice_to = emb = None
+        if self.registry.voice_people():
+            try:
+                emb = await backend.voice(audio)
+            except CompanionError as exc:
+                log.warning("voice embedding failed", extra=kv(error=str(exc)))
+                emb = None
+            if emb is not None:
+                voice = self.registry.match_voice(emb, people.voice_threshold, 0.0)
+                voice_to = self.registry.voice_similarities(emb)
+        visible: list[Track] = []
+        talking: Track | None = None
+        for tracker in self.trackers.values():
+            seen = tracker.visible_between(start, end)
+            visible.extend(seen)
+            moving, _ = talking_track(seen, start, end, tracker.fps)
+            if moving is not None and talking is None:
+                talking = moving
+        around = {p.person_id: (p.name, p.role) for p in self.present.values()}
+        speaker = attribute(
+            duration_s=end - start,
+            voice=voice,
+            voice_to=voice_to,
+            visible=visible,
+            talking=talking,
+            around=around,
+            voice_margin=people.voice_margin,
+        )
+        if (
+            emb is not None
+            and speaker.person_id
+            and speaker.how == "voice+lips"
+            and end - start >= CANDIDATE_S
+        ):
+            # Voice, face and lips agree: a good new voice sample, kept (in memory only)
+            # until someone adds it on the People page.
+            queue = self.voice_candidates.setdefault(speaker.person_id, [])
+            queue.append((emb, wav_bytes(audio)))
+            del queue[:-MAX_CANDIDATES]
+        log.info(
+            "speaker",
+            extra=kv(
+                who=speaker.name or speaker.role,
+                how=speaker.how,
+                confidence=speaker.confidence,
+                voice=None if voice is None else round(voice.score, 3),
+                seconds=round(end - start, 2),
+            ),
+        )
+        return speaker
 
     # -- enrolling ---------------------------------------------------------------------
 
