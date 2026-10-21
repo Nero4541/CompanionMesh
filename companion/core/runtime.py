@@ -17,7 +17,7 @@ from companion import __version__
 from companion.agent.base import AgentBackend
 from companion.audio.segmenter import UtteranceSegmenter
 from companion.audio.vad import VAD, create_vad
-from companion.builtin import ENGINES, WorkerSpec, builtin_for, worker_spec
+from companion.builtin import ENGINES, SPEECH, WorkerSpec, builtin_for, worker_spec
 from companion.core.bus import EventBus
 from companion.core.config import (
     CompanionConfig,
@@ -37,6 +37,7 @@ from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.devices.registry import DeviceRegistry
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
+from companion.perception.service import PerceptionService
 from companion.protocol import events as ev
 from companion.protocol import make_event
 from companion.providers.stt.base import STTProvider
@@ -66,6 +67,8 @@ class Providers:
     vlm: VLMProvider | None = None
     vad_factory: Any = None  # Callable[[], VAD]
     camera_factory: Any = None  # companion.devices.manager.DeviceFactory
+    # A stand-in for the perception engine (companion.perception.client.PerceptionBackend).
+    perception: Any = None
     disabled: set[str] = field(default_factory=set)
 
 
@@ -173,7 +176,9 @@ class CompanionRuntime:
             for name in ENGINES
             if getattr(providers, name) is None and name not in providers.disabled
         }
-        self._on_builtin = {n for n in self._managed if getattr(config.builtin, n).enabled}
+        self._on_builtin = {
+            n for n in self._managed if n in SPEECH and getattr(config.builtin, n).enabled
+        }
         self._builtin_urls: dict[str, str] = {}
         self._builtin_specs: dict[str, WorkerSpec | None] = {}
         self._builtin_tasks: dict[str, asyncio.Task[None]] = {}
@@ -206,6 +211,9 @@ class CompanionRuntime:
         self.recordings = RecordingStore(config.storage.data_dir / "recordings")
         self.frames: dict[str, LastFrame] = {}  # device_id -> newest frame
         self.cameras = CameraManager(providers.camera_factory)
+        # Faces and people (perception.enabled); its engine is a built-in one.
+        self.perception = PerceptionService(self)
+        self._perception_backend = providers.perception
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
 
@@ -232,6 +240,7 @@ class CompanionRuntime:
         self.cameras.apply(self.config, delay=START_DELAY_S)
         # Also stops engines a previous run in this process left on and this one turns off.
         self.schedule_builtin()
+        self._apply_given_perception()
 
     async def _warm_stt(self) -> None:
         assert self.stt is not None
@@ -241,6 +250,7 @@ class CompanionRuntime:
             log.error("stt warmup failed", extra=kv(error=str(exc)))
 
     async def stop(self) -> None:
+        await self.perception.close()
         await self.cameras.stop()
         for session in list(self.sessions.values()):
             if session.linger is not None:
@@ -288,8 +298,18 @@ class CompanionRuntime:
             self._builtin_tasks[name] = loop.create_task(self._apply_engine(name))
 
     def uses_builtin(self, name: str) -> bool:
-        """Whether ``name`` (stt or tts) is the running built-in engine right now."""
+        """Whether engine ``name`` is running and in use right now."""
+        if name == "perception":
+            return self.perception.backend is not None
         return name in self._on_builtin and getattr(self, name) is not None
+
+    def _apply_given_perception(self) -> None:
+        """A perception backend passed in (tests) follows perception.enabled like the engine."""
+        given = self._perception_backend
+        if given is not None:
+            wanted = given if self.config.perception.enabled else None
+            if self.perception.backend is not wanted:
+                self.perception.set_backend(wanted)
 
     async def builtin_settled(self, name: str) -> None:
         """Wait until the latest change to engine ``name`` is done (started or stopped)."""
@@ -305,6 +325,9 @@ class CompanionRuntime:
     async def _apply_engine(self, name: str) -> None:
         engine = self.builtin.engines[name]
         spec = worker_spec(name, self.config)
+        if name == "perception":
+            await self._apply_perception(engine, spec)
+            return
         try:
             if spec is None:
                 if name in self._on_builtin:  # back to what stt/tts/vlm.provider says
@@ -323,6 +346,36 @@ class CompanionRuntime:
         elif self._builtin_urls.get(name) != url or getattr(self, name) is None:
             self._use(name, build_builtin(name, self.config, url), builtin=True)
             self._builtin_urls[name] = url
+
+    async def _apply_perception(self, engine: Any, spec: WorkerSpec | None) -> None:
+        from companion.perception.client import EngineClient
+
+        if spec is None:
+            self.perception.set_backend(None)
+            await engine.stop()
+            return
+        try:
+            url = await engine.ensure(spec, self.config.builtin.start_timeout_s)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            log.error("builtin engine failed", extra=kv(engine="perception", error=str(exc)))
+            url = None
+        if url is None:
+            self.perception.set_backend(None)
+            return
+        base = url.removesuffix("/v1")
+        current = self.perception.backend
+        if isinstance(current, EngineClient) and current.url == base:
+            return
+        client = EngineClient(base)
+        with contextlib.suppress(Exception):
+            health = await client.health()
+            log.info(
+                "perception engine",
+                extra=kv(faces=health.get("face_device"), voice=health.get("voice_device")),
+            )
+        self.perception.set_backend(client)
 
     def _use(self, name: str, provider: Any, *, builtin: bool = False) -> None:
         old = getattr(self, name)
@@ -459,8 +512,11 @@ class CompanionRuntime:
                 session.reconfigure(self.config)
             if "cameras" in applied:
                 self.cameras.apply(self.config)
-            if any(p.split(".")[0] == "builtin" for p in applied):
+            if any(p.split(".")[0] in ("builtin", "perception") for p in applied):
                 self.schedule_builtin()
+                self._apply_given_perception()
+            if any(p.split(".")[0] in ("cameras", "perception") for p in applied):
+                self.perception.apply()
             log.info("settings applied", extra=kv(settings=",".join(applied)))
         return applied, pending
 
@@ -786,6 +842,7 @@ class CompanionRuntime:
                 "vlm": getattr(self.vlm, "name", None),
             },
             "builtin": {name: engine.status.state for name, engine in self.builtin.engines.items()},
+            "perception": self.perception.report(),
             "vision": {
                 "mode": self.config.vision.mode,
                 "enabled": self.config.vision.enabled
