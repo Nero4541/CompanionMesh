@@ -1,4 +1,4 @@
-"""Event type names of the realtime protocol (1.3).
+"""Event type names of the realtime protocol (1.4).
 
 Client -> server
     session.start            payload: {session_id?, join?, roles?}
@@ -104,6 +104,11 @@ Server -> client
     attention.state          payload: {proactive, quiet, speech_blockers}
     attention.decision       payload: {kind, description, salience, source,
                              decision, reasons}  (only with attention.debug)
+    presence.update          payload: {people: [{person_id, name, role, since,
+                             last_seen_s, camera, track_id?}], tracks: [{track_id,
+                             camera, person_id, name, role, kind, since, last_seen,
+                             frames, box, yaw}]}  (1.4, with perception.enabled) who
+                             is here changed; role: user | acquaintance | stranger
     metrics.turn             payload: {turn_id, <stage>: seconds, ...}  (only with
                              metrics.emit_turn)
     device.config.set        payload: {request_id, config}  (new settings for this
@@ -137,7 +142,7 @@ Server -> client
                              its addresses once it is on the tailnet
 """
 
-PROTOCOL_VERSION = "1.3"
+PROTOCOL_VERSION = "1.4"
 
 # client -> server
 SESSION_START = "session.start"
@@ -189,6 +194,7 @@ VISION_FRAME_USED = "vision.frame.used"
 VISION_CAPTURE_REQUEST = "vision.capture.request"
 ATTENTION_STATE = "attention.state"
 ATTENTION_DECISION = "attention.decision"
+PRESENCE_UPDATE = "presence.update"
 METRICS_TURN = "metrics.turn"
 DEVICE_CONFIG_SET = "device.config.set"
 DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
