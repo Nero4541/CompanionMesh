@@ -830,12 +830,14 @@ class PeopleConfig(_Section):
     """How much closer a face must be to the best-matching person than to the next one. Keeps
     two similar-looking people from being mixed up.
     """
-    voice_threshold: float = Field(default=0.5, gt=0, lt=1)
+    voice_threshold: float = Field(default=0.3, gt=0, lt=1)
     """How alike (0 to 1) a voice must be to someone's saved voice samples to count as them.
+    Voices are less alike than faces: 0.3 kept strangers out in tests while recognising most
+    sentences of a second or longer.
     """
-    voice_margin: float = Field(default=0.15, ge=0, lt=1)
+    voice_margin: float = Field(default=0.05, ge=0, lt=1)
     """How much closer a voice must be to the best-matching person than to the next one before
-    the voice alone is trusted.
+    the voice alone is trusted (when no face confirms it).
     """
     max_face_samples: int = Field(default=40, ge=1, le=200)
     """The most face samples kept per person (spread over angles and time)."""
@@ -855,6 +857,11 @@ class PerceptionConfig(_Section):
     enabled: bool = False
     """Recognise people on the cameras. Starts the perception engine (about 0.6 GB of graphics
     memory with a GPU). Off: its process stops at once.
+    """
+    speakers: bool = False
+    """Tell who said each sentence (the user, an acquaintance by name, a stranger, or the TV),
+    from the voice and the faces in view, and tell the agent: 「...」 (Yukari, the user). Needs
+    the voice model for voices.
     """
     device: Literal["auto", "cuda", "cpu"] = "auto"
     """Where the engine runs: cuda = NVIDIA graphics card (fast), cpu = processor (slow), auto =
