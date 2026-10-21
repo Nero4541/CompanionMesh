@@ -28,6 +28,7 @@ companion/
   audio/       PCM helpers, VAD, utterance segmentation, echo guard and canceller
   vision/      image validation, dedup, change detection, observations, vision pipeline
   attention/   attention policy, scene tracking, proactive-speech guards
+  perception/  people, face tracks, who said what, routing, timeline; replay harness
   devices/     device processes: IP camera bridge and frame sources
   memory/      transcript stores (in-memory, SQLite)
   protocol/    envelope and binary frame codec, event names
@@ -39,3 +40,15 @@ client/template/   a minimal device to port to other hardware or languages
 configs/       default configuration
 personas/      persona definitions
 ```
+
+## Replaying a recorded session
+
+`companion replay` feeds a recording through the perception steps (faces, voices, who said what, whether it was meant for the companion) offline, without a live server, and scores the result against hand labels. Use it to check a change, or the thresholds, on the same recording again and again:
+
+```powershell
+uv run companion replay my-room/labels.json --fps 10 --out report.json --repeat 2
+```
+
+The labels file names the video and audio, the people in it (`user` or `acquaintance`), every utterance with its speaker (a person, `stranger`, `media` for a TV or video, or `unknown`) and whether it was `addressed` to the companion, and optional spot checks of faces (`{"t": 15.0, "box": [x0, y0, x1, y1], "who": "kenta"}`). The format is described at the top of `companion/perception/recording.py`. Video and audio are decoded with PyAV, so no ffmpeg is needed.
+
+The report lists every utterance with what each step found, a summary per step, and a `fingerprint`: the same recording, people and settings always give the same fingerprint, and `--repeat 2` says whether two runs agree.
