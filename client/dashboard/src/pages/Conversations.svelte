@@ -93,7 +93,10 @@
     const d = new Date(t * 1000);
     return d.toDateString() === today ? d.toLocaleTimeString() : d.toLocaleString();
   }
-  const who = (l) => (l.role === "user" ? (l.typed ? "typed" : "heard") : "companion");
+  const SPEAKER = { stranger: "a stranger", media: "TV / media", unknown: "someone" };
+  // Who said it, with perception.speakers on: a name, a stranger, the TV.
+  const heard = (s) => (s ? (s.name ?? SPEAKER[s.role] ?? "heard") : "heard");
+  const who = (l) => (l.role === "user" ? (l.typed ? "typed" : heard(l.speaker)) : "companion");
 </script>
 
 <div class="head">
