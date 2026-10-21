@@ -27,6 +27,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 import numpy as np
 
 from companion.agent.base import AgentContext, SessionRef
+from companion.attention.decisions import ProactiveDecision, decision_prompt, parse_decision
 from companion.attention.engine import IDLE_KIND, AttentionEngine, AttentionEvent, Decision
 from companion.audio.echo import (
     EchoCanceller,
@@ -1209,7 +1210,17 @@ class Session:
             )
             limit = rt.config.agent.history_turns * 2
             history = await rt.store.history(self.session_id, limit=limit) if limit else []
-            prompt = PROACTIVE_PROMPT.format(description=event.description)
+            structured = rt.config.attention.decisions
+            prompt = (
+                decision_prompt(event.description, self._situation())
+                if structured
+                else PROACTIVE_PROMPT.format(description=event.description)
+            )
+            if structured and rt.config.attention.triage.enabled:
+                verdict = await self._triage(prompt)
+                if verdict is not None and verdict.action == "silent":
+                    await self._decided(verdict, event, by="triage")
+                    return
             if event.kind == IDLE_KIND and self.vision.enabled:
                 # Nothing on camera prompted this one: let the agent see the room now.
                 await self.vision.request_capture("idle")
@@ -1237,7 +1248,13 @@ class Session:
                 log.warning("proactive turn failed", extra=kv(error=str(exc)))
                 return
             text = "".join(parts).strip()
-            if not text or SILENT in text:
+            if structured:
+                decision = parse_decision(text)
+                await self._decided(decision, event, by="agent")
+                if decision.action != "reply":
+                    return
+                text = decision.text
+            elif not text or SILENT in text:
                 log.info("proactive turn: agent chose silence", extra=kv(kind=event.kind))
                 return
             # We asked for one short remark; some models draft several
@@ -1258,6 +1275,101 @@ class Session:
                 self._turn_id = None
             if self.state == State.THINKING:
                 await self.rest("proactive turn ended")
+
+    def _situation(self) -> list[str]:
+        """Who is around and what has been going on, for a proactive decision."""
+        from datetime import datetime
+
+        from companion.attention.engine import resolve_zone
+
+        lines: list[str] = []
+        zone = resolve_zone(self.runtime.config.attention.quiet_hours.timezone)
+        perception = self.runtime.perception
+        if perception.ready:
+            here = perception.people_here()
+            if here:
+                people = []
+                for p in here:
+                    since = datetime.fromtimestamp(p["since"], zone).strftime("%H:%M")
+                    who = p["name"] or "a stranger"
+                    role = {"user": "the user", "acquaintance": "an acquaintance"}.get(p["role"])
+                    people.append(
+                        f"{who} ({role}, since {since})" if role else f"{who} (since {since})"
+                    )
+                lines.append("People here now: " + "; ".join(people) + ".")
+            else:
+                lines.append("Nobody is in view of the cameras.")
+        timeline = getattr(self.runtime, "timeline", None)
+        if timeline is not None:
+            lines.extend(timeline.context_lines())
+        lines.append("Time now: " + datetime.now(zone).strftime("%A %H:%M") + ".")
+        return lines
+
+    async def _triage(self, prompt: str) -> ProactiveDecision | None:
+        """The triage model's decision (attention.triage); None if it did not answer."""
+        from companion.core.config import LLMConfig
+        from companion.providers.llm.openai_compatible import OpenAICompatibleLLM
+
+        cfg = self.runtime.config.attention.triage
+        llm = OpenAICompatibleLLM(
+            LLMConfig(
+                base_url=cfg.base_url,
+                api_key_env=cfg.api_key_env,
+                model=cfg.model,
+                timeout=cfg.timeout,
+                connect_timeout=cfg.connect_timeout,
+                temperature=0.0,
+                max_tokens=cfg.max_tokens,
+                extra_body=cfg.extra_body,
+            )
+        )
+        messages: list[ChatMessage] = [
+            {
+                "role": "system",
+                "content": "You decide for a voice companion whether to react to an event. "
+                "Answer with one JSON object only.",
+            },
+            {"role": "user", "content": prompt},
+        ]
+        try:
+            return parse_decision(await llm.chat(messages))
+        except CompanionError as exc:
+            log.warning("triage model did not answer", extra=kv(error=str(exc)))
+            return None
+        finally:
+            await llm.aclose()
+
+    async def _decided(self, decision: ProactiveDecision, event: AttentionEvent, by: str) -> None:
+        """Log a proactive decision, and keep a note when the decision is to remember."""
+        payload = {
+            "kind": event.kind,
+            "action": decision.action,
+            "reason": decision.reason,
+            "parsed": decision.parsed,
+            "by": by,
+            "session_id": self.session_id,
+        }
+        log.info("proactive decision", extra=kv(**payload))
+        if not decision.parsed:
+            self.metrics.count("proactive_unparsed")
+            log.warning("proactive_unparsed", extra=kv(kind=event.kind, by=by))
+        await self.runtime.bus.publish(make_event(ev.ATTENTION_PROACTIVE, payload))
+        if decision.action == "remember":
+            from companion.vision.observation import VisualObservation
+
+            with contextlib.suppress(Exception):
+                await self.runtime.store.add_observation(
+                    VisualObservation(
+                        timestamp=event.at,
+                        device_id=str(event.data.get("device") or event.source),
+                        description=decision.note[:500],
+                        confidence=None,
+                        tags=["remember", event.kind],
+                        source_event_id=event.kind,
+                        source="event",
+                        session_id=self.session_id,
+                    )
+                )
 
     async def _speak_proactively(
         self, turn_id: str, text: str, event: AttentionEvent, token: CancelToken
