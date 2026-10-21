@@ -5,9 +5,12 @@
   let { onAuthError } = $props();
 
   const { state: engines, refresh: refreshEngines } = poll("/builtin", 2000, (err) => onAuthError?.(err));
+  const { state: seen, refresh: refreshSeen } = poll("/perception/state", 2000, (err) => onAuthError?.(err));
   let busy = $state({});
   let logOpen = $state(null);
   let message = $state(null);
+  let looked = $state(null);
+  let camera = $state("");
 
   const STATES = {
     off: ["Off", ""],
@@ -30,6 +33,7 @@
     } finally {
       busy = { ...busy, [key]: false };
       refreshEngines();
+      refreshSeen();
     }
   }
 
@@ -45,19 +49,29 @@
   const useModel = (model) =>
     act("engine", () => api("/builtin/vlm", json("PUT", { model })), `Now ${model}; it restarts with it if it is on.`);
   const install = () => act("engine", () => api("/builtin/vlm/install", { method: "POST" }));
+  const settings = (body) => act("settings", () => api("/perception/settings", json("PUT", body)));
+
+  function look() {
+    act("look", async () => {
+      const q = camera ? `?camera=${encodeURIComponent(camera)}` : "";
+      looked = await api(`/perception/look${q}`, { method: "POST" });
+    });
+  }
 
   const choices = (s) => {
     const all = s.models.includes(s.model_folder) || s.model_folder === "auto" ? s.models : [s.model_folder, ...s.models];
     return ["auto", ...all.filter((m) => m !== "auto")];
   };
   const gb = (mb) => (mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`);
+  const mins = (t) => Math.max(1, Math.round((Date.now() / 1000 - t) / 60));
 </script>
 
 <div class="head">
   <h2>Vision</h2>
   <span class="muted">
-    The vision model describes camera pictures in words (<code>vision.mode: vlm</code>). Built in here, or
-    any OpenAI-compatible server (<code>vlm</code> in Configuration).
+    The vision model looks at the cameras: glances (who is doing what), the check whether a face is a
+    poster, and <code>look</code> for the agent. Built in here, or any OpenAI-compatible server
+    (<code>vlm</code> in Configuration).
   </span>
 </div>
 
@@ -124,6 +138,66 @@
   </section>
 {/if}
 
+{#if seen.data}
+  {@const g = seen.data.perception.glance}
+  <section class="card">
+    <div class="row top">
+      <h3>Glances</h3>
+      <span class="pill {g.running ? 'live' : ''}">{g.running ? `every ${g.interval_s} s` : "off"}</span>
+    </div>
+    <p class="muted">
+      Vision model in use: <strong>{seen.data.vlm ?? "none"}</strong>.
+      {#if !seen.data.perception.ready}Perception is off (People page): glances need it to mark the people.{/if}
+      {#if g.glances}{g.glances} glances{#if g.last_seconds}, the last took {g.last_seconds} s{/if}{#if g.unparsed}, {g.unparsed} not understood{/if}.{/if}
+    </p>
+    <div class="row">
+      <label class="switch">
+        <input type="checkbox" checked={g.enabled} disabled={busy.settings} onchange={(ev) => settings({ glance: ev.currentTarget.checked })} />
+        Glance at the cameras
+      </label>
+      <label class="switch">
+        <input type="checkbox" checked={seen.data.timeline_enabled ?? undefined} disabled={busy.settings}
+          onchange={(ev) => settings({ timeline: ev.currentTarget.checked })} />
+        Keep the timeline
+      </label>
+    </div>
+    {#if Object.keys(seen.data.state.doing).length}
+      <table>
+        <thead><tr><th>Who</th><th>Doing</th><th>Since</th><th>Looking at</th><th>Camera</th></tr></thead>
+        <tbody>
+          {#each Object.entries(seen.data.state.doing) as [key, d] (key)}
+            <tr>
+              <td>{d.name ?? "a stranger"}</td>
+              <td>{d.activity.replace("_", " ")}{d.posture !== "unknown" ? `, ${d.posture.replace("_", " ")}` : ""}</td>
+              <td>{mins(d.since)} min</td>
+              <td>{d.looking_at || "–"}</td>
+              <td><code>{d.camera}</code></td>
+            </tr>
+          {/each}
+        </tbody>
+      </table>
+    {/if}
+    {#each Object.entries(seen.data.state.scene) as [cid, scene] (cid)}
+      <p class="muted small"><code>{cid}</code>: {scene}{#if seen.data.state.change[cid]} · lately: {seen.data.state.change[cid].text}{/if}</p>
+    {/each}
+  </section>
+
+  <section class="card">
+    <h3>Look now</h3>
+    <div class="row">
+      <select bind:value={camera} aria-label="Camera">
+        <option value="">newest picture</option>
+        {#each Object.keys(seen.data.cameras) as cid (cid)}<option value={cid}>{cid}</option>{/each}
+      </select>
+      <button class="small" disabled={busy.look || !Object.keys(seen.data.cameras).length} onclick={look}>Look</button>
+    </div>
+    {#if looked}
+      <img src={`data:image/jpeg;base64,${looked.jpeg_base64}`} alt={`what ${looked.camera} sees`} />
+      <p>{looked.description ?? "No vision model: only the picture."}</p>
+    {/if}
+  </section>
+{/if}
+
 <style>
   section { margin-bottom: 16px; display: flex; flex-direction: column; gap: 8px; }
   h3 { margin: 0; }
@@ -137,5 +211,6 @@
   dd.model { display: flex; flex-wrap: wrap; gap: 4px 8px; align-items: center; }
   .small { font-size: 13px; }
   .banner { border: 1px solid var(--ok); border-radius: 8px; padding: 6px 10px; }
+  img { max-width: 100%; border-radius: 6px; }
   pre { max-height: 240px; overflow: auto; font-size: 12px; }
 </style>
