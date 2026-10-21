@@ -655,6 +655,32 @@ class QuietHoursConfig(_Section):
         return v
 
 
+class TriageConfig(HttpProviderConfig):
+    """A small, fast language model asked first whether an event is worth the agent's time.
+
+    It gets the same question as the agent (reply, stay silent or remember, as JSON); only
+    when it does not choose silent is the agent asked. Saves slow agent turns for events that
+    do not matter. Any OpenAI-compatible server (Ollama, llama.cpp, vLLM, LM Studio).
+    """
+
+    enabled: bool = False
+    """Ask the triage model first. Needs attention.decisions."""
+    base_url: str = "http://127.0.0.1:11434/v1"
+    """Web address of the triage model's API, ending in /v1 (11434 is Ollama's port)."""
+    api_key_env: str | None = "TRIAGE_API_KEY"
+    """Name of the .env variable holding the API key. Local servers usually need none."""
+    timeout: float = Field(default=30.0, gt=0)
+    """Seconds to wait for the triage model's answer. Without one in time, the agent is asked."""
+    model: str = "default"
+    """Model name as the server knows it, e.g. qwen3:1.7b on Ollama."""
+    max_tokens: int = Field(default=200, ge=16)
+    """Longest answer, in tokens."""
+    extra_body: dict[str, Any] = Field(default_factory=dict)
+    """Server-specific fields added to every request, as JSON, e.g.
+    {"chat_template_kwargs": {"enable_thinking": false}} for Qwen3.
+    """
+
+
 class AttentionConfig(_Section):
     """When the companion may start talking by itself, e.g. when you come home or after a long
     silence. See docs/proactive.md.
@@ -700,6 +726,13 @@ class AttentionConfig(_Section):
     """Send every decision and its reasons to connected clients, to see why it spoke or stayed
     quiet.
     """
+    decisions: bool = False
+    """Ask the agent for an explicit decision when it may speak by itself: reply (with what to
+    say), stay silent, or remember (a note, not said), as JSON, with who is around and what has
+    been going on. Off: the older free-text prompt, where the agent answers [SILENT] to stay
+    quiet.
+    """
+    triage: TriageConfig = TriageConfig()
 
 
 class EchoConfig(_Section):
