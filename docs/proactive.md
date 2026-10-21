@@ -1,5 +1,7 @@
 # Proactive behavior
 
+> With [people](people.md) on, arrivals and departures (`person_arrived`, `user_returned`, …) are events too, and with `routing.enabled` talk between people, strangers and the TV is no longer answered: it becomes context (see [people](people.md#answering-only-what-is-meant-for-the-companion)).
+
 The companion can speak first, under strict rules. Every noticed event goes through a fixed policy:
 
 ```text
