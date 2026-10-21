@@ -84,6 +84,33 @@ With `routing.enabled: true` (off by default; it needs `perception.speakers`), e
 
 `routing.answer_acquaintances: false` answers only the user. The Conversations page and the phone page mark lines that were overheard or not for the companion; `routing.debug: true` sends each decision with its reasons to connected clients (`routing.decision`), like `attention.debug`. Off, everything heard is answered, as before.
 
+## Glances: who is doing what
+
+With a vision model (built in, see [vision](vision.md#built-in-vision-model), or any other) and `perception.glance: true` (off by default), the vision model glances at the cameras: every `perception.glance_s` seconds (1 s with the built-in model, 10 s with another one, which may cost money), the newest picture of a camera, with each tracked face boxed and lettered, and a short question answered in compact JSON:
+
+```json
+{"A":{"activity":"gaming","posture":"sitting","looking_at":"screen"},"scene":"living room, TV on","change":"sat down on the sofa"}
+```
+
+Activities come from a fixed list: `desk_computer`, `phone`, `gaming`, `reading`, `eating`, `cooking`, `watching_tv`, `lying_down`, `sleeping`, `exercising`, `talking`, `other`. A glance is skipped, never queued, while the one before is still running, and a picture that looks the same as the last one glanced at is not asked about again. The answers keep a state of who is doing what since when, which the agent gets in proactive turns (with `attention.decisions`) and through its tools; the **Vision** page shows it, and **Look now** asks for a short description of a camera's picture.
+
+Measured with the built-in Mage-VL (FP8, fused) on an RTX 4070 Ti while faces were tracked at 15 pictures a second: a glance at one or two people takes about 1 s; with five people in the picture, about 1.5 to 3 s (the answer is longer).
+
+## Timeline
+
+With `timeline.enabled: true` (off by default) the glances become a timeline per person: consecutive glances with the same activity make an episode ("gaming since 20:10, 95 min"); a different activity must last `timeline.min_switch_s` (2 minutes) before it ends one. Without glances, the timeline records only present and away (every `timeline.sample_s`). Episodes are kept in `data/timeline.db` for `timeline.retention_days` (7). The **Timeline** page shows them per person.
+
+**Rules** in `timeline.rules` turn long activities into `long_activity` events for the [attention engine](proactive.md), with the rule's `salience` (0.7, enough to speak; the usual limits still apply). Each fires once per episode. The defaults:
+
+| Rule | Fires when |
+|---|---|
+| `gaming-2h` | anyone has been gaming for 2 hours |
+| `computer-90min` | at the computer for 90 minutes without a break |
+| `phone-in-bed-late` | on the phone lying down, between 00:30 and 05:00 |
+| `back-after-4h` | the user is back after being away 4 hours or more (`when: after`) |
+
+A rule has `activity`, `min_minutes`, optionally `person` (`user` or a name), `posture`, `after`/`before` (times of day) and `when` (`during`, or `after` for when such an episode ends). The agent can add watches of its own through its tools; the Timeline page lists and removes them.
+
 ## Settings
 
 | Setting | Default | What it does |
@@ -101,5 +128,7 @@ With `routing.enabled: true` (off by default; it needs `perception.speakers`), e
 | `people.face_threshold`, `face_margin` | `0.45`, `0.10` | How alike a face must be |
 | `people.voice_threshold`, `voice_margin` | `0.3`, `0.05` | How alike a voice must be |
 | `people.stranger_retention_h` | `24` | Hours strangers are remembered |
+| `perception.glance`, `glance_s` | `false`, empty (1 s built in, 10 s otherwise) | Glances at the cameras by the vision model |
+| `timeline.enabled`, `rules`, `min_switch_s`, `sample_s` | `false`, four rules, `120`, `60` | The timeline and its rules |
 
 All of them apply at once.
