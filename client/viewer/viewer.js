@@ -39,6 +39,8 @@ function show(name) {
   for (const b of document.querySelectorAll("nav button")) b.classList.toggle("active", b.dataset.tab === name);
   $("conversation").hidden = name !== "conversation";
   $("devices").hidden = name !== "devices";
+  $("people").hidden = name !== "people";
+  if (name === "people" && window.peopleTab) window.peopleTab.open();
   refreshPictures();
 }
 
@@ -217,6 +219,7 @@ for (const b of document.querySelectorAll("nav button"))
     show(b.dataset.tab);
   };
 if (location.hash === "#devices") show("devices");
+if (location.hash === "#people") addEventListener("load", () => show("people"));
 document.addEventListener("visibilitychange", () => !document.hidden && tick());
 setInterval(() => !document.hidden && tick(), 2500);
 setInterval(refreshPictures, 1000);
