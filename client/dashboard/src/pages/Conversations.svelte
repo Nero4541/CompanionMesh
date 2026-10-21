@@ -161,6 +161,8 @@
             <span class="text">
               {l.text || "–"}
               {#if l.cancelled}<span class="pill">cut off</span>{/if}
+              {#if l.route === "context"}<span class="pill" title="Not said to the companion; kept for its next reply">overheard</span>{/if}
+              {#if l.route === "log"}<span class="pill" title="The TV, or a voice nobody knows">not for the companion</span>{/if}
               {#if l.unanswered}<span class="pill">{OUTCOME[l.rec.outcome] ?? l.rec.outcome}</span>{/if}
               {#if l.rec}
                 {#if audio[l.rec.id]}
