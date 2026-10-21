@@ -70,12 +70,29 @@ Voices shorter than a second are not trusted on their own. The speaker goes with
 
 When voice, face and lips all agree on someone for a sentence of 1.5 s or longer, the sentence is kept (in memory only) as a new voice sample for them; the People page offers to add these (**Add N heard voice samples**). Nothing is added by itself.
 
+## Answering only what is meant for the companion
+
+With `routing.enabled: true` (off by default; it needs `perception.speakers`), each sentence goes one of three ways once its speaker is known:
+
+| Who said it | When | Route |
+|---|---|---|
+| The user or an acquaintance | the companion's name was said (`routing.wake_names`; empty = the persona's names), or the companion spoke less than `routing.followup_s` (20 s) ago, or the speaker's face is turned to the companion (on a camera in `routing.facing_cameras`) | answered |
+| The user or an acquaintance | none of these, and two or more people are around | **overheard**: not answered; the next reply gets it as "Overheard (not said to you): …" |
+| The user or an acquaintance | none of these, alone in the room | answered (`routing.alone_means_addressed`) |
+| A stranger | | overheard, and a `stranger_spoke` event (`routing.answer_strangers: true` answers them) |
+| The TV, or a voice nobody knows | | only logged |
+
+`routing.answer_acquaintances: false` answers only the user. The Conversations page and the phone page mark lines that were overheard or not for the companion; `routing.debug: true` sends each decision with its reasons to connected clients (`routing.decision`), like `attention.debug`. Off, everything heard is answered, as before.
+
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
 | `perception.enabled` | `false` | Recognise people; starts the engine |
 | `perception.speakers` | `false` | Tell who said each sentence, and tell the agent |
+| `routing.enabled` | `false` | Answer only what is meant for the companion (needs `perception.speakers`) |
+| `routing.wake_names`, `followup_s`, `alone_means_addressed` | `[]`, `20`, `true` | When a sentence counts as said to the companion |
+| `routing.answer_acquaintances`, `answer_strangers` | `true`, `false` | Whom it answers |
 | `perception.device` | `auto` | `cuda`, `cpu` or `auto` |
 | `perception.face_model` / `voice_model` | `buffalo_l` / `speaker-diarization-community-1` | Model folders in `builtin/perception/models` (`none` for no voices) |
 | `perception.picture_check` | `true` | Ask the vision model about unknown faces |
