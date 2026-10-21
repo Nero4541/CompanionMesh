@@ -815,6 +815,39 @@ class CameraConfig(_Section):
         return username or None, password or None
 
 
+class RoutingConfig(_Section):
+    """Answer only what is meant for the companion. Needs perception.speakers (who said it).
+
+    A sentence by the user or an acquaintance is answered when the companion's name was said,
+    when the companion spoke a moment ago, when the speaker faces the companion, or when they
+    are alone. Talk between people is kept as "overheard" for the next reply; a stranger's words
+    likewise; the TV and voices nobody knows are only logged. See docs/people.md.
+    """
+
+    enabled: bool = False
+    """Turn the gate on. Off: every sentence heard is answered, as before."""
+    wake_names: list[str] = Field(default_factory=list)
+    """Names that mean the companion is spoken to, e.g. ["Hana", "ハナ"]. Empty: the persona's
+    display name and file name.
+    """
+    followup_s: float = Field(default=20.0, ge=0)
+    """For this many seconds after the companion spoke, what anyone known says is taken as an
+    answer to it.
+    """
+    alone_means_addressed: bool = True
+    """Someone alone in the room is talking to the companion (not to another person)."""
+    answer_acquaintances: bool = True
+    """Answer acquaintances, not only the user."""
+    answer_strangers: bool = False
+    """Answer strangers too. Off: what they say is only kept as context."""
+    facing_cameras: list[str] = Field(default_factory=list)
+    """Cameras next to the companion's speaker: a face on one of them turned towards it (within
+    about 25 degrees) counts as speaking to the companion. Empty: not used.
+    """
+    debug: bool = False
+    """Send each decision and its reasons to connected clients (routing.decision)."""
+
+
 class PeopleConfig(_Section):
     """People the companion knows by face and voice: the user and acquaintances, by name.
 
@@ -922,6 +955,7 @@ class CompanionConfig(_Section):
     realtime: RealtimeConfig = RealtimeConfig()
     metrics: MetricsConfig = MetricsConfig()
     people: PeopleConfig = PeopleConfig()
+    routing: RoutingConfig = RoutingConfig()
     perception: PerceptionConfig = PerceptionConfig()
     cameras: list[CameraConfig] = Field(default_factory=list)
     """IP cameras and phones the server watches itself. Easier to manage on the Cameras page."""
@@ -1005,6 +1039,7 @@ _LIVE_SETTINGS = {
     "stt.prompt": True,  # read on every utterance
     "builtin": True,  # engines start, stop and restart while running
     "people": True,  # read on every match
+    "routing": True,  # read for every sentence
     "perception": True,  # the engine starts, stops and restarts while running
 }
 
