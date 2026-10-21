@@ -74,22 +74,24 @@ class OpenAICompatibleVLM:
         lang = _LANGUAGES.get(language or "", language or "English")
         return (self._config.prompt or DEFAULT_PROMPT).format(language=lang)
 
-    async def describe(self, jpeg: bytes, *, language: str | None = None) -> ImageDescription:
-        data_uri = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+    async def ask(self, images: list[bytes], question: str, *, max_tokens: int = 64) -> str:
+        """Any question about one or more JPEG images (pictures first, then the text)."""
+        parts: list[dict[str, Any]] = [
+            {
+                "type": "image_url",
+                "image_url": {"url": "data:image/jpeg;base64," + base64.b64encode(j).decode()},
+            }
+            for j in images
+        ]
+        return await self._chat([*parts, {"type": "text", "text": question}], max_tokens)
+
+    async def _chat(self, content: list[dict[str, Any]], max_tokens: int) -> str:
         body: dict[str, Any] = {
             **self._config.extra_body,
             "model": self._config.model,
             "stream": False,
-            "max_tokens": self._config.max_tokens,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": [
-                        {"type": "text", "text": self._prompt(language)},
-                        {"type": "image_url", "image_url": {"url": data_uri}},
-                    ],
-                }
-            ],
+            "max_tokens": max_tokens,
+            "messages": [{"role": "user", "content": content}],
         }
         try:
             response = await self._client.post("chat/completions", json=body)
@@ -98,9 +100,19 @@ class OpenAICompatibleVLM:
         except httpx.HTTPError as exc:
             raise describe_http_error(self.name, exc, self._config.base_url) from exc
         try:
-            content = data["choices"][0]["message"].get("content") or ""
+            return data["choices"][0]["message"].get("content") or ""
         except (KeyError, IndexError, TypeError) as exc:
             raise ProviderError(self.name, "unexpected response shape") from exc
+
+    async def describe(self, jpeg: bytes, *, language: str | None = None) -> ImageDescription:
+        data_uri = "data:image/jpeg;base64," + base64.b64encode(jpeg).decode("ascii")
+        content = await self._chat(
+            [
+                {"type": "text", "text": self._prompt(language)},
+                {"type": "image_url", "image_url": {"url": data_uri}},
+            ],
+            self._config.max_tokens,
+        )
         result = parse_description(content)
         if not result.description:
             raise ProviderError(self.name, "empty description", code="vlm_empty_response")
