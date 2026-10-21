@@ -67,7 +67,8 @@ function renderLines() {
     const sp = line.speaker;
     const heard = sp ? sp.name ?? SPEAKER[sp.role] ?? "heard" : "heard";
     const who = line.role === "user" ? (line.typed ? "typed" : heard) : "companion";
-    meta.textContent = [time(line.t), who, line.device_id, line.cancelled ? "cut off" : null]
+    const ROUTE = { context: "overheard", log: "not for the companion" };
+    meta.textContent = [time(line.t), who, line.device_id, line.cancelled ? "cut off" : null, ROUTE[line.route]]
       .filter(Boolean)
       .join(" · ");
     li.append(meta, document.createTextNode(line.text ?? ""));
