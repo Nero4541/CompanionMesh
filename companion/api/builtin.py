@@ -2,8 +2,9 @@
 
 GET reports each engine (installed, running, GPU memory, its model folders,
 log), POST .../install installs one in the background, PUT .../{name} turns one
-on or off or switches its model by saving ``builtin.<name>.*``; the runtime then
-starts, stops or restarts it at once.
+on or off or switches its model by saving its settings (``builtin.<name>.*``,
+``perception.*`` for the perception engine); the runtime then starts, stops or
+restarts it at once.
 """
 
 from __future__ import annotations
