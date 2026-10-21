@@ -13,12 +13,16 @@
 | `GET /v1/admin/config` | Running and saved settings, their JSON schema, which need a restart or wait for one, which secrets are set (admin token) |
 | `PUT /v1/admin/config` | Save every setting (`{"config": {...}}`, as `saved` above); applies the live ones, returns `applied` and `pending_restart` (admin token) |
 | `GET /v1/admin/builtin` | The built-in engines (speech, perception): installed, state, process, GPU memory, log (admin token) |
-| `POST /v1/admin/builtin/{stt\|tts\|perception}/install`, `PUT /v1/admin/builtin/{stt\|tts\|perception}` | Install an engine in the background; turn one on or off (`{"enabled": true}`, saved and applied at once) or switch its model (`{"model": "<folder>"}`) (admin token) |
+| `POST /v1/admin/builtin/{stt\|tts\|perception\|vlm}/install`, `PUT /v1/admin/builtin/{stt\|tts\|perception\|vlm}` | Install an engine in the background; turn one on or off (`{"enabled": true}`, saved and applied at once) or switch its model (`{"model": "<folder>"}`) (admin token) |
 | `GET /v1/admin/people` | Known people (with their numbers of face and voice samples), who is here now, faces tracked, the perception engine (admin token) |
 | `POST /v1/admin/people` `{name, role, notes, consent}`, `PATCH`/`DELETE /v1/admin/people/{id}` | Add someone (only with `consent: true`), change, forget at once (admin token) |
 | `POST /v1/admin/people/{id}/face` `{camera?, track_id?, seconds?}`, `DELETE .../face` | Face samples from a camera (the person looks at it) or from a face tracked now; delete them (admin token) |
 | `POST /v1/admin/people/{id}/voice` (an audio file as the body), `DELETE .../voice` | Voice samples from a recording of the person speaking alone; delete them (admin token) |
 | `POST /v1/admin/people/promote` `{track_id, name, role, consent}` | Add the stranger in view as a person (admin token) |
+| `GET /v1/admin/perception/state` | Who is doing what (glances), scenes, the vision model in use (admin token) |
+| `POST /v1/admin/perception/look?camera=` | A camera's newest picture (base64 JPEG) and its description by the vision model (admin token) |
+| `PUT /v1/admin/perception/settings` `{glance?, timeline?}` | Switch glances and the timeline (saved, applied at once) (admin token) |
+| `GET /v1/admin/timeline?hours=&person=`, `DELETE /v1/admin/timeline/watches/{id}` | Episodes of the last hours with the rules and the agent's watches; remove a watch (admin token) |
 | `POST /v1/admin/people/{id}/voice/candidates` | Add the voice samples heard lately with voice, face and lips agreeing (admin token) |
 | `POST /v1/admin/people/identify?camera=` (or a JPEG as the body) | Who the faces in a picture are (admin token) |
 | `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
