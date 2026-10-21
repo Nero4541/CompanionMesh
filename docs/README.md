@@ -19,6 +19,7 @@ The full guide to the Companion Server, by topic. The [README](../README.md) has
 | [Speech](speech.md) | Speech recognition and synthesis, built-in or on other servers |
 | [Realtime conversation](realtime.md) | Interrupting (barge-in), echo handling, timing |
 | [Vision](vision.md) | Cameras, agent mode and VLM mode, IP cameras and phones |
+| [People](people.md) | Who is around: faces and voices of the user and acquaintances, strangers |
 | [Proactive behavior](proactive.md) | When and how the companion speaks first |
 | [Performance and hardware](performance.md) | Latency, GPU memory, suggested setups |
 
