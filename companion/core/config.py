@@ -541,8 +541,8 @@ class BuiltinConfig(_Section):
 
 
 class VLMConfig(HttpProviderConfig):
-    """A vision model that describes camera pictures in words, for vision.mode vlm. builtin.vlm runs
-    one on this machine.
+    """A vision model that describes camera pictures in words: for vision.mode vlm, and with
+    perception on for glances, the picture check and look(). builtin.vlm runs one on this machine.
     """
 
     provider: Literal["openai_compatible", "none"] = "none"
@@ -881,6 +881,74 @@ class RoutingConfig(_Section):
     """Send each decision and its reasons to connected clients (routing.decision)."""
 
 
+class WatchRuleConfig(_Section):
+    """A rule that turns a long activity into an event the companion may speak about."""
+
+    id: str = Field(pattern=r"^[A-Za-z0-9_.-]{1,64}$")
+    """A short name for the rule (letters, digits, - _ .)."""
+    activity: str
+    """The activity: desk_computer, phone, gaming, reading, eating, cooking, watching_tv,
+    lying_down, sleeping, exercising, talking, away or other (present without a vision model).
+    """
+    min_minutes: float = Field(default=0.0, ge=0)
+    """How long it must have lasted, in minutes."""
+    person: str | None = None
+    """Whom it is about: user, a person's name, or empty for anyone."""
+    when: Literal["during", "after"] = "during"
+    """during: fires once the activity has lasted min_minutes. after: fires when an activity of
+    at least min_minutes has just ended (e.g. away for 4 hours, then back).
+    """
+    after: str | None = Field(default=None, pattern=_HHMM)
+    """Only from this time of day (HH:MM), e.g. 00:30 for late at night."""
+    before: str | None = Field(default=None, pattern=_HHMM)
+    """Only until this time of day (HH:MM)."""
+    posture: Literal["sitting", "standing", "lying_down"] | None = None
+    """Only in this posture, e.g. phone while lying_down."""
+    salience: float = Field(default=0.7, ge=0, le=1)
+    """How important the event is (0 to 1); from attention.speak_threshold (0.6) the companion may
+    speak about it.
+    """
+
+
+def _default_rules() -> list[WatchRuleConfig]:
+    return [
+        WatchRuleConfig(id="gaming-2h", activity="gaming", min_minutes=120),
+        WatchRuleConfig(id="computer-90min", activity="desk_computer", min_minutes=90),
+        WatchRuleConfig(
+            id="phone-in-bed-late",
+            activity="phone",
+            posture="lying_down",
+            after="00:30",
+            before="05:00",
+        ),
+        WatchRuleConfig(
+            id="back-after-4h", activity="away", min_minutes=240, when="after", person="user"
+        ),
+    ]
+
+
+class TimelineConfig(_Section):
+    """What each person has been doing, as episodes (gaming since 20:10, 95 min), and rules for
+    doing something for too long. Activities come from glances (perception.glance); without
+    them, only present or away. See docs/people.md.
+    """
+
+    enabled: bool = False
+    """Keep the timeline (in data/timeline.db) and check its rules."""
+    sample_s: float = Field(default=60.0, gt=0)
+    """Seconds between presence samples (present / away) for the timeline."""
+    min_switch_s: float = Field(default=120.0, ge=0)
+    """A different activity must last this many seconds before it ends the current one, so a
+    short look at the phone does not cut an evening of gaming in two.
+    """
+    retention_days: float = Field(default=7.0, gt=0)
+    """Days episodes are kept before they are deleted."""
+    rules: list[WatchRuleConfig] = Field(default_factory=_default_rules)
+    """Rules that turn long activities into events (long_activity). The agent can add its own
+    (set_watch).
+    """
+
+
 class PeopleConfig(_Section):
     """People the companion knows by face and voice: the user and acquaintances, by name.
 
@@ -959,6 +1027,17 @@ class PerceptionConfig(_Section):
     """
     enrol_seconds: float = Field(default=10.0, gt=0, le=60)
     """How long "look at the camera" collects face samples when adding someone."""
+    glance: bool = False
+    """Let the vision model (vlm) glance at the cameras often: who is doing what (gaming, reading,
+    on the phone, ...), with the people marked by name. Feeds the timeline and what the agent
+    knows. Needs a vision model; with a remote or cloud one, mind the cost.
+    """
+    glance_s: float | None = Field(default=None, gt=0)
+    """Seconds between glances. Empty: 1 with the built-in vision model, 10 with another one. A
+    glance is skipped, never queued, while the one before is still running.
+    """
+    glance_tokens: int = Field(default=120, ge=16, le=1000)
+    """Longest answer to a glance, in tokens (the answer is a small JSON, usually 30 to 60)."""
 
 
 class MetricsConfig(_Section):
@@ -989,6 +1068,7 @@ class CompanionConfig(_Section):
     metrics: MetricsConfig = MetricsConfig()
     people: PeopleConfig = PeopleConfig()
     routing: RoutingConfig = RoutingConfig()
+    timeline: TimelineConfig = TimelineConfig()
     perception: PerceptionConfig = PerceptionConfig()
     cameras: list[CameraConfig] = Field(default_factory=list)
     """IP cameras and phones the server watches itself. Easier to manage on the Cameras page."""
@@ -1073,6 +1153,7 @@ _LIVE_SETTINGS = {
     "builtin": True,  # engines start, stop and restart while running
     "people": True,  # read on every match
     "routing": True,  # read for every sentence
+    "timeline": True,  # rules and sampling follow at once
     "perception": True,  # the engine starts, stops and restarts while running
 }
 
