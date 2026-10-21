@@ -81,10 +81,12 @@ Server -> client
     system.ping              payload: {ping_id, t_server}  (clock sync and round trip)
     system.error             payload: {code, message, recoverable}
     audio.vad                payload: {state: "speech_start" | "speech_end"}
-    conversation.transcript  payload: {text, final, speaker?}  speaker (1.4, with
+    conversation.transcript  payload: {text, final, speaker?, route?}  speaker (1.4, with
                              perception.speakers): {person_id, name, role, confidence,
                              on_screen, how}; role: user | acquaintance | stranger |
-                             media | unknown
+                             media | unknown. route (1.4, with routing.enabled): turn
+                             (answered) | context (overheard, kept for the next turn) |
+                             log (not for the companion)
     conversation.response.start  payload: {turn_id, proactive?, reason?}
     conversation.response.delta  payload: {turn_id, text}
     conversation.response.done   payload: {turn_id, text, cancelled, reason?, heard_text?}
@@ -107,6 +109,8 @@ Server -> client
     attention.state          payload: {proactive, quiet, speech_blockers}
     attention.decision       payload: {kind, description, salience, source,
                              decision, reasons}  (only with attention.debug)
+    routing.decision         payload: {route, reasons, speaker}  (1.4, only with
+                             routing.debug) why a sentence was answered or not
     presence.update          payload: {people: [{person_id, name, role, since,
                              last_seen_s, camera, track_id?}], tracks: [{track_id,
                              camera, person_id, name, role, kind, since, last_seen,
@@ -198,6 +202,7 @@ VISION_CAPTURE_REQUEST = "vision.capture.request"
 ATTENTION_STATE = "attention.state"
 ATTENTION_DECISION = "attention.decision"
 PRESENCE_UPDATE = "presence.update"
+ROUTING_DECISION = "routing.decision"
 METRICS_TURN = "metrics.turn"
 DEVICE_CONFIG_SET = "device.config.set"
 DEVICE_DIAGNOSTICS_REQUEST = "device.diagnostics.request"
