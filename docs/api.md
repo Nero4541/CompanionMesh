@@ -12,8 +12,14 @@
 | `GET /admin/` | Admin dashboard |
 | `GET /v1/admin/config` | Running and saved settings, their JSON schema, which need a restart or wait for one, which secrets are set (admin token) |
 | `PUT /v1/admin/config` | Save every setting (`{"config": {...}}`, as `saved` above); applies the live ones, returns `applied` and `pending_restart` (admin token) |
-| `GET /v1/admin/builtin` | The built-in speech engines: installed, state, process, GPU memory, log (admin token) |
-| `POST /v1/admin/builtin/{stt\|tts}/install`, `PUT /v1/admin/builtin/{stt\|tts}` | Install an engine in the background; turn one on or off (`{"enabled": true}`, saved and applied at once) (admin token) |
+| `GET /v1/admin/builtin` | The built-in engines (speech, perception): installed, state, process, GPU memory, log (admin token) |
+| `POST /v1/admin/builtin/{stt\|tts\|perception}/install`, `PUT /v1/admin/builtin/{stt\|tts\|perception}` | Install an engine in the background; turn one on or off (`{"enabled": true}`, saved and applied at once) or switch its model (`{"model": "<folder>"}`) (admin token) |
+| `GET /v1/admin/people` | Known people (with their numbers of face and voice samples), who is here now, faces tracked, the perception engine (admin token) |
+| `POST /v1/admin/people` `{name, role, notes, consent}`, `PATCH`/`DELETE /v1/admin/people/{id}` | Add someone (only with `consent: true`), change, forget at once (admin token) |
+| `POST /v1/admin/people/{id}/face` `{camera?, track_id?, seconds?}`, `DELETE .../face` | Face samples from a camera (the person looks at it) or from a face tracked now; delete them (admin token) |
+| `POST /v1/admin/people/{id}/voice` (an audio file as the body), `DELETE .../voice` | Voice samples from a recording of the person speaking alone; delete them (admin token) |
+| `POST /v1/admin/people/promote` `{track_id, name, role, consent}` | Add the stranger in view as a person (admin token) |
+| `POST /v1/admin/people/identify?camera=` (or a JPEG as the body) | Who the faces in a picture are (admin token) |
 | `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
 | `GET /v1/admin/phone`, `POST /v1/admin/phone` `{renew?}` | Addresses that log a phone in to the dashboard (with the admin token in them); make the admin token if there is none, or a new one (saved in `.env`, used at once) (admin token) |
 | `GET /v1/admin/personas`, `GET /v1/admin/personas/{name}` | List personas; read one (admin token) |
@@ -46,9 +52,9 @@
 | `GET /v1/admin/updates`, `GET /v1/admin/updates/latest` | Version, update log and changelog; the newest release on GitHub (admin token) |
 | `GET /v1/admin/status`, `/v1/admin/metrics` | `/v1/status` and `/v1/metrics` for the dashboard (admin token) |
 
-## Realtime protocol (1.3)
+## Realtime protocol (1.4)
 
-1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard).
+1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard). 1.4 added `presence.update` (who is around, with perception on); older clients ignore it.
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -105,6 +111,7 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `vision.capture.request` | `{request_id, reason}`: to `camera` devices: send a fresh `manual` frame now |
 | ← | `attention.state` | `{proactive, quiet, speech_blockers}` |
 | ← | `attention.decision` | `{kind, description, salience, source, decision, reasons}` (with `attention.debug`) |
+| ← | `presence.update` | `{people: [{person_id, name, role, since, last_seen_s, camera, track_id?}], tracks: [{track_id, camera, person_id, name, role, kind, since, last_seen, frames, box, yaw}]}` (1.4, with `perception.enabled`): who is here changed |
 | ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
 | ← | `device.config.set` | `{request_id, config}`: new settings from the admin dashboard; check them, save them and answer `device.config.result` (1.1) |
 | ← | `device.diagnostics.request` | `{request_id}`: collect versions, checks, memory, disk, network, Wi-Fi and kernel messages (1.2) |
