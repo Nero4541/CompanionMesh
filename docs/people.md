@@ -53,18 +53,36 @@ A picture is skipped, never queued, while the one before it from the same camera
 
 The dashboard's **People** page shows who is here now, and **Who is this?** names the faces in a camera's newest picture.
 
+## Who said what
+
+With `perception.speakers: true` (off by default), every sentence heard gets a speaker, worked out while speech recognition runs. The rules, in order:
+
+| What the server finds | Speaker | Confidence |
+|---|---|---|
+| The voice is someone known, and the lips of that person's face move | that person | high |
+| The voice clearly is someone known (a second or longer; `people.voice_threshold`, `voice_margin`) | that person, on screen or not | high |
+| Only one face's lips clearly move (needs 15 or more pictures a second) | that face's person, or a stranger | medium |
+| Only one known person is around, and the voice does not say otherwise | that person | medium |
+| A voice nobody knows, and nobody visibly talking | `media` (a TV, radio or video) | low |
+| Anything else | unknown | low |
+
+Voices shorter than a second are not trusted on their own. The speaker goes with the transcript (`conversation.transcript` has `speaker: {person_id, name, role, confidence, on_screen, how}`), shows on the dashboard's **Conversations** page and the phone page, and the agent gets the line as `「…」 (Yukari, the user)`, `(a stranger)` or `(the TV or another device)`. With speakers on, the TV still gets answered until the [routing gate](#answering-only-what-is-meant-for-the-companion) is on too.
+
+When voice, face and lips all agree on someone for a sentence of 1.5 s or longer, the sentence is kept (in memory only) as a new voice sample for them; the People page offers to add these (**Add N heard voice samples**). Nothing is added by itself.
+
 ## Settings
 
 | Setting | Default | What it does |
 |---|---|---|
 | `perception.enabled` | `false` | Recognise people; starts the engine |
+| `perception.speakers` | `false` | Tell who said each sentence, and tell the agent |
 | `perception.device` | `auto` | `cuda`, `cpu` or `auto` |
 | `perception.face_model` / `voice_model` | `buffalo_l` / `speaker-diarization-community-1` | Model folders in `builtin/perception/models` (`none` for no voices) |
 | `perception.picture_check` | `true` | Ask the vision model about unknown faces |
 | `perception.left_after_s` | `60` | Out of view this long = gone |
 | `cameras[].perception_fps` | `10` | Pictures a second looked at, per server camera (0 = only those sent to the conversation) |
 | `people.face_threshold`, `face_margin` | `0.45`, `0.10` | How alike a face must be |
-| `people.voice_threshold`, `voice_margin` | `0.5`, `0.15` | How alike a voice must be |
+| `people.voice_threshold`, `voice_margin` | `0.3`, `0.05` | How alike a voice must be |
 | `people.stranger_retention_h` | `24` | Hours strangers are remembered |
 
 All of them apply at once.
