@@ -29,6 +29,7 @@ LINE_FIELDS = (
     "typed",
     "cancelled",
     "speaker",
+    "route",
 )
 
 
