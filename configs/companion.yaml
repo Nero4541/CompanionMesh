@@ -282,6 +282,15 @@ timeline:
     - {id: phone-in-bed-late, activity: phone, posture: lying_down, after: "00:30", before: "05:00"}
     - {id: back-after-4h, activity: away, min_minutes: 240, when: after, person: user}
 
+# Tools for the agent: an MCP server at /mcp (Hermes, OpenClaw) and the same
+# tools at POST /v1/tools/<name>. See docs/agents.md and `companion agent-tools`.
+mcp:
+  enabled: false
+  token_env: COMPANION_AGENT_TOKEN  # unset: only this machine
+  consent: conversation     # remember_person: the user's last line said yes | dashboard
+  consent_window_s: 300
+  speech_minutes: 30        # what recent_speech can give (in memory only)
+
 # IP cameras and phones the server watches itself (or use the dashboard's
 # Cameras page). Logins come from .env, never from the URL.
 cameras: []
