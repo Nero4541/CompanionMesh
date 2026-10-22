@@ -949,6 +949,31 @@ class TimelineConfig(_Section):
     """
 
 
+class AgentToolsConfig(_Section):
+    """Tools for the agent: an MCP server at /mcp (Hermes, OpenClaw and other MCP clients) and
+    the same tools at POST /v1/tools/<name>. Who is here, the timeline, what was said, a look
+    through a camera, remembering and forgetting people, watches. See docs/agents.md.
+    """
+
+    enabled: bool = False
+    """Serve the tools. Off: /mcp and /v1/tools answer 404."""
+    token_env: str | None = "COMPANION_AGENT_TOKEN"
+    """Name of the .env variable holding the token the agent must send (Authorization: Bearer).
+    While it is not set, the tools answer only this machine.
+    """
+    consent: Literal["conversation", "dashboard"] = "conversation"
+    """How remember_person (adding someone the cameras see) is allowed. conversation: only when
+    the user's last sentence, at most consent_window_s ago, said yes (yes, OK, はい, いいよ, ...).
+    dashboard: the agent's request waits for a confirmation on the People page.
+    """
+    consent_window_s: float = Field(default=300.0, gt=0)
+    """How recent the user's yes must be, in seconds."""
+    speech_minutes: float = Field(default=30.0, gt=0, le=240)
+    """How many minutes of what was said (with who said it) recent_speech can give. Kept in
+    memory only, and only while the tools are on.
+    """
+
+
 class PeopleConfig(_Section):
     """People the companion knows by face and voice: the user and acquaintances, by name.
 
@@ -1069,6 +1094,7 @@ class CompanionConfig(_Section):
     people: PeopleConfig = PeopleConfig()
     routing: RoutingConfig = RoutingConfig()
     timeline: TimelineConfig = TimelineConfig()
+    mcp: AgentToolsConfig = AgentToolsConfig()
     perception: PerceptionConfig = PerceptionConfig()
     cameras: list[CameraConfig] = Field(default_factory=list)
     """IP cameras and phones the server watches itself. Easier to manage on the Cameras page."""
@@ -1154,6 +1180,7 @@ _LIVE_SETTINGS = {
     "people": True,  # read on every match
     "routing": True,  # read for every sentence
     "timeline": True,  # rules and sampling follow at once
+    "mcp": True,  # checked on every request
     "perception": True,  # the engine starts, stops and restarts while running
 }
 
