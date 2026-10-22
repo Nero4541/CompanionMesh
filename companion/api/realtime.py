@@ -193,6 +193,9 @@ async def serve(ws: WebSocket, identity: Identity) -> None:
             await _send_error(outbox, exc.code, str(exc))
             await ws.close(code=1008)
             return
+        offer = start.payload.get("camera_stream")
+        if isinstance(offer, dict) and "camera" in device.roles:
+            device.stream = offer  # stream mode: perception asks for it (camera.stream)
         history = await runtime.store.history(session.session_id, limit=50)
         await session.emit_to(
             [device],
@@ -256,6 +259,8 @@ async def serve(ws: WebSocket, identity: Identity) -> None:
                         await session.vision.submit_frame(
                             event, data, device.device_id, device.clock
                         )
+                    elif event.type == ev.CAMERA_STREAM_CHUNK:
+                        await session.vision.submit_stream_chunk(data, device.device_id)
                     continue
                 if message.get("text") is not None:
                     await _dispatch(session, device, parse_text_frame(message["text"]))
