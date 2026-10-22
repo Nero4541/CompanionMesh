@@ -56,6 +56,14 @@ class CameraConfig:
     max_interval_s: float = 60.0  # periodic mode: backs off to this while nothing changes
     quality: int = 5  # ffmpeg -q:v (2 = best, 31 = worst)
     rotate: int = 0  # degrees clockwise (0, 90, 180, 270) for a camera mounted turned
+    # Stream mode (protocol 1.4, see stream.py): while the server's perception asks
+    # for it, run stream_command, which writes the camera to stdout as MJPEG or
+    # H.264 (Annex B), and send that instead of single pictures; the still camera
+    # pauses meanwhile. {fps} {size} {width} {height} {device} are filled in.
+    stream: bool = False
+    stream_command: str = ""
+    stream_format: str = "mjpeg"  # mjpeg | h264
+    stream_fps: float = 10.0
 
 
 @dataclass
