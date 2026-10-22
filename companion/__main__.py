@@ -1,4 +1,4 @@
-"""Command line entry point: ``uv run companion [serve|check|setup|edge|camera|replay]``."""
+"""Command line entry point: ``uv run companion <command>`` (serve by default; see --help)."""
 
 from __future__ import annotations
 
@@ -111,6 +111,15 @@ def _parser() -> argparse.ArgumentParser:
             "replay",
             help="feed a recorded session (video, audio, labels) through perception offline",
         )
+    )
+    tools = sub.add_parser(
+        "agent-tools", help="connect Hermes or OpenClaw to the companion's tools (MCP)"
+    )
+    tools.add_argument("--url", help="the address the agent reaches /mcp at")
+    tools.add_argument("--token", action="store_true", help="create the token in .env")
+    tools.add_argument("--write-hermes", metavar="CONFIG_YAML", help="add the tools to this file")
+    tools.add_argument(
+        "--write-openclaw", metavar="OPENCLAW_JSON", help="add the tools to this file"
     )
     cam = sub.add_parser("camera", help="feed an IP camera into the active session (vision device)")
     cam.add_argument(
@@ -487,6 +496,10 @@ def main(argv: list[str] | None = None) -> int:
             return 1
     if args.command == "check":
         return asyncio.run(_check(config))
+    if args.command == "agent-tools":
+        from companion import agent_setup
+
+        return agent_setup.run_cli(args, config, source.project_root / ".env")
     if args.command == "replay":
         from companion.perception import replay
 
