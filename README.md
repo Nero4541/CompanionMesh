@@ -8,6 +8,7 @@ An open-source, self-hosted AI companion server. Talk to it by voice or text fro
 - **Conversational**: streaming replies spoken sentence by sentence; talk over the companion and it stops to listen.
 - **A body for the companion**: a small Linux board (LicheeRV Nano tested) with microphone, speaker and camera, set up over USB from the dashboard and looked after from it, at home or away.
 - **Opt-in vision and proactive speech**: it looks only when a session allows it, and speaks first only within strict limits.
+- **Knows who is around** (opt-in): recognises you and the people you add by face and voice, tells who said what, answers only what is meant for it, and keeps a timeline of what everyone has been doing, with a local vision model and tools for the agent over MCP.
 - **Windows first, Linux supported**, with local speech recognition and synthesis it can install itself.
 - **Private by default**: with an external agent nothing of the conversation is written to disk; audio and images are never stored unless you turn that on.
 
@@ -42,7 +43,7 @@ Stop the server and run **`update-companion.bat`** (Linux: `./update-companion.s
 |---|---|
 | [Getting started](docs/getting-started.md) | How it works, requirements, installation |
 | [Configuration](docs/configuration.md) · [Admin dashboard](docs/dashboard.md) | Settings, secrets, where data lives |
-| [Agents](docs/agents.md) · [Speech](docs/speech.md) · [Vision](docs/vision.md) | The agent, speech and cameras |
+| [Agents](docs/agents.md) · [Speech](docs/speech.md) · [Vision](docs/vision.md) · [People](docs/people.md) | The agent and its tools, speech, cameras, who is around |
 | [Realtime conversation](docs/realtime.md) · [Proactive behavior](docs/proactive.md) · [Performance](docs/performance.md) | Interrupting, speaking first, latency and hardware |
 | [Edge devices](docs/edge-devices.md) · [Reaching the server from outside](docs/remote-access.md) | Boards, at home and away |
 | [API](docs/api.md) · [Troubleshooting](docs/troubleshooting.md) · [Development](docs/development.md) · [Roadmap](docs/roadmap.md) | Reference |
