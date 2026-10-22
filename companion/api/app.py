@@ -17,6 +17,7 @@ from companion.api import (
     edge_admin,
     http,
     maintain,
+    mcp,
     observe,
     people,
     realtime,
@@ -79,6 +80,7 @@ def create_app(
     app.include_router(builtin.router)
     app.include_router(people.router)
     app.include_router(timeline.router)
+    app.include_router(mcp.router)
     app.include_router(edge_admin.router)
     app.include_router(observe.router)
     app.include_router(maintain.router)
