@@ -117,6 +117,8 @@ class VisionChannel:
         self._injected: set[str] = set()
         # Camera signal for the attention engine (v0.3).
         self.scene = SceneTracker(session.runtime.config.attention)
+        # Stream mode: an H.264 decoder per device (perception.stream).
+        self._streams: dict[str, Any] = {}
         # Capture requests: set when a camera device delivers a frame.
         self._frame_arrived = asyncio.Event()
         self._capture_requested_at: float | None = None
@@ -193,8 +195,10 @@ class VisionChannel:
             # Faces (perception.enabled): every picture, also live ones; skipped while busy.
             if str(payload.get("mime") or "image/jpeg") == "image/jpeg":
                 self.runtime.perception.offer_frame(device_id, data)
-        if reason == "live":
-            return "accepted"  # for the dashboard's live view only, not for vision
+        if reason in ("live", "stream"):
+            # Live: for the dashboard's live view only. Stream (stream mode): for
+            # perception only, many a second; neither goes to the agent or the VLM.
+            return "accepted"
         manual = reason in MANUAL_REASONS
         raw_event = payload.get("event")
         event = raw_event if isinstance(raw_event, dict) else None
@@ -289,6 +293,30 @@ class VisionChannel:
             # (In vlm mode the observation of this frame becomes the event.)
             await self.session.on_attention_event(self._change_event(frame, None))
         return status
+
+    async def submit_stream_chunk(self, data: bytes, device_id: str | None) -> None:
+        """A piece of a device's H.264 camera stream (stream mode): pictures for perception."""
+        if not self.enabled or not device_id:
+            return
+        from companion.perception.stream import H264Frames, to_jpeg
+
+        decoder = self._streams.get(device_id)
+        if decoder is None:
+            decoder = self._streams[device_id] = H264Frames()
+        frames = await asyncio.to_thread(decoder.decode, data)
+        if not frames:
+            return
+        newest = frames[-1]  # older ones are past already
+        perception = self.runtime.perception
+        now = time.time()
+        shown = self.runtime.frames.get(device_id)
+        wanted = perception.ready and not perception.busy(device_id)
+        if wanted or shown is None or now - shown.received >= 1.0:
+            jpeg = await asyncio.to_thread(to_jpeg, newest)
+            if wanted:
+                perception.offer_frame(device_id, jpeg)
+            if shown is None or now - shown.received >= 1.0:
+                self.runtime.frames[device_id] = LastFrame(jpeg, "image/jpeg", "stream")
 
     def _hold(self, frame: _Pending) -> None:
         """Agent mode: keep the frames for the next turn within max_turn_images."""
