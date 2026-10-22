@@ -1052,6 +1052,12 @@ class PerceptionConfig(_Section):
     """
     enrol_seconds: float = Field(default=10.0, gt=0, le=60)
     """How long "look at the camera" collects face samples when adding someone."""
+    stream_fps: float = Field(default=10.0, ge=0, le=30)
+    """Boards that can stream their camera (stream mode, camera.stream in the board's settings)
+    are asked to, at this many pictures a second, while perception is on: enough to see who is
+    talking from the lips at 15. The board only captures and encodes; 0 = never ask (single
+    pictures only).
+    """
     glance: bool = False
     """Let the vision model (vlm) glance at the cameras often: who is doing what (gaming, reading,
     on the phone, ...), with the people marked by name. Feeds the timeline and what the agent
