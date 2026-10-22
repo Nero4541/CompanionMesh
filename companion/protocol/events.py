@@ -1,10 +1,12 @@
 """Event type names of the realtime protocol (1.4).
 
 Client -> server
-    session.start            payload: {session_id?, join?, roles?}
+    session.start            payload: {session_id?, join?, roles?, camera_stream?}
                              join: true without session_id attaches to the
                              most recently active session (e.g. an IP camera
                              bridge joining the browser's conversation).
+                             camera_stream (1.4): {formats: ["mjpeg" | "h264"], max_fps}
+                             the device can stream its camera (stream mode);
                              roles: subset of ["mic", "speaker", "camera"];
                              absent = ["mic", "speaker"]. Audio output goes to "speaker"
                              devices, capture requests to "camera" devices.
@@ -35,6 +37,9 @@ Client -> server
                              reason: periodic | change | manual (manual skips
                              rate limit and dedup)
     vision.event             payload: {description | label, tags?, confidence?, salience?}
+    camera.stream.chunk      binary: a piece of the device's H.264 (Annex B) camera stream;
+                             payload {format: "h264"} (1.4, stream mode; MJPEG streams
+                             come as vision.frame with reason "stream")
     attention.quiet          payload: {enabled}  (do-not-disturb: no proactive speech)
     device.status            payload: free-form health, e.g. {cpu_temp_c, mem_free_mb,
                              wifi_signal_dbm, uptime_s, audio_buffer_ms}
@@ -122,6 +127,9 @@ Server -> client
                              is here changed; role: user | acquaintance | stranger
     metrics.turn             payload: {turn_id, <stage>: seconds, ...}  (only with
                              metrics.emit_turn)
+    camera.stream            payload: {fps, seconds, format?}  (1.4, to devices that offered
+                             camera_stream) stream the camera for ``seconds`` (renewed while
+                             perception wants it; 0 = stop now); then single pictures again
     device.config.set        payload: {request_id, config}  (new settings for this
                              device, from the admin dashboard; answer
                              device.config.result)
@@ -217,3 +225,5 @@ DEVICE_WIFI_SET = "device.wifi.set"
 DEVICE_BLUETOOTH = "device.bluetooth"
 DEVICE_TAILSCALE = "device.tailscale"
 CAMERA_LIVE = "camera.live"
+CAMERA_STREAM = "camera.stream"
+CAMERA_STREAM_CHUNK = "camera.stream.chunk"
