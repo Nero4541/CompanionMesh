@@ -252,6 +252,7 @@ perception:
   picture_check: true       # ask the vlm whether an unknown face is a poster or screen
   static_picture_s: 180     # without a vlm: a face that never moves is a picture
   enrol_seconds: 10
+  stream_fps: 10            # boards in stream mode are asked for this many pictures a second
   glance: false             # the vlm glances at the cameras: who is doing what
   glance_s: null            # null: 1 s with builtin.vlm, 10 s with another vision model
   glance_tokens: 120
