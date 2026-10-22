@@ -234,6 +234,25 @@
     {/if}
   </section>
 
+  {#if info.data.requests?.length}
+    <section class="card">
+      <h3>The agent asks to remember</h3>
+      {#each info.data.requests as r (r.id)}
+        <p class="row">
+          <strong>{r.name}</strong> <span class="muted">({r.role}, the face in view as {r.track_id})</span>
+          <button class="small primary" disabled={busy[`req:${r.id}`]}
+            onclick={() => act(`req:${r.id}`, () => api(`/people/requests/${r.id}`, { method: "POST" }), `${r.name} added.`)}>
+            They agreed: add
+          </button>
+          <button class="small" disabled={busy[`req:${r.id}`]}
+            onclick={() => act(`req:${r.id}`, () => api(`/people/requests/${r.id}?accept=false`, { method: "POST" }))}>
+            Decline
+          </button>
+        </p>
+      {/each}
+    </section>
+  {/if}
+
   <section class="card">
     <h3>Here now</h3>
     {#if !info.data.here.length}
