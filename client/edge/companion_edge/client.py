@@ -56,6 +56,7 @@ from companion_edge.devices import (
 )
 from companion_edge.motion import MotionDetector, MotionSettings
 from companion_edge.opus import OpusEncoder, OpusUnavailable
+from companion_edge.stream import RETRY_S, CameraStream, command_line
 
 log = logging.getLogger("companion_edge")
 
@@ -109,6 +110,15 @@ class EdgeClient:
         self._live_until = 0.0
         self._live_interval = 1.0
         self._live_task: asyncio.Task[None] | None = None
+        # Stream mode (camera.stream): the stream running, its lease, and the still
+        # camera paused meanwhile.
+        self._stream: CameraStream | None = None
+        self._stream_until = 0.0
+        self._stream_failed_at: float | None = None
+        self._stills_paused = False
+        self._stills_parked = asyncio.Event()
+        self._stills_resumed = asyncio.Event()
+        self._stream_lock = asyncio.Lock()
         self.restart_requested = False
         a, c = config.audio, config.camera
         self.encoder = encoder
@@ -369,7 +379,12 @@ class EdgeClient:
     ) -> None:
         if self.camera is None or self.ws is None or not self.vision_enabled:
             return
-        jpeg = await self.camera.latest()
+        if self._stills_paused:
+            # The stream has the camera: its newest picture (MJPEG), or none (H.264).
+            stream = self._stream
+            jpeg = stream.latest if stream is not None else None
+        else:
+            jpeg = await self.camera.latest()
         if jpeg is None:
             return
         payload: dict[str, Any] = {
@@ -411,29 +426,157 @@ class EdgeClient:
         log.info("live view stopped")
 
     async def _camera_loop(self) -> None:
-        if self.config.camera.mode == "change" and getattr(self.camera, "analysis", False):
-            await self._watch_changes()
-            return
         while True:
+            if self._stills_paused:  # the stream has the camera
+                self._stills_parked.set()
+                self._stills_resumed.clear()
+                await self._stills_resumed.wait()
+                continue
+            self._stills_parked.clear()
+            if self.config.camera.mode == "change" and getattr(self.camera, "analysis", False):
+                await self._watch_changes()
+                continue
             await asyncio.sleep(self.frame_interval)
-            await self._send_frame("periodic")
+            if not self._stills_paused:
+                await self._send_frame("periodic")
 
     async def _watch_changes(self) -> None:
-        """Change mode: look at every small frame, send a picture only when it changed."""
+        """Change mode: look at every small frame, send a picture only when it changed.
+
+        Returns when stream mode takes the camera.
+        """
         assert self.camera is not None
         loop = asyncio.get_running_loop()
         self._last_frame_sent = loop.time()
         heartbeat = self.config.camera.heartbeat_s
-        async for gray, at in self.camera.gray_frames():  # type: ignore[attr-defined]
-            if not self.vision_enabled or self.ws is None:
-                self.detector.reset()
-                continue
-            change = self.detector.feed(gray, at)
-            if change is not None:
-                log.info("camera: %s (score %.2f)", change.kind, change.score)
-                await self._send_frame("change", event=change.to_payload())
-            elif loop.time() - self._last_frame_sent >= heartbeat:
-                await self._send_frame("periodic")
+        frames = self.camera.gray_frames()  # type: ignore[attr-defined]
+        try:
+            async for gray, at in frames:
+                if self._stills_paused:
+                    return
+                if not self.vision_enabled or self.ws is None:
+                    self.detector.reset()
+                    continue
+                change = self.detector.feed(gray, at)
+                if change is not None:
+                    log.info("camera: %s (score %.2f)", change.kind, change.score)
+                    await self._send_frame("change", event=change.to_payload())
+                elif loop.time() - self._last_frame_sent >= heartbeat:
+                    await self._send_frame("periodic")
+        finally:
+            await frames.aclose()
+
+    # --- stream mode (protocol 1.4) ------------------------------------------------
+
+    @property
+    def can_stream(self) -> bool:
+        c = self.config.camera
+        return self.camera is not None and c.stream and bool(c.stream_command.strip())
+
+    def stream_offer(self) -> dict[str, Any]:
+        c = self.config.camera
+        return {"formats": [c.stream_format], "max_fps": c.stream_fps}
+
+    async def _lease_stream(self, p: dict[str, Any]) -> None:
+        """camera.stream: stream for ``seconds`` (renewed by the server), 0 = stop now."""
+        if not self.can_stream:
+            return
+        loop = asyncio.get_running_loop()
+        seconds = min(max(float(p.get("seconds") or 0), 0.0), 120.0)
+        if seconds <= 0 or not self.vision_enabled:
+            await self._end_stream("stopped by the server" if seconds <= 0 else "vision is off")
+            return
+        self._stream_until = loop.time() + seconds
+        async with self._stream_lock:
+            if self._stream is not None:
+                return
+            failed = self._stream_failed_at
+            if failed is not None and loop.time() - failed < RETRY_S:
+                return  # it crashed lately: stills only for a while
+            c = self.config.camera
+            fps = min(float(p.get("fps") or c.stream_fps), c.stream_fps)
+            command = command_line(c.stream_command, fps=fps, size=c.size, device=c.device)
+            await self._pause_stills()
+            stream = CameraStream(
+                command,
+                c.stream_format,
+                fps,
+                send_frame=self._send_stream_frame,
+                send_chunk=self._send_stream_chunk,
+            )
+            try:
+                await stream.start()
+            except OSError as exc:
+                log.warning("camera stream cannot start: %s", exc)
+                stream.state, stream.error = "failed", str(exc)
+                self._stream_failed_at = loop.time()
+                await self._resume_stills()
+                return
+            self._stream = stream
+            self._spawn(self._watch_stream(stream))
+
+    async def _watch_stream(self, stream: CameraStream) -> None:
+        loop = asyncio.get_running_loop()
+        while self._stream is stream:
+            if stream.exited.is_set():
+                self._stream_failed_at = loop.time()
+                await self._end_stream("the stream command exited")
+                return
+            if loop.time() > self._stream_until:
+                await self._end_stream("no longer asked for")
+                return
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(stream.exited.wait(), 0.5)
+
+    async def _end_stream(self, why: str) -> None:
+        async with self._stream_lock:
+            stream, self._stream = self._stream, None
+            if stream is None:
+                return
+            log.info("camera stream ends: %s", why)
+            await stream.stop()
+            self._last_stream = stream
+            await self._resume_stills()
+
+    async def _pause_stills(self) -> None:
+        """Let the stream have the camera: the still loop parks, the camera lets go."""
+        assert self.camera is not None
+        self._stills_paused = True
+        with contextlib.suppress(TimeoutError):
+            await asyncio.wait_for(self._stills_parked.wait(), 5.0)
+        with contextlib.suppress(Exception):
+            await self.camera.close()
+
+    async def _resume_stills(self) -> None:
+        assert self.camera is not None
+        try:
+            await self.camera.start()
+        except Exception as exc:  # the still camera is gone too; keep the client up
+            log.warning("camera does not start again after the stream: %s", exc)
+        self._stills_paused = False
+        self._stills_resumed.set()
+
+    async def _send_stream_frame(self, jpeg: bytes, at: float) -> None:
+        if self.ws is None or not self.vision_enabled:
+            return
+        payload = {
+            "mime": "image/jpeg",
+            "reason": "stream",
+            "frame_id": uuid.uuid4().hex[:12],
+            "captured_at": round(at),
+        }
+        header = protocol.envelope("vision.frame", payload, device_id=self.config.device_id)
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await self.ws.send(protocol.binary(header, jpeg))
+            self.stats.frames_sent += 1
+
+    async def _send_stream_chunk(self, data: bytes) -> None:
+        if self.ws is None or not self.vision_enabled:
+            return
+        with contextlib.suppress(websockets.ConnectionClosed):
+            await self.ws.send(
+                protocol.compact_binary("camera.stream.chunk", data, {"format": "h264"})
+            )
 
     def _adapt_interval(self, frame_status: str) -> None:
         """Adaptive sampling: slow down while the view is unchanged."""
@@ -455,6 +598,13 @@ class EdgeClient:
             frames_sent=self.stats.frames_sent,
             frame_interval_s=self.frame_interval,
         )
+        stream = self._stream or getattr(self, "_last_stream", None)
+        if self.can_stream:
+            payload["stream"] = {
+                "state": stream.state if stream is not None else "idle",
+                "error": stream.error if stream is not None else None,
+                "frames_sent": stream.frames_sent if stream is not None else 0,
+            }
         with contextlib.suppress(websockets.WebSocketException):
             await ws.send(protocol.text("device.status", payload))
 
@@ -515,6 +665,7 @@ class EdgeClient:
             self.vision_enabled = bool(p.get("enabled"))
             if was and not self.vision_enabled:
                 self.vision_user_disabled = True
+                await self._end_stream("vision was turned off")
             elif self.vision_enabled:
                 self.vision_user_disabled = False
         elif kind == "vision.capture.request":
@@ -545,6 +696,8 @@ class EdgeClient:
                 return "exit"
         elif kind == "camera.live":
             self._start_live(p)
+        elif kind == "camera.stream":
+            await self._lease_stream(p)
         elif kind == "device.wifi.set":
             self._spawn(self._change_wifi(self.ws, p))
         elif kind == "device.bluetooth":
@@ -869,6 +1022,8 @@ class EdgeClient:
         self.ws = ws
         self.streaming = False
         start: dict[str, Any] = {"roles": self.roles()}
+        if self.can_stream:
+            start["camera_stream"] = self.stream_offer()
         if self.camera_only:
             # A camera alone does not start conversations: it joins the one
             # started most recently, and the next one after that ends.
@@ -892,6 +1047,7 @@ class EdgeClient:
         finally:
             self.ws = None
             self.streaming = False
+            await self._end_stream("disconnected")
         return "closed"
 
     def _ssl_context(self, url: str) -> ssl.SSLContext | None:
