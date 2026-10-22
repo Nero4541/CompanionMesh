@@ -86,6 +86,8 @@ async def people(request: Request) -> dict[str, Any]:
             {*runtime.cameras.running_ids(), *runtime.frames.keys(), *perception.trackers}
         ),
         "vlm": runtime.vlm is not None,
+        # remember_person calls of the agent waiting for a confirmation (mcp.consent: dashboard)
+        "requests": [r.to_payload() for r in runtime.tools.requests.values()],
     }
 
 
@@ -311,6 +313,24 @@ async def promote(request: Request, body: Promote) -> dict[str, Any]:
         raise _refused(exc) from exc
     registry.add_faces(person.id, np.vstack(track.samples))
     log.info("stranger added as a person", extra=kv(person=person.id, track=track.id))
+    return _person(runtime, person)
+
+
+@router.post("/requests/{request_id}")
+async def answer_request(request: Request, request_id: str, accept: bool = True) -> dict[str, Any]:
+    """Confirm (or with ?accept=false decline) the agent's request to remember someone."""
+    from companion.agent.tools import ToolError
+
+    runtime = _runtime(request)
+    if not accept:
+        if runtime.tools.requests.pop(request_id, None) is None:
+            raise HTTPException(status_code=404, detail="no such request")
+        return {"declined": request_id}
+    try:
+        person = runtime.tools.confirm(request_id)
+    except (ToolError, RegistryError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    log.info("agent request confirmed", extra=kv(person=person.id))
     return _person(runtime, person)
 
 
