@@ -410,6 +410,7 @@ class Session:
         await self.interrupt("new_message")
         await self.vision.request_capture("text")
         self.runtime.feed.said(self.session_id, "user", text, typed=True)
+        self._log_speech("you (typed)", "user", text, typed=True)
         self._timings = TurnTimings(transcript=TurnTimings.now())
         self._start_turn(self._text_turn(text))
 
@@ -651,10 +652,27 @@ class Session:
             recording_id=recording_id,
             **extra,
         )
+        self._log_speech(
+            speaker.describe() if speaker is not None else "the user",
+            speaker.role if speaker is not None else "user",
+            transcript.text,
+            route=route.route if route is not None else "turn",
+        )
         if route is not None and route.route != "turn":
             await self._not_for_me(route, speaker, transcript.text)
             return
         await self.run_turn(transcript.text, speaker=speaker)
+
+    def _log_speech(
+        self, who: str, role: str, text: str, *, route: str = "turn", typed: bool = False
+    ) -> None:
+        """Keep the line for the agent's recent_speech tool (only while the tools are on)."""
+        cfg = self.runtime.config.mcp
+        if cfg.enabled and text:
+            from companion.agent.tools import SpokenLine
+
+            line = SpokenLine(time.time(), who, role, text, route, typed)
+            self.runtime.speech_log.add(line, cfg.speech_minutes)
 
     async def _route(self, speaker: Speaker | None, text: str) -> Route | None:
         """Whether a sentence is meant for the companion (routing.enabled); None when off."""
@@ -1023,6 +1041,7 @@ class Session:
                 self.runtime.feed.said(
                     self.session_id, "companion", stored, cancelled=cancelled, turn_id=turn_id
                 )
+                self._log_speech("the companion (you)", "companion", stored)
             done: dict[str, Any] = {"turn_id": turn_id, "text": text, "cancelled": cancelled}
             if cancelled and reason:
                 done["reason"] = reason
