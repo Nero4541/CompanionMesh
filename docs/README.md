@@ -15,7 +15,8 @@ The full guide to the Companion Server, by topic. The [README](../README.md) has
 
 | Page | What is in it |
 |---|---|
-| [Agents](agents.md) | Hermes, OpenClaw or a plain LLM, and agents on another machine |
+| [Agents](agents.md) | Hermes, OpenClaw or a plain LLM, agents on another machine, and the tools the companion gives them (MCP) |
+| [Agent guide](agent-guide.md) | A text for the agent's own instructions: people, overheard talk, staying quiet |
 | [Speech](speech.md) | Speech recognition and synthesis, built-in or on other servers |
 | [Realtime conversation](realtime.md) | Interrupting (barge-in), echo handling, timing |
 | [Vision](vision.md) | Cameras, agent mode and VLM mode, IP cameras and phones |
