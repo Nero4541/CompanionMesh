@@ -62,7 +62,7 @@
 
 ## Realtime protocol (1.4)
 
-1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard). 1.4 added `presence.update` (who is around, with perception on), `speaker` and `route` on `conversation.transcript`, and `routing.decision`; older clients ignore them.
+1.1 added `device.config`, `device.config.set` and `device.config.result` (remote settings for devices); a 1.0 client never sees them. 1.2 added `device.log`, `device.diagnostics`, `device.update`, `device.restart` and `device.wifi.set` with their answers (looking after devices remotely); older devices ignore them, and the dashboard says they do not answer. 1.3 added `device.bluetooth` and `device.tailscale` with their answers (a Bluetooth speaker and Tailscale from the dashboard). 1.4 added `presence.update` (who is around, with perception on), `speaker` and `route` on `conversation.transcript`, `routing.decision`, and stream mode (`camera_stream` in `session.start`, `camera.stream`, `camera.stream.chunk`, `vision.frame` reason `stream`); older clients ignore them.
 
 With a token configured, connect to `/v1/realtime?token=…` or send `Authorization: Bearer …`.
 
@@ -122,6 +122,9 @@ Binary frames carry a 4-byte big-endian header length, then the JSON envelope, t
 | ← | `conversation.transcript` `speaker` | With `perception.speakers`: `{person_id, name, role, confidence, on_screen, how}` (1.4); role: user, acquaintance, stranger, media or unknown |
 | ← | `conversation.transcript` `route` | With `routing.enabled`: `turn` (answered), `context` (overheard, given with the next turn) or `log` (not for the companion) (1.4) |
 | ← | `routing.decision` | `{route, reasons, speaker}` (with `routing.debug`, 1.4) |
+| → | `session.start` `camera_stream` | `{formats: ["mjpeg" or "h264"], max_fps}`: the device can stream its camera (stream mode, 1.4) |
+| ← | `camera.stream` | `{fps, seconds, format?}`: stream for `seconds` (renewed while perception wants it; `seconds: 0` stops at once), then single pictures again (1.4) |
+| → | `camera.stream.chunk` (binary) | A piece of the device's H.264 camera stream, `{format: "h264"}`; MJPEG streams come as `vision.frame` with `reason: "stream"`, which go to perception only (1.4) |
 | ← | `presence.update` | `{people: [{person_id, name, role, since, last_seen_s, camera, track_id?}], tracks: [{track_id, camera, person_id, name, role, kind, since, last_seen, frames, box, yaw}]}` (1.4, with `perception.enabled`): who is here changed |
 | ← | `metrics.turn` | `{turn_id, <stage>: seconds…}` (with `metrics.emit_turn`) |
 | ← | `device.config.set` | `{request_id, config}`: new settings from the admin dashboard; check them, save them and answer `device.config.result` (1.1) |
