@@ -214,6 +214,11 @@ class CompanionRuntime:
         # Faces and people (perception.enabled); its engine is a built-in one.
         self.perception = PerceptionService(self)
         self._perception_backend = providers.perception
+        # The agent's tools (mcp.enabled) and what they report of the conversation.
+        from companion.agent.tools import AgentTools, SpeechLog
+
+        self.speech_log = SpeechLog()
+        self.tools = AgentTools(self)
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
         self.started_at = time.time()
 
