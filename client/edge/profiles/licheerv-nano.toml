@@ -51,3 +51,13 @@ cooldown_s = 10
 min_interval_s = 5
 max_interval_s = 60
 quality = 5
+# Stream mode (the server asks for it while its perception is on): the board
+# would run stream_command, which writes the camera as H.264 or MJPEG to stdout.
+# A JPEG takes ~0.8 s in software on this single core, so it needs the SG2002's
+# hardware encoder (CVI VENC); no tested command for it ships yet. Take care:
+# when Sipeed's sample_venc crashed, the camera gave no pictures until the board
+# was powered off and on again. Without stream_command, single pictures go on.
+stream = false
+# stream_command = "/path/to/a/venc-tool --fps {fps} --size {size} --stdout"
+stream_format = "h264"
+stream_fps = 10
