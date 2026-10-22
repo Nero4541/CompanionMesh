@@ -129,6 +129,9 @@ class Device:
     clock: ClockSync = field(default_factory=ClockSync)
     # Remote settings (device.config); None if the device does not offer them.
     settings: dict[str, Any] | None = None
+    # Stream mode (protocol 1.4): what the device offered in session.start
+    # ({formats, max_fps}), or None.
+    stream: dict[str, Any] | None = None
     # Requests waiting for the device's answer, by request_id
     # (device.config.set -> .result, device.diagnostics.request -> device.diagnostics).
     settings_requests: dict[str, asyncio.Future[dict[str, Any]]] = field(default_factory=dict)
