@@ -41,3 +41,10 @@ cooldown_s = 10              # between two change events of the same kind
 min_interval_s = 5           # periodic mode: as often as this while the view changes
 max_interval_s = 60          # periodic mode: as rarely as this while it stays the same
 quality = 5
+# Stream mode (protocol 1.4): while the server's perception asks for it, run
+# stream_command (MJPEG or H.264 to stdout) and send that instead of single
+# pictures; the still camera pauses meanwhile. See docs/edge-devices.md.
+stream = false
+stream_command = ""          # e.g. ffmpeg ... -i {device} -c:v copy -f mjpeg -
+stream_format = "mjpeg"      # mjpeg | h264
+stream_fps = 10
