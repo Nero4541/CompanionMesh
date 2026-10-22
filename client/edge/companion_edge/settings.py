@@ -27,6 +27,7 @@ CHOICES = {
     "camera.mode": ["change", "periodic"],
     "camera.driver": ["v4l2", "cvi"],
     "camera.rotate": [0, 90, 180, 270],
+    "camera.stream_format": ["mjpeg", "h264"],
 }
 # Numbers that must be positive (the rest may be 0 or more).
 POSITIVE = frozenset(
@@ -39,6 +40,7 @@ POSITIVE = frozenset(
         "camera.min_interval_s",
         "camera.max_interval_s",
         "camera.quality",
+        "camera.stream_fps",
     }
 )
 _HEADER = "# Changed from the Companion dashboard; the previous version is in {bak}.\n"
