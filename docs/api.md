@@ -19,6 +19,9 @@
 | `POST /v1/admin/people/{id}/face` `{camera?, track_id?, seconds?}`, `DELETE .../face` | Face samples from a camera (the person looks at it) or from a face tracked now; delete them (admin token) |
 | `POST /v1/admin/people/{id}/voice` (an audio file as the body), `DELETE .../voice` | Voice samples from a recording of the person speaking alone; delete them (admin token) |
 | `POST /v1/admin/people/promote` `{track_id, name, role, consent}` | Add the stranger in view as a person (admin token) |
+| `POST /mcp` | The agent's tools over MCP (streamable HTTP, JSON answers): `initialize`, `ping`, `tools/list`, `tools/call` (with `mcp.enabled`; `COMPANION_AGENT_TOKEN`) |
+| `GET /v1/tools`, `POST /v1/tools/{name}` | The same tools as REST: the list, and a call with its arguments as a JSON object → `{result, image_base64?}` (with `mcp.enabled`; `COMPANION_AGENT_TOKEN`) |
+| `POST /v1/admin/people/requests/{id}?accept=` | Confirm or decline the agent's request to remember someone (`mcp.consent: dashboard`) (admin token) |
 | `GET /v1/admin/perception/state` | Who is doing what (glances), scenes, the vision model in use (admin token) |
 | `POST /v1/admin/perception/look?camera=` | A camera's newest picture (base64 JPEG) and its description by the vision model (admin token) |
 | `PUT /v1/admin/perception/settings` `{glance?, timeline?}` | Switch glances and the timeline (saved, applied at once) (admin token) |
