@@ -41,7 +41,7 @@ Ask first: a person is only added when you tick **They agreed to be recognised**
 Every camera's pictures go through the engine: faces are found, followed from picture to picture (a *track*) and named when one clear picture of the track matches someone (`people.face_threshold` 0.45, and `people.face_margin` 0.10 ahead of the next person). A cut or a camera move starts new tracks, so a name is never carried over to someone else.
 
 - **Cameras the server watches itself** (`cameras:`) are looked at `perception_fps` times a second (10 by default), straight from the camera's stream (`.../video`, `rtsp://`); a snapshot address (`.../shot.jpg`) is asked that often. With 15 or more pictures a second, lip movement tells who is talking.
-- **Boards and `companion camera`** send about one picture a second; every one of them is looked at.
+- **Boards and `companion camera`** send about one picture a second; every one of them is looked at. A board in [stream mode](edge-devices.md) streams its camera instead while perception is on, at `perception.stream_fps` (10) pictures a second.
 
 A picture is skipped, never queued, while the one before it from the same camera is still being looked at.
 
