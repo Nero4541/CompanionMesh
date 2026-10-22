@@ -59,6 +59,8 @@ LOOK_QUESTION = (
 CANDIDATE_S = 1.5  # utterances this long, with voice, face and lips agreeing, are voice samples
 MAX_CANDIDATES = 20
 HOUSEKEEPING_S = 5.0
+STREAM_LEASE_S = 30.0  # stream mode: a device streams this long per lease ...
+STREAM_RENEW_S = 20.0  # ... renewed this often while perception wants its pictures
 SAVE_STRANGERS_S = 60.0
 PICTURE_QUESTION = (
     "The first image is the whole scene; the second is a close-up of the face inside the red "
@@ -153,6 +155,8 @@ class PerceptionService:
         self._glanced: dict[str, np.ndarray] = {}  # camera -> thumbnail of the last glance
         self._glance_turn = 0
         self._last_sample = 0.0
+        # Stream mode: when each streaming device's lease was last renewed.
+        self._leases: dict[int, float] = {}
 
     # -- state -------------------------------------------------------------------
 
@@ -203,6 +207,10 @@ class PerceptionService:
 
     def has_loop(self, camera: str) -> bool:
         return camera in self._loops
+
+    def busy(self, camera: str) -> bool:
+        """A picture of this camera is being analysed now (the next would be skipped)."""
+        return camera in self._busy
 
     def offer_frame(self, camera: str, jpeg: bytes, *, at: float | None = None) -> bool:
         """A frame a device sent; analysed unless that camera is busy. False if skipped."""
@@ -405,6 +413,40 @@ class PerceptionService:
             await asyncio.sleep(HOUSEKEEPING_S)
             with contextlib.suppress(Exception):
                 await self.expire(time.time())
+            with contextlib.suppress(Exception):
+                await self.lease_streams(time.time())
+
+    async def lease_streams(self, now: float) -> None:
+        """Ask devices that can stream (stream mode) to, while perception wants their pictures.
+
+        A lease lasts STREAM_LEASE_S and is renewed every STREAM_RENEW_S; once
+        perception no longer wants it, the device is told to stop at once.
+        """
+        fps = self.config.perception.stream_fps
+        seen: set[int] = set()
+        for session in list(self.runtime.sessions.values()):
+            for device in list(getattr(session, "devices", [])):
+                offer = getattr(device, "stream", None)
+                if not offer or "camera" not in device.roles:
+                    continue
+                key = id(device)
+                seen.add(key)
+                want = self.ready and fps > 0 and session.vision.enabled
+                last = self._leases.get(key)
+                if want and (last is None or now - last >= STREAM_RENEW_S):
+                    formats = offer.get("formats") or ["mjpeg"]
+                    rate = min(fps, float(offer.get("max_fps") or fps))
+                    await session.emit_to(
+                        [device],
+                        ev.CAMERA_STREAM,
+                        {"fps": rate, "seconds": STREAM_LEASE_S, "format": formats[0]},
+                    )
+                    self._leases[key] = now
+                elif not want and last is not None:
+                    await session.emit_to([device], ev.CAMERA_STREAM, {"fps": 0, "seconds": 0})
+                    del self._leases[key]
+        for key in [k for k in self._leases if k not in seen]:
+            del self._leases[key]
 
     async def expire(self, now: float) -> None:
         """People not seen for perception.left_after_s have left."""
