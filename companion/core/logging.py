@@ -52,6 +52,17 @@ class _JsonFormatter(logging.Formatter):
         return redact(json.dumps(out, ensure_ascii=False, default=str))
 
 
+class _FailedRequestsOnly(logging.Filter):
+    """uvicorn's access log without requests that went well: the dashboard asks every
+    few seconds, which would bury everything else."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        # uvicorn's args: client, method, path, HTTP version, status code.
+        args = record.args
+        status = args[4] if isinstance(args, tuple) and len(args) == 5 else None
+        return not isinstance(status, int) or status >= 400
+
+
 def setup_logging(level: str = "INFO", fmt: str = "text") -> None:
     handler = logging.StreamHandler(sys.stderr)
     handler.setFormatter(_JsonFormatter() if fmt == "json" else _TextFormatter())
@@ -60,3 +71,6 @@ def setup_logging(level: str = "INFO", fmt: str = "text") -> None:
     root.setLevel(level)
     for noisy in ("httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(max(logging.WARNING, root.level))
+    # Every request only at DEBUG.
+    access = logging.getLogger("uvicorn.access")
+    access.filters[:] = [] if root.level <= logging.DEBUG else [_FailedRequestsOnly()]
