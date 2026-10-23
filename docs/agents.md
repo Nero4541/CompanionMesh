@@ -89,6 +89,8 @@ mcp_servers:
 
 `uv run companion agent-tools` prints both for this server's address (`--url` for another), and `--write-hermes <config.yaml>` or `--write-openclaw <openclaw.json>` adds the entry to a file, keeping a copy of it as `.bak-companion` and everything else as it was.
 
+For OpenClaw, put the token in `~/.openclaw/.env` and restart the gateway (`systemctl --user restart openclaw-gateway`) **before** saving the entry: OpenClaw fills in `${COMPANION_AGENT_TOKEN}` when it loads its config and refuses a config whose variable is missing. `openclaw mcp probe companion` then lists the tools (`openclaw mcp add` probes with the text unfilled, so it is refused; `set`, or `add --no-probe`, saves it). Every agent with the `coding` or `messaging` tool profile gets the tools, as `companion__who_is_here` and so on; to keep them from an agent, add `"tools": {"deny": ["companion__*"]}` to its entry in `agents.list`.
+
 **Remembering people.** `remember_person` adds a face the cameras see now. With `mcp.consent: conversation` (default) it works only when the user's last sentence, at most `mcp.consent_window_s` (5 minutes) ago, said yes ("yes", "OK", "はい", "いいよ", "好的", …): the agent asks first, then calls it. With `mcp.consent: dashboard` the request waits on the People page until you confirm it.
 
 Without the tools the agent still gets the same facts as short lines with each message: who said it (`「…」 (Yukari, the user)`), what was overheard, who is around and what has been going on in proactive turns. [agent-guide.md](agent-guide.md) is a text to give the agent (in its SOUL.md or AGENTS.md) about how to use all this.
