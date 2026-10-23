@@ -684,7 +684,8 @@ async def _board_tailscale(board: Board, args: str, input: str | None = None) ->
 
 async def _join_tailscale(
     board: Board, plan: InstallPlan, data_dir: Path, report: Callable[..., None]
-) -> None:
+) -> dict[str, Any]:
+    """Put the board on the tailnet; its Tailscale state at the end."""
     from companion import tailscale
 
     report("tailscale", "run")
@@ -727,6 +728,7 @@ async def _join_tailscale(
             f"not on the tailnet yet ({state.get('state') or 'not running'}): finish it under "
             "Devices, Maintenance once the board is connected",
         )
+    return state
 
 
 async def install(
@@ -935,11 +937,20 @@ async def install(
                 detail += f"; connected to {now}"
             report("wifi", "ok", detail)
 
+        from companion import tailscale
+
+        tailnet: dict[str, Any] | None = None
         if plan.tailscale:
             try:
-                await _join_tailscale(board, plan, data_dir, report)
+                tailnet = await _join_tailscale(board, plan, data_dir, report)
             except InstallError as exc:  # the board works without it, at home
                 report("tailscale", "warn", str(exc))
+        else:
+            # On a tailnet already? (set up so before, or from the Maintenance tab)
+            with contextlib.suppress(InstallError):
+                tailnet = await _board_tailscale(board, "status")
+        if tailnet is not None:
+            registry.update(plan.device_id, tailscale=tailscale.board_address(tailnet))
 
         report("service", "run")
         if systemd:
