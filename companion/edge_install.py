@@ -165,11 +165,12 @@ os.chmod("/etc/shadow.tmp", 0o600)
 os.replace("/etc/shadow.tmp", "/etc/shadow")
 """
 
-# Says what root's password is: "stock" (the stock one, or none), "known" (the one
-# this server set) or "other" (the board's own); stdin: the stock one, the known one.
+# Says what root's password is: "stock" (the stock one, or none), "known N" (the Nth
+# of those it may be: the one given, the one this server set) or "other" (the board's
+# own); stdin: the stock one, then those it may be, one per line.
 PASSWORD_STATE_PY = r"""
 import crypt, sys
-stock, known = (sys.stdin.read().split("\n") + [""])[:2]
+stock, *known = sys.stdin.read().split("\n")
 def matches(word, hashed):
     try:
         return crypt.crypt(word, hashed) == hashed
@@ -181,10 +182,9 @@ for line in open("/etc/shadow"):
         hashed = parts[1]
         if not hashed or matches(stock, hashed):
             print("stock")
-        elif known and matches(known, hashed):
-            print("known")
         else:
-            print("other")
+            found = [i for i, word in enumerate(known) if word and matches(word, hashed)]
+            print(f"known {found[0]}" if found else "other")
         break
 """
 
@@ -795,24 +795,32 @@ async def install(
         root_password = enrolled.root_password if enrolled else None
         if plan.change_password:
             # Asked on the board: a login with the key says nothing about the password.
+            # -W ignore: Python 3.11 warns that crypt is deprecated, on stderr, which
+            # run() hands back with the answer.
             report("password", "run")
+            candidates = [p for p in (plan.password, root_password) if p]
             state = await board.run(
-                f"python3 -c {shlex.quote(PASSWORD_STATE_PY)}",
-                input=f"{STOCK_PASSWORD}\n{root_password or ''}",
+                f"python3 -W ignore -c {shlex.quote(PASSWORD_STATE_PY)}",
+                input="\n".join([STOCK_PASSWORD, *candidates]),
                 check=False,
             )
+            known = re.fullmatch(r"known (\d+)", state.strip())
             if state.strip() == "stock":
                 new_password = secrets.token_urlsafe(12)
                 out = await board.run(
-                    f"python3 -c {shlex.quote(SET_PASSWORD_PY)}", input=new_password, check=False
+                    f"python3 -W ignore -c {shlex.quote(SET_PASSWORD_PY)}",
+                    input=new_password,
+                    check=False,
                 )
                 if "Traceback" in out:
                     report("password", "warn", "could not change it; change it by hand (passwd)")
                 else:
                     root_password = new_password
                     report("password", "ok", "replaced the stock root password (see the dashboard)")
-            elif state.strip() == "known":
-                report("password", "ok", "kept the one this server set")
+            elif known:
+                root_password = candidates[int(known[1])]
+                whose = "you gave" if root_password == plan.password else "this server set"
+                report("password", "ok", f"kept the one {whose}")
             elif state.strip() == "other":
                 root_password = None  # what this server had is not the board's any more
                 report("password", "ok", "kept the board's own password")
