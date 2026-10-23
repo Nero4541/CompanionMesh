@@ -8,6 +8,8 @@
           --user: #1f2b40; }
 }
 * { box-sizing: border-box; }
+/* Rules that set display (#people form) must not show what the page hides. */
+[hidden] { display: none !important; }
 body { margin: 0 auto; max-width: 720px; padding: 12px 16px 32px; background: var(--bg); color: var(--fg);
        font: 15px/1.5 system-ui, "Segoe UI", "Hiragino Sans", "PingFang TC", sans-serif; }
 header { display: flex; justify-content: space-between; align-items: center; gap: 8px;
