@@ -63,18 +63,16 @@ llm:
   model: default
   extra_body: {}            # e.g. {chat_template_kwargs: {enable_thinking: false}}
 
+# Whisper on this machine is builtin.stt below; this is a server of your own or
+# a service: POST {base_url}/audio/transcriptions (speaches, whisper.cpp server,
+# OpenAI, Groq).
 stt:
-  provider: faster_whisper  # faster_whisper | openai_compatible | none
-  model: large-v3-turbo     # openai_compatible: the server's model name
-  language: ja              # null = auto-detect; yue = Cantonese
-  device: auto              # auto | cuda | cpu
-  compute_type: auto
-  beam_size: 1
-  preload: true
-  # openai_compatible: POST {base_url}/audio/transcriptions (speaches,
-  # whisper.cpp server, OpenAI, Groq) instead of a local model.
+  provider: openai_compatible   # openai_compatible | none
   base_url: http://127.0.0.1:8000/v1
   api_key_env: STT_API_KEY
+  model: large-v3-turbo     # the server's model name
+  language: ja              # null = auto-detect; yue = Cantonese
+  preload: true             # one tiny request at startup loads the server's model
   # Keep each utterance as heard (data/recordings, WAV + transcript) to check
   # recognition from the dashboard; deleted after keep_audio_days.
   keep_audio: false
