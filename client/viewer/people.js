@@ -190,19 +190,22 @@
 
   // Signing in with the dashboard's login QR code, from a photo: browsers open the camera
   // itself only on https or localhost, and this page is plain http on the tailnet.
-  let jsQRLoaded = null;
-  function loadJsQR() {
-    jsQRLoaded ??= new Promise((resolve, reject) => {
-      const script = document.createElement("script");
-      script.src = "jsqr.min.js";
-      script.onload = () => resolve(window.jsQR);
-      script.onerror = () => {
-        jsQRLoaded = null;
-        reject(new Error("cannot load the QR code reader"));
-      };
-      document.head.append(script);
-    });
-    return jsQRLoaded;
+  // Fetched, then run as an inline script: the error then says why it could not be loaded.
+  async function loadJsQR() {
+    if (window.jsQR) return window.jsQR;
+    let code;
+    try {
+      const res = await fetch("jsqr.min.js");
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      code = await res.text();
+    } catch (err) {
+      throw new Error(`Cannot load the QR code reader (${err.message}).`);
+    }
+    const script = document.createElement("script");
+    script.textContent = code;
+    document.head.append(script);
+    if (typeof window.jsQR !== "function") throw new Error("The QR code reader does not run in this browser.");
+    return window.jsQR;
   }
 
   // The photo as something a canvas can draw: an ImageBitmap, or an <img> where there is none.
