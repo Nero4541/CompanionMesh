@@ -24,6 +24,10 @@ from pydantic import (
     model_validator,
 )
 
+# This installation's folder, wherever the server is started from: its configs/,
+# .env and data/ are the ones used, never those of the current folder.
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
 
 class ConfigError(Exception):
     """Configuration is missing or invalid."""
@@ -997,7 +1001,7 @@ def config_source(
     local_override: bool = True,
 ) -> ConfigSource:
     """Locate the config files (and load ``.env``) without validating anything yet."""
-    root = (project_root or Path.cwd()).resolve()
+    root = (project_root or PROJECT_ROOT).resolve()
     env_path = env_file or root / ".env"
     if env_path.is_file():
         load_dotenv(env_path, override=False, encoding="utf-8")
