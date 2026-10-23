@@ -15,6 +15,7 @@ import logging
 import re
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 import httpx
 
@@ -38,6 +39,12 @@ class Package:
     path: Path
     sha256: str
     version: str
+
+
+def board_address(state: dict[str, Any]) -> str | None:
+    """A board's Tailscale address from its state report, while it is on the tailnet."""
+    ips = state.get("ips") or []
+    return str(ips[0]) if state.get("state") == "Running" and ips else None
 
 
 def folder(data_dir: Path) -> Path:
