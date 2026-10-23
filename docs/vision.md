@@ -77,6 +77,17 @@ Each camera names its own login variables, so cameras with different logins work
 
 In both modes, clients that detect things themselves, such as an edge device with an accelerator, can send `vision.event` with a description; it becomes an observation without any model call.
 
+### Built-in vision model
+
+Without a vision model server of your own, the server installs and runs one itself, like the [built-in speech](speech.md#built-in-speech): open **Vision** in the dashboard, press **Install** and turn it on (`builtin.vlm.enabled`). While on, it is used instead of `vlm.provider`. It is [Mage-VL](https://huggingface.co/microsoft/Mage-VL), a 4-billion-parameter vision model; `builtin.vlm.model: auto` picks
+
+- on GPUs that run FP8 (compute capability 8.9 and newer: RTX 40 series, Hopper, Blackwell) the FP8 version, [ajh-code/Mage-VL-FP8-W8A8-W8A16](https://huggingface.co/ajh-code/Mage-VL-FP8-W8A8-W8A16) (about 7 GB to download, ~6.4 GB of graphics memory);
+- on older GPUs the original in BF16, or FP16 before compute capability 8.0 (~9 GB). The engine uses PyTorch's CUDA 13 builds, which no longer support Volta (V100) and older: there, run Mage-VL (or another model) on a server of your own and point `vlm` at it.
+
+The model goes to `builtin/vlm/models/<name>` on the first start; a folder you put there yourself can be named instead. The FP8 version decodes about 2.7 times faster with three small fused CUDA kernels, which the engine builds for your GPU on its first start (about two minutes) and keeps in `builtin/vlm/models/.cache`. Building them needs the **CUDA toolkit** matching PyTorch's CUDA (13.0) and, on Windows, **Visual Studio's C++ build tools** (the free Build Tools or Community edition, "Desktop development with C++"); the engine finds both by itself. Without them it runs unfused: the same answers, slower (`builtin.vlm.fused: false` skips the build). Measured on an RTX 4070 Ti: about 0.25 s to read a 768-pixel picture and 23 ms per word piece of the answer (fused).
+
+It serves the OpenAI chat API (with `image_url` parts) on `127.0.0.1` only, so the rest of the server talks to it like to any other vision model.
+
 ### Vision model settings
 
 ```yaml
