@@ -1,8 +1,8 @@
-"""Built-in speech: STT and TTS engines the server installs and runs itself.
+"""Built-in engines the server installs and runs itself: speech (STT, TTS) and vision (VLM).
 
 Each engine is a small project under ``builtin/<name>`` with its own locked
 dependencies, installed with uv into ``builtin/<name>/.venv`` and run as a
-child process that serves the OpenAI audio API on 127.0.0.1. Its models live
+child process that serves the OpenAI audio or chat API on 127.0.0.1. Its models live
 next to it in ``builtin/<name>/models``. The runtime talks to it as to any
 other OpenAI-compatible server.
 
@@ -42,7 +42,9 @@ from companion.core.logging import kv
 log = logging.getLogger(__name__)
 
 PROJECTS = Path(__file__).resolve().parents[1] / "builtin"
-ENGINES = ("stt", "tts")
+ENGINES = ("stt", "tts", "vlm")
+# Engines whose PyTorch has to be named for a CPU install (STT runs on CPU without extras).
+TORCH_ENGINES = ("tts", "vlm")
 LOG_LINES = 200
 STOP_WAIT_S = 5.0
 
@@ -123,9 +125,48 @@ class WorkerSpec:
     libraries: str = "cpu"
 
 
+def engine_enabled(name: str, config: CompanionConfig) -> bool:
+    return bool(getattr(config.builtin, name).enabled)
+
+
+# Where each engine's on/off switch and model live in the config: (section, model field).
+ENGINE_SETTINGS = {
+    "stt": ("builtin.stt", "model"),
+    "tts": ("builtin.tts", "checkpoint"),
+    "vlm": ("builtin.vlm", "model"),
+}
+
+
+def engine_model(name: str, config: CompanionConfig) -> str:
+    section, key = ENGINE_SETTINGS[name]
+    node: Any = config
+    for part in section.split("."):
+        node = getattr(node, part)
+    return str(getattr(node, key))
+
+
 def worker_spec(name: str, config: CompanionConfig) -> WorkerSpec | None:
     """The engine ``name`` as the config wants it, or None when it is off."""
     libraries = resolve_libraries(config)
+    if name == "vlm":
+        vlm = config.builtin.vlm
+        if not vlm.enabled:
+            return None
+        return WorkerSpec(
+            args=(
+                "--model",
+                vlm.model,
+                "--device",
+                vlm.device,
+                "--precision",
+                vlm.precision,
+                "--fused",
+                "on" if vlm.fused else "off",
+                "--max-side",
+                str(max(1280, config.vlm.max_image_side)),
+            ),
+            libraries=libraries,
+        )
     if name == "stt":
         stt = config.builtin.stt
         if not stt.enabled:
@@ -232,8 +273,8 @@ class Engine:
         """``uv sync`` of this engine's project into its environment."""
         if libraries == "cuda":
             extras = ["--extra", "cuda"]
-        else:  # TTS needs PyTorch's CPU build named; STT runs on CPU without extras
-            extras = ["--extra", "cpu"] if self.name == "tts" else []
+        else:  # PyTorch's CPU build has to be named; STT runs on CPU without extras
+            extras = ["--extra", "cpu"] if self.name in TORCH_ENGINES else []
         return [_uv(), "sync", "--frozen", "--project", str(self.project), *extras]
 
     def install_env(self) -> dict[str, str]:
@@ -330,6 +371,7 @@ class Engine:
         cache = self.models_dir / ".cache"
         env["HF_HUB_CACHE"] = str(cache / "hub")
         env["HF_XET_CACHE"] = str(cache / "xet")
+        env["HF_MODULES_CACHE"] = str(cache / "modules")  # code that comes with a model
         if self.name == "tts":
             self.voices_dir.mkdir(parents=True, exist_ok=True)
             env["IRODORI_VOICES_DIR"] = str(self.voices_dir)
