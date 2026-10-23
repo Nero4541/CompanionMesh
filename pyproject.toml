@@ -26,18 +26,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-# Local speech-to-text (faster-whisper / CTranslate2).
-stt = [
-    "faster-whisper>=1.1",
-]
-# Empty: PyAV is a base dependency now. Kept because update scripts of 1.2.0 and
-# older pass --extra opus to uv sync.
+# Empty: Whisper runs in builtin/stt now, PyAV is a base dependency. Kept because
+# the updater of 1.4.0 and older passes the extras it found installed to uv sync.
+stt = []
 opus = []
-# NVIDIA runtime libraries for CTranslate2 GPU inference (cuBLAS 12 + cuDNN 9).
-cuda = [
-    "nvidia-cublas-cu12; sys_platform == 'win32' or sys_platform == 'linux'",
-    "nvidia-cudnn-cu12>=9,<10; sys_platform == 'win32' or sys_platform == 'linux'",
-]
+cuda = []
 
 [project.scripts]
 companion = "companion.__main__:main"
