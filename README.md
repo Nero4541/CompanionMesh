@@ -17,7 +17,7 @@ Download `companion-mesh-<version>-windows.zip` (or `-linux.tar.gz`) from the [R
 
 ```powershell
 uv python install 3.13
-uv sync --extra stt --extra cuda     # without an NVIDIA GPU: uv sync --extra stt
+uv sync
 ```
 
 Double-click **`start-companion.bat`** (Linux: `./start-companion.sh`). The first time it asks for your agent's address and key and how speech should work, then starts the server and opens the dashboard at **http://127.0.0.1:8765/admin/**. Talk to the companion at **http://127.0.0.1:8765/dev/**.
