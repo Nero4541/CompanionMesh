@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import asyncio
 import getpass
-import importlib.util
 import secrets
 import shutil
 from dataclasses import dataclass
@@ -228,18 +227,11 @@ class Setup:
         where = " (NVIDIA GPU found)" if gpu else " (no NVIDIA GPU: on the CPU)"
         options = {
             "builtin": f"Built-in: Whisper, installed and run by the companion{where}",
-            "openai_compatible": "A speech recognition server on another machine "
+            "openai_compatible": "A speech recognition server of your own or a service "
             "(OpenAI-compatible: speaches, whisper.cpp, OpenAI, Groq)",
             "none": "None: you type, nothing is heard",
         }
         current = "builtin" if self.get("builtin.stt.enabled") else self.get("stt.provider")
-        if current == "faster_whisper":
-            if importlib.util.find_spec("faster_whisper") is not None:  # set up with the stt extra
-                options["faster_whisper"] = (
-                    "Whisper inside the server (uv sync --extra stt --extra cuda)"
-                )
-            else:  # the shipped default, which a release cannot run
-                current = "builtin"
         stt = self.p.choose("Speech recognition", options, current)
         self.put("builtin.stt.enabled", stt == "builtin")
         # Built-in: nothing else, so turning it off in the dashboard frees the GPU.
@@ -249,13 +241,10 @@ class Setup:
             self.ask_secret(self.get("stt.api_key_env"), "Key, if it needs one")
             if self.speech_server_answers("stt"):
                 break
-        if stt in ("builtin", "faster_whisper") and not gpu:
-            path = "builtin.stt.model" if stt == "builtin" else "stt.model"
-            if self.get(path) == "large-v3-turbo" and self.p.confirm(
-                "No GPU: use the smaller 'small' model?", True
-            ):
-                self.put(path, "small")
         if stt == "builtin":
+            if not gpu and self.get("builtin.stt.model") == "large-v3-turbo":
+                if self.p.confirm("No GPU: use the smaller 'small' model?", True):
+                    self.put("builtin.stt.model", "small")
             self.install.append("stt")
         if stt != "none":
             current = self.get("stt.language") or "auto"
