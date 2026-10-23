@@ -180,15 +180,14 @@
   const lanUrl = $derived(info?.server_urls?.find((u) => !tailnet(u)) ?? null);
   const tailnetUnreachable = $derived(tailnet(serverUrl) && !form.tailscale);
 
-  // Updating a board: the address it last reported is picked, as an update would
-  // otherwise move it to the one picked here.
-  const currentServer = $derived(
-    updating ? (enrolled?.find((d) => d.device_id === form.device_id)?.server ?? null) : null,
-  );
-  let pickedFor = null; // the board and address picked last, so a choice made here stays
+  // Updating a board: what it has is picked (the address it last reported, Tailscale
+  // when it is on the tailnet), as an update would otherwise change it to what is here.
+  const current = $derived(updating ? (enrolled?.find((d) => d.device_id === form.device_id) ?? null) : null);
+  const currentServer = $derived(current?.server ?? null);
+  let pickedFor = null; // the board picked last, so a choice made here stays
   $effect(() => {
     if (!info) return;
-    const key = currentServer ? `${form.device_id} ${currentServer}` : null;
+    const key = current ? `${current.device_id} ${current.server} ${current.tailscale}` : null;
     if (key === pickedFor) return;
     pickedFor = key;
     if (currentServer && info.server_urls.includes(currentServer)) {
@@ -199,6 +198,7 @@
     } else if (info.server_urls.length) {
       form.server_url = lanUrl ?? info.server_urls[0];
     }
+    form.tailscale = Boolean(current?.tailscale);
   });
 
   // --- away from home: the public listener ------------------------------------------
@@ -389,6 +389,9 @@
         <input type="checkbox" bind:checked={form.tailscale} disabled={installing} />
         Put the board on Tailscale, so it reaches this server from anywhere
       </label>
+      {#if current?.tailscale}
+        <span class="muted small">on your tailnet already, as <code>{current.tailscale}</code></span>
+      {/if}
       {#if form.tailscale}
         <input type="password" bind:value={form.tailscaleKey} placeholder="auth key (empty: a login link)" autocomplete="off" spellcheck="false" disabled={installing} />
         {#if keyBad}<span class="err small">an auth key starts with tskey-</span>{/if}
