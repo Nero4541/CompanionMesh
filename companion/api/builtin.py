@@ -1,4 +1,4 @@
-"""Built-in speech engines in the dashboard (/v1/admin/builtin).
+"""Built-in engines in the dashboard (/v1/admin/builtin).
 
 GET reports each engine (installed, running, GPU memory, its model folders,
 log), POST .../install installs one in the background, PUT .../{name} turns one
@@ -17,7 +17,15 @@ from pydantic import BaseModel, Field
 
 from companion.api.admin import _require_source, _runtime, _save
 from companion.api.auth import require_admin
-from companion.builtin import ENGINES, gpu_found, gpu_memory, resolve_libraries
+from companion.builtin import (
+    ENGINE_SETTINGS,
+    ENGINES,
+    engine_enabled,
+    engine_model,
+    gpu_found,
+    gpu_memory,
+    resolve_libraries,
+)
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 
@@ -40,10 +48,9 @@ async def status(request: Request) -> dict[str, Any]:
     gpu = await asyncio.to_thread(gpu_memory)
     engines = {}
     for name, engine in runtime.builtin.engines.items():
-        settings = getattr(runtime.config.builtin, name)
-        model = settings.model if name == "stt" else settings.checkpoint
+        model = engine_model(name, runtime.config)
         engines[name] = {
-            **engine.report(settings.enabled, gpu),
+            **engine.report(engine_enabled(name, runtime.config), gpu),
             "in_use": runtime.uses_builtin(name),
             "model": model,
             "model_folder": model.split("/")[-1],  # models/<this> (downloaded if missing)
@@ -95,11 +102,14 @@ async def change(request: Request, name: str, body: EngineBody) -> dict[str, Any
     runtime = _runtime(request)
     source = _require_source(request)
     desired = source.saved().model_dump(mode="json")
-    section = desired["builtin"][_engine_name(name)]
+    path, model_key = ENGINE_SETTINGS[_engine_name(name)]
+    section = desired
+    for part in path.split("."):
+        section = section[part]
     if body.enabled is not None:
         section["enabled"] = body.enabled
     if body.model is not None:
-        section["model" if name == "stt" else "checkpoint"] = body.model
+        section[model_key] = body.model
     result = await _save(runtime, source, desired)
     if body.enabled is False:  # wait for the process to end, so the memory shows as freed
         await runtime.builtin_settled(name)
