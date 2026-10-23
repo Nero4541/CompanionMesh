@@ -180,6 +180,27 @@
   const lanUrl = $derived(info?.server_urls?.find((u) => !tailnet(u)) ?? null);
   const tailnetUnreachable = $derived(tailnet(serverUrl) && !form.tailscale);
 
+  // Updating a board: the address it last reported is picked, as an update would
+  // otherwise move it to the one picked here.
+  const currentServer = $derived(
+    updating ? (enrolled?.find((d) => d.device_id === form.device_id)?.server ?? null) : null,
+  );
+  let pickedFor = null; // the board and address picked last, so a choice made here stays
+  $effect(() => {
+    if (!info) return;
+    const key = currentServer ? `${form.device_id} ${currentServer}` : null;
+    if (key === pickedFor) return;
+    pickedFor = key;
+    if (currentServer && info.server_urls.includes(currentServer)) {
+      form.server_url = currentServer;
+    } else if (currentServer) {
+      form.server_url = "other";
+      form.serverOther = currentServer;
+    } else if (info.server_urls.length) {
+      form.server_url = lanUrl ?? info.server_urls[0];
+    }
+  });
+
   // --- away from home: the public listener ------------------------------------------
   let away = $state(null); // form: {enabled, address, port}
   let awayBusy = $state(null);
@@ -304,6 +325,11 @@
       </select>
       {#if form.server_url === "other"}
         <input type="text" bind:value={form.serverOther} placeholder="ws://192.168.1.10:8765/v1/realtime" spellcheck="false" disabled={installing} />
+      {/if}
+      {#if currentServer && serverUrl === currentServer}
+        <span class="muted small">the address the board uses now</span>
+      {:else if currentServer}
+        <span class="muted small">the board uses <code>{currentServer}</code> now; Update moves it to this one</span>
       {/if}
       {#if tailnetUnreachable}
         <span class="err small">A Tailscale address reaches this server only from a board on Tailscale: tick
