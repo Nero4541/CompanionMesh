@@ -15,7 +15,14 @@ from typing import Any, Literal
 
 import yaml
 from dotenv import load_dotenv
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 
 class ConfigError(Exception):
@@ -283,35 +290,20 @@ def strip_endpoint(url: str, endpoint: str) -> str:
 class STTConfig(_Section):
     """Hearing: speech recognition turns what you say into text."""
 
-    provider: Literal["faster_whisper", "openai_compatible", "none"] = "faster_whisper"
-    """faster_whisper: recognise speech on this machine. openai_compatible: send audio to a speech
-    server (speaches, whisper.cpp, OpenAI, Groq) at base_url. none: no speech input, text only.
-    When builtin.stt is on, it is used instead.
+    provider: Literal["openai_compatible", "none"] = "openai_compatible"
+    """openai_compatible: a speech recognition server at base_url, your own (speaches, the
+    whisper.cpp server) or a service (OpenAI, Groq). none: no speech input, text only. When
+    builtin.stt is on, it is used instead.
     """
     model: str = "large-v3-turbo"
-    """Recognition model. For faster_whisper a Whisper size: tiny, base, small, medium, large-v3 or
-    large-v3-turbo (bigger = more accurate but slower and needs more memory). For
-    openai_compatible, the model name the server expects.
-    """
+    """Model name the speech recognition server expects."""
     language: str | None = "ja"
     """Language you speak, as a code: ja Japanese, en English, zh Chinese, yue Cantonese. Empty =
     detect it each time (slower and less reliable).
     """
-    device: Literal["auto", "cuda", "cpu"] = "auto"
-    """Where faster_whisper runs: cuda = NVIDIA graphics card (fast), cpu = processor (slow), auto =
-    the graphics card when there is one.
-    """
-    compute_type: str = "auto"
-    """Number precision for faster_whisper, e.g. float16, int8_float16 or int8. Lower uses less
-    memory and is faster but slightly less accurate. auto picks one that suits the device.
-    """
-    beam_size: int = Field(default=1, ge=1)
-    """How many guesses are compared while recognising. 1 is fastest; 5 is a little more accurate
-    but slower.
-    """
     preload: bool = True
-    """Load the recognition model when the server starts, so the first sentence is not slow. Off: it
-    loads on first use.
+    """Ask the speech recognition server for one tiny transcript when the server starts, so it
+    loads its model and the first sentence is not slow. Off: it loads on first use.
     """
     prompt: str | None = None
     """A short sample sentence that nudges recognition toward a writing style or words, e.g. for
@@ -319,13 +311,15 @@ class STTConfig(_Section):
     Names you use often help too. Keep it short.
     """
     base_url: str = "http://127.0.0.1:8000/v1"
-    """openai_compatible only: web address of the speech server, ending in /v1."""
+    """Web address of the speech recognition server, ending in /v1."""
     api_key_env: str | None = "STT_API_KEY"
-    """openai_compatible only: name of the .env variable holding the speech server's API key."""
+    """Name of the .env variable holding the speech recognition server's API key. Local servers
+    usually need none.
+    """
     connect_timeout: float = Field(default=5.0, gt=0)
-    """openai_compatible only: seconds to wait for the speech server to answer the connection."""
+    """Seconds to wait for the speech recognition server to answer the connection."""
     timeout: float = Field(default=60.0, gt=0)
-    """openai_compatible only: seconds to wait for a transcript."""
+    """Seconds to wait for a transcript."""
     keep_audio: bool = False
     """Save each sentence as heard (a WAV file in data/recordings) with its transcript, so you can
     check recognition on the Speech page. Off by default for privacy.
@@ -791,6 +785,25 @@ class CompanionConfig(_Section):
     """Folder holding the persona files (one .yaml per character). Relative paths start at the
     project folder.
     """
+
+    @model_validator(mode="before")
+    @classmethod
+    def _whisper_in_server(cls, data: Any) -> Any:
+        """Settings of 1.4.0 and older: stt.provider faster_whisper ran Whisper inside the server.
+        builtin.stt runs it now, so that turns it on with the same model and settings.
+        """
+        if not isinstance(data, dict) or not isinstance(data.get("stt"), dict):
+            return data
+        stt = dict(data["stt"])
+        moved = {key: stt.pop(key) for key in ("device", "compute_type", "beam_size") if key in stt}
+        if stt.get("provider") != "faster_whisper":
+            return {**data, "stt": stt}
+        stt["provider"] = "none"
+        if "model" in stt:
+            moved["model"] = stt["model"]
+        builtin = dict(data.get("builtin") or {})
+        builtin["stt"] = {**(builtin.get("stt") or {}), **moved, "enabled": True}
+        return {**data, "stt": stt, "builtin": builtin}
 
     @field_validator("cameras")
     @classmethod
