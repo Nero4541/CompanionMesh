@@ -56,6 +56,8 @@ class EnrolledDevice:
             "address": self.address,
             "installed_version": self.installed_version,
             "has_root_password": bool(self.root_password),
+            # The server address it last reported, which an update keeps unless changed.
+            "server": (self.settings or {}).get("server"),
         }
 
 
