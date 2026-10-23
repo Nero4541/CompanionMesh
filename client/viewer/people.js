@@ -241,8 +241,13 @@
     try {
       const jsQR = await loadJsQR();
       const bitmap = await picture(file);
-      // Small first (fast), larger when the code is only a small part of the photo.
-      const code = decode(jsQR, bitmap, 1600) || decode(jsQR, bitmap, 3200);
+      // Several sizes: a smaller one smooths away the screen's moiré, a larger one finds a
+      // code that is only a small part of the photo.
+      let code = null;
+      for (const longest of [1200, 800, 1800, 2600]) {
+        code = decode(jsQR, bitmap, longest);
+        if (code && code.data) break;
+      }
       if (bitmap.close) bitmap.close();
       else URL.revokeObjectURL(bitmap.src);
       if (!code || !code.data) throw new Error("No QR code found in the picture: take it again, closer and straight on.");
