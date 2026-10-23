@@ -15,6 +15,7 @@
 | `GET /v1/admin/builtin` | The built-in speech engines: installed, state, process, GPU memory, log (admin token) |
 | `POST /v1/admin/builtin/{stt\|tts}/install`, `PUT /v1/admin/builtin/{stt\|tts}` | Install an engine in the background; turn one on or off (`{"enabled": true}`, saved and applied at once) (admin token) |
 | `POST /v1/admin/restart` | Restart the server with its saved settings (admin token) |
+| `GET /v1/admin/phone`, `POST /v1/admin/phone` `{renew?}` | Addresses that log a phone in to the dashboard (with the admin token in them); make the admin token if there is none, or a new one (saved in `.env`, used at once) (admin token) |
 | `GET /v1/admin/personas`, `GET /v1/admin/personas/{name}` | List personas; read one (admin token) |
 | `PUT /v1/admin/personas/{name}` | Replace a persona, or create it with `?create=true` (admin token) |
 | `DELETE /v1/admin/personas/{name}` | Delete a persona not in use (admin token) |
