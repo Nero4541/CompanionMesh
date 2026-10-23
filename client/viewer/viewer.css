@@ -51,3 +51,6 @@ ol { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: col
 button.small, label.button { font-size: 13px; padding: 4px 10px; }
 label.button { display: inline-block; border: 1px solid var(--line); border-radius: 8px;
   background: var(--card); cursor: pointer; }
+/* The file input covers its label, out of sight but not display: none, which some phones refuse to open. */
+label.scan { position: relative; padding: 6px 14px; font-size: inherit; }
+label.scan input { position: absolute; inset: 0; width: 100%; height: 100%; opacity: 0; cursor: pointer; }
