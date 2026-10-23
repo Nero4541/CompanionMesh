@@ -67,7 +67,7 @@
     try {
       info = await api("/edge/setup");
       if (!form.host && info.boards.length) form.host = info.boards[0];
-      if (!form.server_url && info.server_urls.length) form.server_url = info.server_urls[0];
+      if (!form.server_url && info.server_urls.length) form.server_url = lanUrl ?? info.server_urls[0];
     } catch (err) {
       formError = err.message;
       if (err.isAuth) onAuthError?.(err);
@@ -175,6 +175,10 @@
     const m = url.match(/^wss?:\/\/100\.(\d+)\./);
     return Boolean(m && Number(m[1]) >= 64 && Number(m[1]) <= 127);
   }
+  // This network's address comes first: a Tailscale one reaches only a board already on
+  // the tailnet; one put on it below gets that address as a further one.
+  const lanUrl = $derived(info?.server_urls?.find((u) => !tailnet(u)) ?? null);
+  const tailnetUnreachable = $derived(tailnet(serverUrl) && !form.tailscale);
 
   // --- away from home: the public listener ------------------------------------------
   let away = $state(null); // form: {enabled, address, port}
@@ -184,7 +188,7 @@
   const pending = $derived(
     pub && (pub.saved.enabled !== pub.enabled || pub.saved.port !== pub.port || pub.saved.url !== pub.url),
   );
-  const lanHost = $derived((info?.server_urls?.[0] ?? "").replace(/^ws:\/\/|:\d+\/v1\/realtime$/g, ""));
+  const lanHost = $derived((lanUrl ?? "").replace(/^ws:\/\/|:\d+\/v1\/realtime$/g, ""));
   const awayPort = $derived(Number(away?.port) || 8766);
   const firewall = $derived(
     `New-NetFirewallRule -DisplayName "Companion devices" -Direction Inbound -Protocol TCP -LocalPort ${awayPort} -Action Allow -Profile Private`,
@@ -295,11 +299,16 @@
     <label for="b-server">Server address for the board</label>
     <div class="row">
       <select id="b-server" bind:value={form.server_url} disabled={installing}>
-        {#each info?.server_urls ?? [] as u}<option value={u}>{u}{tailnet(u) ? " (Tailscale: home and away)" : " (this network)"}</option>{/each}
+        {#each info?.server_urls ?? [] as u}<option value={u}>{u}{tailnet(u) ? " (Tailscale: a board on your tailnet, home and away)" : " (this network)"}</option>{/each}
         <option value="other">another address…</option>
       </select>
       {#if form.server_url === "other"}
         <input type="text" bind:value={form.serverOther} placeholder="ws://192.168.1.10:8765/v1/realtime" spellcheck="false" disabled={installing} />
+      {/if}
+      {#if tailnetUnreachable}
+        <span class="err small">A Tailscale address reaches this server only from a board on Tailscale: tick
+          <b>Put the board on Tailscale</b> below, or pick this network's address, unless the board is on your
+          tailnet already.</span>
       {/if}
     </div>
 
