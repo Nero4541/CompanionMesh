@@ -53,7 +53,8 @@ Use a shorter `vad.min_silence_ms` (e.g. 700) for snappier turns if you speak in
 |---|---|
 | Whisper `large-v3-turbo`, fp16 | ~2.3 GB |
 | Irodori-TTS `v4.1-Small`, fp32 | ~4 GB |
-| VLM | depends on the model; small models (a few billion parameters) are enough |
+| Built-in VLM, Mage-VL 4B in FP8 (RTX 40 series and newer) | ~6.4 GB with its fused kernels (BF16 on older cards: ~9 GB) |
+| Other VLM | depends on the model; small models (a few billion parameters) are enough |
 | LLM | depends on model and context size; usually by far the largest |
 
 The companion server itself needs a GPU only for STT (and the built-in voice). STT can stay on the machine running the companion while the agent, LLM and TTS run on a server. Turning a [built-in engine](speech.md#built-in-speech) off frees its GPU memory at once, for example to run something else on the card for a while.
