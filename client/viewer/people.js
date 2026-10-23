@@ -205,6 +205,23 @@
     return jsQRLoaded;
   }
 
+  // The photo as something a canvas can draw: an ImageBitmap, or an <img> where there is none.
+  async function picture(file) {
+    if (window.createImageBitmap) {
+      try {
+        return await createImageBitmap(file);
+      } catch {}
+    }
+    const img = new Image();
+    img.src = URL.createObjectURL(file);
+    try {
+      await img.decode();
+    } catch {
+      throw new Error("This browser cannot read the photo.");
+    }
+    return img;
+  }
+
   function decode(jsQR, bitmap, longest) {
     const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
@@ -219,14 +236,15 @@
   async function scan(file) {
     const error = $("people-scan-error");
     error.hidden = true;
-    $("people-scan").disabled = true;
-    $("people-scan").textContent = "Reading…";
+    $("people-scan-photo").disabled = true;
+    $("people-scan-text").textContent = "Reading…";
     try {
       const jsQR = await loadJsQR();
-      const bitmap = await createImageBitmap(file);
+      const bitmap = await picture(file);
       // Small first (fast), larger when the code is only a small part of the photo.
       const code = decode(jsQR, bitmap, 1600) || decode(jsQR, bitmap, 3200);
-      bitmap.close();
+      if (bitmap.close) bitmap.close();
+      else URL.revokeObjectURL(bitmap.src);
       if (!code || !code.data) throw new Error("No QR code found in the picture: take it again, closer and straight on.");
       let found = null;
       try {
@@ -239,13 +257,12 @@
       error.textContent = err.message;
       error.hidden = false;
     } finally {
-      $("people-scan").disabled = false;
-      $("people-scan").textContent = "Scan the QR code";
+      $("people-scan-photo").disabled = false;
+      $("people-scan-text").textContent = "Scan the QR code";
       $("people-scan-photo").value = "";
     }
   }
 
-  $("people-scan").onclick = () => $("people-scan-photo").click();
   $("people-scan-photo").onchange = (event) => {
     const file = event.target.files && event.target.files[0];
     if (file) scan(file);
