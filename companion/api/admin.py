@@ -11,6 +11,7 @@ import contextlib
 import logging
 import os
 import re
+import secrets
 import tomllib
 from collections.abc import Callable
 from pathlib import Path
@@ -29,7 +30,7 @@ from fastapi import (
 from pydantic import BaseModel, ValidationError
 
 from companion import __version__
-from companion.api.auth import admin_refusal, require_admin
+from companion.api.auth import admin_refusal, on_tailnet, require_admin
 from companion.core.config import (
     CameraConfig,
     CompanionConfig,
@@ -499,6 +500,51 @@ async def edge_profiles() -> dict[str, Any]:
     if not EDGE_PROFILES_DIR.is_dir():
         return {"profiles": []}
     return {"profiles": [_profile(p) for p in sorted(EDGE_PROFILES_DIR.glob("*.toml"))]}
+
+
+# --- logging in from a phone ---------------------------------------------------------
+
+
+class PhoneBody(BaseModel):
+    # A new token: phones and browsers logged in with the old one log in again.
+    renew: bool = False
+
+
+@router.get("/phone")
+async def phone(request: Request) -> dict[str, Any]:
+    """Addresses that log a phone in to the dashboard (the admin token in them)."""
+    from companion import edge_install
+
+    server = _runtime(request).config.server
+    token = server.admin_token()
+    addresses = await asyncio.to_thread(edge_install.server_addresses) if token else []
+    return {
+        "token_set": token is not None,
+        "token_env": server.admin_token_env,
+        "editable": _source(request) is not None,
+        "listening": server.host,
+        "urls": [
+            {"url": f"http://{a}:{server.port}/admin/?token={token}", "tailscale": on_tailnet(a)}
+            for a in addresses
+        ],
+    }
+
+
+@router.post("/phone")
+async def phone_login(request: Request, body: PhoneBody) -> dict[str, Any]:
+    """Make the admin token phones log in with, or a new one: saved in .env, used at once."""
+    from companion.core.envfile import set_values
+
+    source = _require_source(request)
+    server = _runtime(request).config.server
+    name = server.admin_token_env
+    if not name:
+        raise _unprocessable("server.admin_token_env is empty", "server.admin_token_env")
+    if body.renew or server.admin_token() is None:
+        token = secrets.token_urlsafe(32)
+        await asyncio.to_thread(set_values, source.project_root / ".env", {name: token})
+        log.info("admin token for phones", extra=kv(renewed=body.renew))
+    return await phone(request)
 
 
 @router.post("/restart", status_code=202)
