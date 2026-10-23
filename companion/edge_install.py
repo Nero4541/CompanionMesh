@@ -1056,10 +1056,12 @@ def run_cli(args: Any, config: Any) -> int:
             print()
         return 0
 
-    if (
-        args.edge_command == "update"
-        and DeviceRegistry(config.storage.data_dir / "devices.json").get(args.name) is None
-    ):
+    updated = (
+        DeviceRegistry(config.storage.data_dir / "devices.json").get(args.name)
+        if args.edge_command == "update"
+        else None
+    )
+    if args.edge_command == "update" and updated is None:
         print(f"This server has not set up {args.name!r}; use  companion edge install.")
         return 1
 
@@ -1083,7 +1085,9 @@ def run_cli(args: Any, config: Any) -> int:
             )
             return 1
         host = found[0]
-    server_url = args.server or default_server_url(config.server.port)
+    # An update keeps the address the board last reported, unless --server changes it.
+    current = (updated.settings or {}).get("server") if updated is not None else None
+    server_url = args.server or current or default_server_url(config.server.port)
     if not server_url:
         print(
             "Cannot tell this machine's network address; give --server ws://ADDRESS:PORT/v1/realtime"
