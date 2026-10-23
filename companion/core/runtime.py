@@ -109,7 +109,17 @@ def build_tts(config: CompanionConfig) -> TTSProvider | None:
 
 
 def build_builtin(name: str, config: CompanionConfig, url: str) -> Any:
-    """A client for a running built-in engine: the stt/tts settings, its address."""
+    """A client for a running built-in engine: the stt/tts/vlm settings, its address."""
+    if name == "vlm":
+        from companion.providers.vlm.openai_compatible import OpenAICompatibleVLM
+
+        vlm = OpenAICompatibleVLM(
+            config.vlm.model_copy(
+                update={"base_url": url, "api_key_env": None, "model": "mage-vl", "timeout": 120.0}
+            )
+        )
+        vlm.name = "builtin_vlm"
+        return vlm
     if name == "stt":
         from companion.providers.stt.openai_compatible import OpenAICompatibleSTT
 
@@ -179,7 +189,9 @@ class CompanionRuntime:
             else providers.tts or build_tts(config)
         )
         self.vlm: VLMProvider | None = (
-            None if "vlm" in providers.disabled else providers.vlm or build_vlm(config)
+            None
+            if "vlm" in providers.disabled or "vlm" in self._on_builtin
+            else providers.vlm or build_vlm(config)
         )
         self.image_archive: ImageArchive | None = (
             ImageArchive(config.storage.data_dir / "vision", config.vision.retention_days)
@@ -295,10 +307,9 @@ class CompanionRuntime:
         spec = worker_spec(name, self.config)
         try:
             if spec is None:
-                if name in self._on_builtin:  # back to what stt/tts.provider says
-                    self._use(
-                        name, build_stt(self.config) if name == "stt" else build_tts(self.config)
-                    )
+                if name in self._on_builtin:  # back to what stt/tts/vlm.provider says
+                    build = {"stt": build_stt, "tts": build_tts, "vlm": build_vlm}[name]
+                    self._use(name, build(self.config))
                 await engine.stop()
                 return
             url = await engine.ensure(spec, self.config.builtin.start_timeout_s)
