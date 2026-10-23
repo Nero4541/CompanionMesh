@@ -188,6 +188,69 @@
     window.peopleTab.open();
   };
 
+  // Signing in with the dashboard's login QR code, from a photo: browsers open the camera
+  // itself only on https or localhost, and this page is plain http on the tailnet.
+  let jsQRLoaded = null;
+  function loadJsQR() {
+    jsQRLoaded ??= new Promise((resolve, reject) => {
+      const script = document.createElement("script");
+      script.src = "jsqr.min.js";
+      script.onload = () => resolve(window.jsQR);
+      script.onerror = () => {
+        jsQRLoaded = null;
+        reject(new Error("cannot load the QR code reader"));
+      };
+      document.head.append(script);
+    });
+    return jsQRLoaded;
+  }
+
+  function decode(jsQR, bitmap, longest) {
+    const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const { data, width, height } = ctx.getImageData(0, 0, canvas.width, canvas.height);
+    return jsQR(data, width, height, { inversionAttempts: "attemptBoth" });
+  }
+
+  async function scan(file) {
+    const error = $("people-scan-error");
+    error.hidden = true;
+    $("people-scan").disabled = true;
+    $("people-scan").textContent = "Reading…";
+    try {
+      const jsQR = await loadJsQR();
+      const bitmap = await createImageBitmap(file);
+      // Small first (fast), larger when the code is only a small part of the photo.
+      const code = decode(jsQR, bitmap, 1600) || decode(jsQR, bitmap, 3200);
+      bitmap.close();
+      if (!code || !code.data) throw new Error("No QR code found in the picture: take it again, closer and straight on.");
+      let found = null;
+      try {
+        found = new URL(code.data).searchParams.get("token");
+      } catch {}
+      if (!found) throw new Error("That QR code is not a dashboard login (Phone, on the Overview page).");
+      setToken(found);
+      window.peopleTab.open();
+    } catch (err) {
+      error.textContent = err.message;
+      error.hidden = false;
+    } finally {
+      $("people-scan").disabled = false;
+      $("people-scan").textContent = "Scan the QR code";
+      $("people-scan-photo").value = "";
+    }
+  }
+
+  $("people-scan").onclick = () => $("people-scan-photo").click();
+  $("people-scan-photo").onchange = (event) => {
+    const file = event.target.files && event.target.files[0];
+    if (file) scan(file);
+  };
+
   $("people-add").onsubmit = (event) => {
     event.preventDefault();
     const name = $("add-name").value.trim();
