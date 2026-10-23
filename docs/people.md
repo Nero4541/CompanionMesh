@@ -32,7 +32,7 @@ Ask first: a person is only added when you tick **They agreed to be recognised**
 - **Voice**: a recording of the person speaking alone for 30 to 60 seconds (reading something aloud is fine), as an audio file in any common format, or recorded in the browser with **Record voice** (browsers allow the microphone only on `https://` or on this machine). The server cuts it into clips of about six seconds, checks that they are all the same voice and leaves out those that are not. Clean recordings matter more than anything else for recognising voices.
 - **From a stranger in view**: under **Here now**, **Add as a person…** takes the face samples from the stranger the cameras see right now.
 
-**On a phone, away from home**: the phone page `/view/` (see [remote access](remote-access.md)) has a **People** tab that does the same. It needs the dashboard's admin token (`COMPANION_ADMIN_TOKEN` in `.env`): the page asks for it once and keeps it on the phone. **Voice** opens the phone's recorder.
+**On a phone, away from home**: the phone page `/view/` (see [remote access](remote-access.md)) has a **People** tab that does the same. It needs the dashboard's admin token (`COMPANION_ADMIN_TOKEN` in `.env`): the page asks for it once and keeps it on the phone. **Scan the QR code** there takes a photo of the QR code under **Phone** on the dashboard's Overview page and signs in with it. **Voice** opens the phone's recorder.
 
 **Forget** deletes a person and their samples at once. **Clear face** and **Clear voice** delete only those samples.
 
