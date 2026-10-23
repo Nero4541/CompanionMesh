@@ -40,60 +40,86 @@ The companion talks to an OpenAI-compatible LLM itself, such as LM Studio, Ollam
 
 ## Tools for the agent
 
-With `mcp.enabled: true` (off by default) the server offers the agent tools of its own, through an MCP server at `/mcp` (the Model Context Protocol, streamable HTTP). Hermes and OpenClaw connect to it the same way:
+With `mcp.enabled: true` (off by default) the server offers the agent tools of its own, through an MCP server at `/mcp` (the Model Context Protocol, streamable HTTP). Hermes and OpenClaw load it like any other MCP server.
 
-| Tool | Gives or does |
-|---|---|
-| `who_is_here()` | who is around now: name, role (user, acquaintance, stranger), since when, which camera, what they are doing, who is speaking |
-| `timeline(minutes=120, person=null)` | what each person has been doing ([timeline](people.md#timeline)) |
-| `recent_speech(minutes=10)` | what was said lately, by whom, and whether it was said to the companion or overheard |
-| `look(camera=null)` | a camera's newest picture (as an image) and, with a vision model, a short description |
-| `remember_person(track_id, name, role)` | add the stranger in view as a person; only after the user said yes (see below) |
-| `forget_person(name)` | forget a person; their samples are deleted at once |
-| `list_people()` | the people known (names, roles, notes); never face or voice data |
-| `set_watch(activity, min_minutes, …)`, `list_watches()`, `remove_watch(id)` | watches on long activities, which become `long_activity` events |
+### When you need them
+
+Without the tools the agent still gets what the server knows, as short lines with each message: who said it (`「…」 (Yukari, the user)`), what was overheard, and in proactive turns who is around and what has been going on. For conversation, that is enough, and you need to set up nothing.
+
+Set the tools up when the agent should find things out or act **by itself**, whenever it wants:
+
+- check who is around, or what someone has been doing, before it answers;
+- look through a camera when the user asks "what do you see?";
+- remember someone new, or forget someone, when the user asks;
+- keep an eye on long activities ("tell me when I have been gaming for two hours").
+
+They are for an external agent, Hermes or OpenClaw (`agent.provider: hermes` or `openclaw`), which has to be told where they are; the `direct` backend does not use them. Most of them need [people](people.md) on:
+
+| Tool | Gives or does | Needs |
+|---|---|---|
+| `who_is_here()` | who is around now: name, role (user, acquaintance, stranger), since when, which camera, what they are doing, who is speaking | `perception.enabled` |
+| `timeline(minutes=120, person=null)` | what each person has been doing ([timeline](people.md#timeline)) | `timeline.enabled` |
+| `recent_speech(minutes=10)` | what was said lately, by whom, and whether it was said to the companion or overheard | – |
+| `look(camera=null)` | a camera's newest picture (as an image) and, with a vision model, a short description | `perception.enabled` and a camera |
+| `remember_person(track_id, name, role)` | add the stranger in view as a person; only after the user said yes (see below) | `perception.enabled` |
+| `forget_person(name)` | forget a person; their samples are deleted at once | – |
+| `list_people()` | the people known (names, roles, notes); never face or voice data | – |
+| `set_watch(activity, min_minutes, …)`, `list_watches()`, `remove_watch(id)` | watches on long activities, which become `long_activity` events | `timeline.enabled` |
 
 Every tool also answers at `POST /v1/tools/<name>` with its arguments as a JSON object (and `GET /v1/tools` lists them), for anything that cannot load MCP servers.
 
-**Access.** Put a token in the server's `.env` as `COMPANION_AGENT_TOKEN` (`uv run companion agent-tools --token` makes one) and the same value in the agent's environment; the agent sends it as `Authorization: Bearer`. While it is not set, the tools answer only this machine. The agent reaches the server at `http://<this machine>:<server.port>/mcp`: `127.0.0.1` when it runs here, the machine's Tailscale address when it runs elsewhere. A Hermes inside WSL2 reaches Windows at `127.0.0.1` only with WSL's mirrored networking; otherwise use the Windows machine's address (its Tailscale address works).
+### Setting them up
 
-**Hermes**: add to `~/.hermes/config.yaml` (Hermes reads `${…}` from its environment, e.g. `~/.hermes/.env`), then restart Hermes:
+On the companion server, once:
 
-```yaml
-mcp_servers:
-  companion:
-    url: http://127.0.0.1:8765/mcp
-    headers:
-      Authorization: Bearer ${COMPANION_AGENT_TOKEN}
-    timeout: 60
-    connect_timeout: 10
-```
+1. **Turn the tools on**: under **Configuration**, `mcp.enabled` (applies at once), or `mcp: {enabled: true}` in `configs/companion.local.yaml`.
+2. **Make a token** for the agent to send: `uv run companion agent-tools --token` writes `COMPANION_AGENT_TOKEN` to `.env`. Then restart the server: it reads `.env` only when it starts (the dashboard's restart does not read it again). Without a token the tools answer only this machine; with one, every caller has to send it, this machine too.
+3. **Find the address** the agent will use: `http://127.0.0.1:8765/mcp` when the agent runs on this machine; from another machine, this machine's Tailscale address, `http://100.x.y.z:8765/mcp` (with `server.host: 0.0.0.0`). A Hermes inside WSL2 reaches Windows at `127.0.0.1` only with WSL's mirrored networking; otherwise use the Tailscale address.
+4. `uv run companion agent-tools --url <that address>` prints the settings for both agents with the address filled in. The token itself is in `.env`.
 
-**OpenClaw**: `mcp.servers` in `openclaw.json` (OpenClaw's own MCP client), or the same with `openclaw mcp set companion '<the entry as JSON>'`:
+#### Hermes
 
-```json
-{
-  "mcp": {
-    "servers": {
-      "companion": {
-        "url": "http://127.0.0.1:8765/mcp",
-        "transport": "streamable-http",
-        "connectionTimeoutMs": 10000,
-        "requestTimeoutMs": 60000,
-        "headers": { "Authorization": "Bearer ${COMPANION_AGENT_TOKEN}" }
-      }
-    }
-  }
-}
-```
+On the machine where Hermes runs:
 
-`uv run companion agent-tools` prints both for this server's address (`--url` for another), and `--write-hermes <config.yaml>` or `--write-openclaw <openclaw.json>` adds the entry to a file, keeping a copy of it as `.bak-companion` and everything else as it was.
+1. Add `COMPANION_AGENT_TOKEN=<the token>` to `~/.hermes/.env`.
+2. Add the server to `~/.hermes/config.yaml` (Hermes fills in `${…}` from its environment). When Hermes runs on this machine, `uv run companion agent-tools --write-hermes ~/.hermes/config.yaml` does it, keeping a copy as `.bak-companion`.
 
-For OpenClaw, put the token in `~/.openclaw/.env` and restart the gateway (`systemctl --user restart openclaw-gateway`) **before** saving the entry: OpenClaw fills in `${COMPANION_AGENT_TOKEN}` when it loads its config and refuses a config whose variable is missing. `openclaw mcp probe companion` then lists the tools (`openclaw mcp add` probes with the text unfilled, so it is refused; `set`, or `add --no-probe`, saves it). Every agent with the `coding` or `messaging` tool profile gets the tools, as `companion__who_is_here` and so on; to keep them from an agent, add `"tools": {"deny": ["companion__*"]}` to its entry in `agents.list`.
+   ```yaml
+   mcp_servers:
+     companion:
+       url: http://127.0.0.1:8765/mcp
+       headers:
+         Authorization: Bearer ${COMPANION_AGENT_TOKEN}
+       timeout: 60
+       connect_timeout: 10
+   ```
 
-**Remembering people.** `remember_person` adds a face the cameras see now. With `mcp.consent: conversation` (default) it works only when the user's last sentence, at most `mcp.consent_window_s` (5 minutes) ago, said yes ("yes", "OK", "はい", "いいよ", "好的", …): the agent asks first, then calls it. With `mcp.consent: dashboard` the request waits on the People page until you confirm it.
+3. Restart Hermes: `hermes gateway restart` (or, when `hermes gateway` runs in a terminal, stop it and start it again).
+4. Check: `hermes mcp test companion` lists the tools; then ask the agent who is around.
 
-Without the tools the agent still gets the same facts as short lines with each message: who said it (`「…」 (Yukari, the user)`), what was overheard, who is around and what has been going on in proactive turns. [agent-guide.md](agent-guide.md) is a text to give the agent (in its SOUL.md or AGENTS.md) about how to use all this.
+A Hermes profile keeps both files in `~/.hermes/profiles/<name>/` instead; only that profile gets the tools.
+
+#### OpenClaw
+
+On the machine where OpenClaw runs:
+
+1. Add `COMPANION_AGENT_TOKEN=<the token>` to `~/.openclaw/.env`.
+2. Restart the gateway, `openclaw gateway restart`, **before** the next step: OpenClaw fills in `${COMPANION_AGENT_TOKEN}` when it loads its config, and refuses a config whose variable it does not have.
+3. Add the server, with the address from above (or, when OpenClaw runs on this machine, `uv run companion agent-tools --write-openclaw ~/.openclaw/openclaw.json`, which keeps a copy as `.bak-companion`). The gateway picks it up at once.
+
+   ```sh
+   openclaw mcp set companion '{"url":"http://127.0.0.1:8765/mcp","transport":"streamable-http","connectionTimeoutMs":10000,"requestTimeoutMs":60000,"headers":{"Authorization":"Bearer ${COMPANION_AGENT_TOKEN}"}}'
+   ```
+
+   Use `set`: `openclaw mcp add` tries the server before it fills in the token, and is refused (`add --no-probe` works too).
+4. Check: `openclaw mcp probe companion` answers `companion: 10 tools`; then ask the agent who is around.
+5. Every agent with the `coding` or `messaging` tool profile gets the tools, as `companion__who_is_here` and so on. To keep them from an agent, add `"tools": {"deny": ["companion__*"]}` to its entry in `agents.list` of `openclaw.json`.
+
+### Remembering people
+
+`remember_person` adds a face the cameras see now. With `mcp.consent: conversation` (default) it works only when the user's last sentence, at most `mcp.consent_window_s` (5 minutes) ago, said yes ("yes", "OK", "はい", "いいよ", "好的", …): the agent asks first, then calls it. With `mcp.consent: dashboard` the request waits on the People page until you confirm it.
+
+[agent-guide.md](agent-guide.md) is a text to give the agent (in its SOUL.md or AGENTS.md) about how to use all this, with the tools or without them.
 
 ## Running the agent on another machine
 
