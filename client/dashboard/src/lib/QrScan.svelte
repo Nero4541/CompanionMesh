@@ -11,6 +11,24 @@
   let error = $state(null);
   let busy = $state(false);
 
+  // The reader is loaded as soon as the button shows, not after the photo: while the
+  // camera app runs, Android pauses the browser, and its first request back can fail.
+  let reader = null;
+  function loadReader() {
+    reader ??= import("jsqr").then(
+      (module) => module.default,
+      (err) => {
+        reader = null; // the next scan tries again
+        throw err;
+      },
+    );
+    return reader;
+  }
+
+  $effect(() => {
+    loadReader().catch(() => {});
+  });
+
   function decode(jsQR, bitmap, longest) {
     const scale = Math.min(1, longest / Math.max(bitmap.width, bitmap.height));
     const canvas = document.createElement("canvas");
@@ -51,8 +69,13 @@
     busy = true;
     error = null;
     try {
-      // Loaded only now: most visits never scan.
-      const { default: jsQR } = await import("jsqr");
+      let jsQR;
+      try {
+        jsQR = await loadReader();
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        jsQR = await loadReader();
+      }
       const bitmap = await picture(file);
       // Several sizes: a smaller one smooths away the screen's moiré, a larger one finds a
       // code that is only a small part of the photo.
