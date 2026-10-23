@@ -525,7 +525,9 @@ def server_addresses() -> list[str]:
 
 
 def default_server_url(port: int) -> str | None:
-    addresses = server_addresses()
+    # This network's address: a Tailscale one reaches only a board already on the
+    # tailnet. A board put on it (--tailscale) gets that one as a further server.
+    addresses = lan_addresses() or tailscale_addresses()
     return f"ws://{addresses[0]}:{port}/v1/realtime" if addresses else None
 
 
