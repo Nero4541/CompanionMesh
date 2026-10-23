@@ -142,8 +142,9 @@ class LoggingConfig(_Section):
     """What the server writes to its console and log."""
 
     level: Literal["DEBUG", "INFO", "WARNING", "ERROR"] = "INFO"
-    """How much detail to log. DEBUG: everything, for troubleshooting. INFO: normal (includes what
-    was said). WARNING: only problems, so no transcripts. ERROR: only failures.
+    """How much detail to log. DEBUG: everything, for troubleshooting, also every web request.
+    INFO: normal (includes what was said; web requests only when they fail). WARNING: only
+    problems, so no transcripts. ERROR: only failures.
     """
     format: Literal["text", "json"] = "text"
     """text is easy to read; json is one JSON object per line, for log collection tools."""
