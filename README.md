@@ -33,6 +33,10 @@ Flash the board's SD card with the maker's image, plug the board into the server
 
 For a board on mobile data or another Wi-Fi, use [Tailscale](https://tailscale.com) on the server and the board: no router or firewall changes, and it also works next to another VPN on the server. See [Reaching the server from outside](docs/remote-access.md).
 
+## Tools for your agent
+
+For conversation, your agent needs nothing extra: it gets who said what with each message, and who is around when it speaks up by itself. If it should also find things out by itself (check who is around, look through a camera, remember someone new, watch for long activities), give Hermes or OpenClaw the server's tools over MCP; most of them need [people](docs/people.md) on. When it is worth it, and the steps for Hermes and for OpenClaw: [Tools for the agent](docs/agents.md#tools-for-the-agent).
+
 ## Updating
 
 Stop the server and run **`update-companion.bat`** (Linux: `./update-companion.sh`): it installs the newest release, keeps your settings and data, and backs up what it replaces. See [Updating](docs/updating.md) and the [changelog](CHANGELOG.md).
