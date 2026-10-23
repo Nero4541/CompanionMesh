@@ -20,6 +20,8 @@ The **Events** page shows what the server is doing as it happens: devices connec
 
 The **Conversations** page shows what the companion heard and said, newest first and per conversation, while `server.dashboard_conversation` is on (from then on; nothing is kept while it is off). With `stt.keep_audio: true` each line you said has its recording next to it (**Listen**, with its length and how long recognition took), and utterances that never got an answer (dropped as the companion's own voice, or nothing recognized) show among the lines, greyed out: listen to them when the companion mishears. With the conversation off, only the recordings show. The page also says where phones open the read-only viewer (`server.viewer`, see [Reaching the server from outside](remote-access.md#following-on-your-phone)).
 
+The **Vision** page installs and switches on the built-in vision model (Mage-VL); see [Vision](vision.md#built-in-vision-model).
+
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
 - With `COMPANION_ADMIN_TOKEN` unset, they answer only this machine (open `http://127.0.0.1:8765/admin/` on the server itself).
