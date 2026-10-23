@@ -24,7 +24,9 @@ The **Vision** page installs and switches on the built-in vision model (Mage-VL)
 
 The dashboard and its API (`/v1/admin/*`) have their own token, so a device's `COMPANION_TOKEN` cannot change the server:
 
-- With `COMPANION_ADMIN_TOKEN` unset, they answer only this machine (open `http://127.0.0.1:8765/admin/` on the server itself).
-- With `COMPANION_ADMIN_TOKEN=<a long random string>` in `.env`, any address works once you enter the token (or open the page once as `/admin/?token=…`).
+- This machine never needs the token: open `http://127.0.0.1:8765/admin/` on the server itself.
+- Other machines need `COMPANION_ADMIN_TOKEN` from `.env`. Without it set, the dashboard answers only this machine.
+- **A phone**: the **Phone** card on the Overview page makes the token if there is none (saved in `.env`, used at once) and shows a QR code to scan with the phone's camera, for this machine's Tailscale address or one on this network; the dashboard opens on the phone and stays logged in. **Copy the link** gives the same address to send yourself. Whoever has the code or the link can use the dashboard: **New token** makes another one and logs every phone and browser out.
+- Any other browser: enter the token when the page asks, or open it once as `/admin/?token=…`.
 
 `server.dashboard: false` turns the page off. The built page is committed in `client/dashboard/dist/`, so running the server needs no Node; to change it, see [Development](development.md).
