@@ -11,12 +11,14 @@
   import Personas from "./pages/Personas.svelte";
   import Speech from "./pages/Speech.svelte";
   import Updates from "./pages/Updates.svelte";
+  import Vision from "./pages/Vision.svelte";
 
   const PAGES = [
     { id: "overview", label: "Overview", component: Overview },
     { id: "metrics", label: "Latency", component: Metrics },
     { id: "config", label: "Configuration", component: Config },
     { id: "speech", label: "Speech", component: Speech },
+    { id: "vision", label: "Vision", component: Vision },
     { id: "personas", label: "Personas", component: Personas },
     { id: "cameras", label: "Cameras", component: Cameras },
     { id: "devices", label: "Devices", component: Devices },
