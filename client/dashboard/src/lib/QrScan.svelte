@@ -5,6 +5,8 @@
   // label around the file input: some phone browsers ignore input.click() from script.
   let { onToken } = $props();
 
+  const SIZES = [1200, 800, 1800, 2600];
+
   let input = $state(null);
   let error = $state(null);
   let busy = $state(false);
@@ -52,8 +54,13 @@
       // Loaded only now: most visits never scan.
       const { default: jsQR } = await import("jsqr");
       const bitmap = await picture(file);
-      // Small first (fast), larger when the code is only a small part of the photo.
-      const code = decode(jsQR, bitmap, 1600) ?? decode(jsQR, bitmap, 3200);
+      // Several sizes: a smaller one smooths away the screen's moiré, a larger one finds a
+      // code that is only a small part of the photo.
+      let code = null;
+      for (const longest of SIZES) {
+        code = decode(jsQR, bitmap, longest);
+        if (code?.data) break;
+      }
       if (bitmap.close) bitmap.close();
       else URL.revokeObjectURL(bitmap.src);
       if (!code?.data) throw new Error("No QR code found in the picture: take it again, closer and straight on.");
