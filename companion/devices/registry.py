@@ -45,6 +45,9 @@ class EnrolledDevice:
     installed_version: str | None = None
     # The device's last reported settings (device.config), to restore after a reflash.
     settings: dict[str, Any] | None = None
+    # Its Tailscale address while it was last seen on the tailnet (by the installer or
+    # the Maintenance tab); None: not on one.
+    tailscale: str | None = None
 
     def public(self) -> dict[str, Any]:
         """What the dashboard lists: never the token hash or the password."""
@@ -58,6 +61,7 @@ class EnrolledDevice:
             "has_root_password": bool(self.root_password),
             # The server address it last reported, which an update keeps unless changed.
             "server": (self.settings or {}).get("server"),
+            "tailscale": self.tailscale,
         }
 
 
