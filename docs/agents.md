@@ -95,7 +95,7 @@ On the machine where Hermes runs:
    ```
 
 3. Restart Hermes: `hermes gateway restart` (or, when `hermes gateway` runs in a terminal, stop it and start it again).
-4. Check: `hermes mcp test companion` lists the tools; then ask the agent who is around.
+4. Check: `hermes mcp test companion` lists the tools; then ask the agent who is around. Hermes has them as `mcp_companion_who_is_here` and so on.
 
 A Hermes profile keeps both files in `~/.hermes/profiles/<name>/` instead; only that profile gets the tools.
 
