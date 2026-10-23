@@ -1,5 +1,6 @@
 <script>
   import { getToken, setToken } from "./lib/api.js";
+  import QrScan from "./lib/QrScan.svelte";
   import Boards from "./pages/Boards.svelte";
   import Cameras from "./pages/Cameras.svelte";
   import Config from "./pages/Config.svelte";
@@ -50,13 +51,17 @@
     authError = err;
   }
 
-  function signIn(event) {
-    event.preventDefault();
-    setToken(tokenInput.trim());
+  function useToken(token) {
+    setToken(token);
     hasToken = true;
     tokenInput = "";
     authError = null;
     generation += 1;
+  }
+
+  function signIn(event) {
+    event.preventDefault();
+    useToken(tokenInput.trim());
   }
 
   function signOut() {
@@ -87,13 +92,17 @@
       {#if authError.status === 403}
         <p>{authError.message}.</p>
         <p class="muted">
-          Open this page on the server itself (http://127.0.0.1:…/admin/), or set an admin token in
-          the server's <code>.env</code>, restart it and enter that token here.
+          Open this page on the server itself (http://127.0.0.1:…/admin/): its Overview page makes a phone
+          login under <strong>Phone</strong>. Then scan the QR code it shows.
         </p>
       {:else}
         <p>This server needs its admin token (<code>COMPANION_ADMIN_TOKEN</code> in its .env).</p>
-        <p class="muted">The device token does not work here.</p>
+        <p class="muted">
+          On a phone: scan the QR code under <strong>Phone</strong> on the Overview page of the dashboard on the
+          server itself, with the phone's camera app or the button below. The device token does not work here.
+        </p>
       {/if}
+      <div class="scan"><QrScan onToken={useToken} /></div>
       <form onsubmit={signIn}>
         <input
           type="password"
@@ -168,5 +177,12 @@
   .login input {
     flex: 1;
     min-width: 0;
+  }
+  .scan {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 6px;
+    margin-top: 12px;
   }
 </style>
