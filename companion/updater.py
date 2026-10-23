@@ -14,8 +14,8 @@ For a git clone it runs ``git pull --ff-only`` instead.
 
 Installing the new dependencies (``uv sync``) is left to the calling script,
 after this process has ended: on Windows a running Python keeps its files in
-use. The extras installed now (stt, cuda, opus) are written to
-``--extras-file`` so that ``uv sync`` keeps them.
+use. The extras installed now are written to ``--extras-file`` so that
+``uv sync`` keeps them.
 
 Every update is logged in ``data/updates.jsonl``; the dashboard shows it.
 
@@ -201,7 +201,7 @@ def installed_extras(root: Path) -> list[str]:
     venv = root / ".venv"
     site = [p for p in (venv / "Lib" / "site-packages", *venv.glob("lib/python*/site-packages"))]
     found = []
-    for extra, package in (("stt", "faster_whisper"), ("opus", "av"), ("cuda", "nvidia")):
+    for extra, package in (("opus", "av"),):
         if any((s / package).is_dir() for s in site):
             found.append(extra)
     return found
