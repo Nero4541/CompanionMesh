@@ -119,12 +119,15 @@ def from_tailnet(conn: Request | WebSocket) -> bool:
 
 
 def admin_refusal(conn: Request | WebSocket) -> tuple[int, str] | None:
-    """Why ``conn`` may not use the admin API, as (HTTP status, reason); None if it may."""
+    """Why ``conn`` may not use the admin API, as (HTTP status, reason); None if it may.
+
+    This machine never needs the token: whoever uses it can read .env anyway.
+    """
+    if from_this_machine(conn):
+        return None
     config: ServerConfig = conn.app.state.runtime.config.server
     expected = config.admin_token()
     if expected is None:
-        if from_this_machine(conn):
-            return None
         return (
             403,
             "the admin API only answers this machine until "
