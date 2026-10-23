@@ -128,6 +128,14 @@ builtin:
     checkpoint: Aratako/Irodori-TTS-v4.1-Small-MF   # a folder in builtin/tts/models or owner/name; MF = 4 steps
     device: auto
     precision: fp32         # fp32 | bf16 (bf16 halves the memory, needs CUDA)
+  # Built-in vision model (Mage-VL), used instead of vlm.provider while on. auto:
+  # FP8 on RTX 40 and newer (~6.4 GB), BF16/FP16 on older cards. See docs/vision.md.
+  vlm:
+    enabled: false
+    model: auto             # or a folder in builtin/vlm/models, or owner/name
+    device: auto
+    precision: auto         # auto | bf16 | fp16 (FP8 models always run in FP8)
+    fused: true             # FP8: build fast decode kernels (CUDA toolkit + VS C++ tools)
 
 # Vision-language model for vision.mode: vlm. Any OpenAI-compatible chat
 # endpoint that accepts image_url parts: llama.cpp with --mmproj, vLLM,
