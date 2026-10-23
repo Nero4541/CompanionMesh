@@ -39,8 +39,8 @@
       <input id="people-token" type="password" autocomplete="off" placeholder="Admin token" aria-label="Admin token">
       <button type="submit">Sign in</button>
       <p class="muted">Or scan the QR code under <strong>Phone</strong> on the Overview page of the dashboard, on the server.</p>
-      <input id="people-scan-photo" type="file" accept="image/*" capture="environment" hidden>
-      <button id="people-scan" type="button">Scan the QR code</button>
+      <label id="people-scan" class="button scan"><span id="people-scan-text">Scan the QR code</span>
+        <input id="people-scan-photo" type="file" accept="image/*" capture="environment"></label>
       <p id="people-scan-error" class="notice" hidden></p>
     </form>
     <div id="people-main" hidden>
