@@ -10,7 +10,7 @@
 | `server.host is '0.0.0.0' but no token is set` | Set `COMPANION_TOKEN` in `.env` before listening beyond localhost. |
 | Dev client says the server needs a token | Open it once as `/dev/?token=<COMPANION_TOKEN>`. |
 | Dashboard says it only answers this machine | Open it on the server as `http://127.0.0.1:…/admin/`, or set `COMPANION_ADMIN_TOKEN` in `.env` and restart. |
-| STT runs on the CPU although you have a GPU | Install with `--extra cuda`; `check` prints the device it actually loaded. |
+| Built-in speech recognition runs on the CPU although you have a GPU | Set `builtin.libraries: cuda` and `builtin.stt.device: auto` or `cuda`, then press **Install again** on the Speech page; the engine's log there says which device it loaded. |
 | The microphone or camera does not work from another device | Browsers allow them only on `localhost` or HTTPS. |
 | **Start camera** is greyed out | `vision.enabled: false`, or VLM mode without a vision model (`vlm.provider: none`). |
 | The agent ignores the camera image | Its model does not accept images: check `--mmproj` for llama.cpp and the model's `input` list in OpenClaw. |
