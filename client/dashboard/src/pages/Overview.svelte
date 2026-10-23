@@ -1,6 +1,7 @@
 <script>
   import { api } from "../lib/api.js";
   import { duration, time, value } from "../lib/format.js";
+  import PhoneLogin from "../lib/PhoneLogin.svelte";
   import { poll } from "../lib/poll.svelte.js";
 
   let { onAuthError } = $props();
@@ -78,6 +79,8 @@
         <dt>Sessions using it</dt><dd>{s.vision.active_sessions}</dd>
       </dl>
     </div>
+
+    <PhoneLogin {onAuthError} />
   </div>
 
   <h3 class="table-title">Sessions <span class="muted">{s.active_sessions} active</span></h3>
