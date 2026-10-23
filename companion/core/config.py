@@ -491,6 +491,37 @@ class BuiltinTTSConfig(_Section):
     """
 
 
+class BuiltinVLMConfig(_Section):
+    """Built-in vision model: Mage-VL, installed and run by the server in builtin/vlm.
+
+    vlm.max_image_side, vlm.max_tokens and vlm.prompt still apply. The Vision page installs it
+    and turns it on and off.
+    """
+
+    enabled: bool = False
+    """On: use it instead of vlm.provider. Off: its process stops and its graphics memory is
+    freed at once.
+    """
+    model: str = "auto"
+    """auto: Mage-VL in FP8 on graphics cards that run FP8 (RTX 40 series and newer, about
+    6 GB), the original Mage-VL in BF16 or FP16 on older ones (about 9 GB). Or a model folder in
+    builtin/vlm/models, or a Hugging Face name (owner/name), downloaded first if missing.
+    """
+    device: Literal["auto", "cuda", "cpu"] = "auto"
+    """Where it runs: cuda = NVIDIA graphics card, cpu = processor (very slow for a vision
+    model), auto = the graphics card when there is one.
+    """
+    precision: Literal["auto", "bf16", "fp16"] = "auto"
+    """Number precision of a model not stored in FP8: auto picks bf16 on newer cards, fp16 on
+    older ones. FP8 models always run in FP8.
+    """
+    fused: bool = True
+    """FP8 models: build three small CUDA kernels for this card once (a few minutes), which make
+    answers about 2.7 times faster. Needs the CUDA toolkit matching PyTorch's (13.0) and, on
+    Windows, Visual Studio's C++ build tools; without them it runs unfused (slower, same answers).
+    """
+
+
 class BuiltinConfig(_Section):
     """Speech engines the server installs and runs itself, so you need no separate speech servers.
     The Speech page installs them and turns them on and off.
@@ -506,10 +537,13 @@ class BuiltinConfig(_Section):
     """
     stt: BuiltinSTTConfig = BuiltinSTTConfig()
     tts: BuiltinTTSConfig = BuiltinTTSConfig()
+    vlm: BuiltinVLMConfig = BuiltinVLMConfig()
 
 
 class VLMConfig(HttpProviderConfig):
-    """A vision model that describes camera pictures in words. Used only when vision.mode is vlm."""
+    """A vision model that describes camera pictures in words, for vision.mode vlm. builtin.vlm runs
+    one on this machine.
+    """
 
     provider: Literal["openai_compatible", "none"] = "none"
     """openai_compatible: a vision model server at base_url (llama.cpp with --mmproj, vLLM, LM
