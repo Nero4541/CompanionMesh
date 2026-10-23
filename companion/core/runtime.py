@@ -626,6 +626,9 @@ class CompanionRuntime:
             if auth_key:
                 payload["auth_key"] = auth_key
         _, result = await self._ask_device(device_id, ev.DEVICE_TAILSCALE, payload, timeout)
+        if result.get("ok") and self.devices.get(device_id) is not None:
+            # Remembered for the Boards page (an update keeps it on the tailnet).
+            self.devices.update(device_id, tailscale=tailscale.board_address(result))
         if action in ("up", "logout"):
             await self.notice(
                 "device_tailscale",
