@@ -9,7 +9,7 @@
 | `provider_auth` | The key in `.env` does not match the agent's `API_SERVER_KEY` or gateway token. |
 | `server.host is '0.0.0.0' but no token is set` | Set `COMPANION_TOKEN` in `.env` before listening beyond localhost. |
 | Dev client says the server needs a token | Open it once as `/dev/?token=<COMPANION_TOKEN>`. |
-| Dashboard says it only answers this machine | Open it on the server as `http://127.0.0.1:…/admin/`, or set `COMPANION_ADMIN_TOKEN` in `.env` and restart. |
+| Dashboard says it only answers this machine | Open it on the server as `http://127.0.0.1:…/admin/` and use **Make a phone login** on the Overview page (or set `COMPANION_ADMIN_TOKEN` in `.env` and restart). |
 | Built-in speech recognition runs on the CPU although you have a GPU | Set `builtin.libraries: cuda` and `builtin.stt.device: auto` or `cuda`, then press **Install again** on the Speech page; the engine's log there says which device it loaded. |
 | The microphone or camera does not work from another device | Browsers allow them only on `localhost` or HTTPS. |
 | **Start camera** is greyed out | `vision.enabled: false`, or VLM mode without a vision model (`vlm.provider: none`). |
