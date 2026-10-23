@@ -7,6 +7,8 @@ from pathlib import Path
 from fastapi import FastAPI
 from fastapi.responses import RedirectResponse
 from fastapi.staticfiles import StaticFiles
+from starlette.responses import Response
+from starlette.types import Scope
 
 from companion import __version__
 from companion.api import (
@@ -28,6 +30,19 @@ WEB_CLIENT_DIR = CLIENT_DIR / "web"
 VIEWER_DIR = CLIENT_DIR / "viewer"  # the tailnet's read-only page (server.viewer)
 # Built by `npm run build` in client/dashboard; committed, so no Node is needed.
 DASHBOARD_DIR = CLIENT_DIR / "dashboard" / "dist"
+
+
+class Revalidated(StaticFiles):
+    """Static pages a browser checks again before each use (a 304 when unchanged).
+
+    Without it, phones kept a page's scripts for hours by their own guess and ran an
+    old script with a new page after an update.
+    """
+
+    async def get_response(self, path: str, scope: Scope) -> Response:
+        response = await super().get_response(path, scope)
+        response.headers.setdefault("Cache-Control", "no-cache")
+        return response
 
 
 def create_app(
@@ -67,14 +82,14 @@ def create_app(
     app.include_router(viewer.router)
 
     if config.server.dashboard and DASHBOARD_DIR.is_dir():
-        app.mount("/admin", StaticFiles(directory=DASHBOARD_DIR, html=True), name="dashboard")
+        app.mount("/admin", Revalidated(directory=DASHBOARD_DIR, html=True), name="dashboard")
 
     # Always there (the page holds no data): server.viewer can be turned on while running.
     if VIEWER_DIR.is_dir():
-        app.mount("/view", StaticFiles(directory=VIEWER_DIR, html=True), name="viewer")
+        app.mount("/view", Revalidated(directory=VIEWER_DIR, html=True), name="viewer")
 
     if config.server.dev_client and WEB_CLIENT_DIR.is_dir():
-        app.mount("/dev", StaticFiles(directory=WEB_CLIENT_DIR, html=True), name="dev-client")
+        app.mount("/dev", Revalidated(directory=WEB_CLIENT_DIR, html=True), name="dev-client")
 
         @app.get("/", include_in_schema=False)
         async def index() -> RedirectResponse:
