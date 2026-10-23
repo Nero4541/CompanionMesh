@@ -58,5 +58,5 @@ def setup_logging(level: str = "INFO", fmt: str = "text") -> None:
     root = logging.getLogger()
     root.handlers[:] = [handler]
     root.setLevel(level)
-    for noisy in ("httpx", "httpcore", "faster_whisper"):
+    for noisy in ("httpx", "httpcore"):
         logging.getLogger(noisy).setLevel(max(logging.WARNING, root.level))
