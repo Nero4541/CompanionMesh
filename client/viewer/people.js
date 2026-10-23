@@ -48,6 +48,7 @@
   });
 
   function login(reason) {
+    loadJsQR().catch(() => {}); // ready before the camera opens
     $("people-login").hidden = false;
     $("people-main").hidden = true;
     $("people-refused").textContent = reason || "";
@@ -190,8 +191,19 @@
 
   // Signing in with the dashboard's login QR code, from a photo: browsers open the camera
   // itself only on https or localhost, and this page is plain http on the tailnet.
+  // Loaded as soon as the sign-in form shows, not after the photo: while the camera app
+  // runs, Android pauses the browser, and its first request back can fail.
+  let reader = null;
+  function loadJsQR() {
+    reader ??= fetchJsQR().catch((err) => {
+      reader = null; // the next scan tries again
+      throw err;
+    });
+    return reader;
+  }
+
   // Fetched, then run as an inline script: the error then says why it could not be loaded.
-  async function loadJsQR() {
+  async function fetchJsQR() {
     if (window.jsQR) return window.jsQR;
     let code;
     try {
@@ -242,7 +254,13 @@
     $("people-scan-photo").disabled = true;
     $("people-scan-text").textContent = "Reading…";
     try {
-      const jsQR = await loadJsQR();
+      let jsQR;
+      try {
+        jsQR = await loadJsQR();
+      } catch {
+        await new Promise((resolve) => setTimeout(resolve, 1500));
+        jsQR = await loadJsQR();
+      }
       const bitmap = await picture(file);
       // Several sizes: a smaller one smooths away the screen's moiré, a larger one finds a
       // code that is only a small part of the photo.
