@@ -32,18 +32,13 @@ Each engine serves the OpenAI audio API on `127.0.0.1` only, on a port of its ow
 
 ## Speech recognition (hearing)
 
-The default is [faster-whisper](https://github.com/SYSTRAN/faster-whisper) with `large-v3-turbo`. The model is downloaded on first start (about 1.6 GB).
+Speech recognition comes from one of three places:
 
-```yaml
-stt:
-  model: large-v3-turbo   # small / medium / large-v3 / …
-  language: ja            # null = auto-detect
-  device: auto            # tries CUDA first, falls back to CPU
-```
+- **Built-in** (`builtin.stt`): Whisper on this machine, installed and run by the server; see [Built-in speech](#built-in-speech). This is the only way Whisper runs on the server's own computer, so turning it off always frees its GPU memory.
+- **A server of your own**, on this machine or another (`stt.provider: openai_compatible`).
+- **A service** such as OpenAI or Groq (`stt.provider: openai_compatible` with its address and key).
 
-The `cuda` extra installs cuBLAS and cuDNN from PyPI, so no separate CUDA toolkit is needed. Voice activity detection uses Silero VAD, whose model comes with the server, so it also works with speech recognition on another machine. An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence.
-
-To run speech recognition on another machine, point the companion at any server with the OpenAI `POST /v1/audio/transcriptions` API ([speaches](https://github.com/speaches-ai/speaches), the whisper.cpp server, OpenAI, Groq):
+The last two take any server with the OpenAI `POST /v1/audio/transcriptions` API ([speaches](https://github.com/speaches-ai/speaches), the whisper.cpp server, OpenAI, Groq):
 
 ```yaml
 stt:
@@ -54,7 +49,9 @@ stt:
   api_key_env: STT_API_KEY                        # optional
 ```
 
-Voice activity detection still runs in the companion; only finished utterances are sent, as 16 kHz WAV.
+`stt.provider: none` turns speech input off. Voice activity detection always runs in the companion (Silero VAD, whose model comes with the server); only finished utterances are sent, as 16 kHz WAV. An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence.
+
+Up to 1.4.0, `stt.provider: faster_whisper` ran Whisper inside the server process (with `--extra stt --extra cuda`). That is gone: such a setting now turns on `builtin.stt` with the same model, `device`, `compute_type` and `beam_size`, and the extras install nothing.
 
 **Steering the writing.** Whisper often writes Cantonese in simplified characters, or as written Mandarin. `stt.prompt` shows it the style you want with a short example in that style, for instance:
 
