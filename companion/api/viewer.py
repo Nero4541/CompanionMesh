@@ -15,7 +15,8 @@ from typing import Any
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field
 
-from companion.api.auth import from_tailnet, from_this_machine
+from companion.api.auth import admin_refusal, from_tailnet, from_this_machine, via_tailscale_serve
+from companion.audio.pcm import wav_to_mono16k
 from companion.core.errors import CompanionError
 from companion.core.runtime import CompanionRuntime
 
@@ -43,7 +44,7 @@ async def require_viewer(request: Request) -> None:
             status_code=404,
             detail="the viewer is off: turn on server.viewer.enabled under Configuration",
         )
-    if not (from_tailnet(request) or from_this_machine(request)):
+    if not (from_tailnet(request) or via_tailscale_serve(request) or from_this_machine(request)):
         raise HTTPException(
             status_code=403,
             detail="only devices on this server's tailnet may open the viewer, at the server's "
@@ -136,3 +137,28 @@ async def live(request: Request, device_id: str, body: LiveBody) -> dict[str, An
         status = 404 if exc.code == "not_connected" else 409
         raise HTTPException(status_code=status, detail=str(exc)) from exc
     return {"live": device_id, "seconds": body.seconds}
+
+
+# Push to talk: one sentence of at most this long (16 kHz, 16-bit mono WAV is 32 kB a second).
+TALK_MAX_BYTES = 31 * 32_000
+
+
+@router.post("/talk")
+async def talk(request: Request) -> dict[str, Any]:
+    """Push to talk on a phone: one sentence (a 16-bit WAV), said by the user to the companion,
+    who answers through the device it talks with. Needs the admin token: it makes it speak.
+    """
+    refusal = admin_refusal(request)
+    if refusal is not None:
+        raise HTTPException(status_code=refusal[0], detail=refusal[1])
+    data = await request.body()
+    if len(data) > TALK_MAX_BYTES:
+        raise HTTPException(status_code=413, detail="at most 30 seconds at a time")
+    audio = wav_to_mono16k(data)
+    if audio is None:
+        raise HTTPException(status_code=400, detail="send a 16-bit PCM WAV")
+    session = _runtime(request).talk_session()
+    if session is None:
+        raise HTTPException(status_code=409, detail="no device is connected to answer through")
+    await session.push_to_talk(audio)
+    return {"session_id": session.session_id, "seconds": round(audio.size / 16_000, 1)}
