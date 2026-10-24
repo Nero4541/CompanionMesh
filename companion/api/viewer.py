@@ -12,7 +12,7 @@ from __future__ import annotations
 import time
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Request, Response, WebSocket
 from pydantic import BaseModel, Field
 
 from companion.api.auth import admin_refusal, from_tailnet, from_this_machine, via_tailscale_serve
@@ -53,6 +53,8 @@ async def require_viewer(request: Request) -> None:
 
 
 router = APIRouter(prefix="/v1/view", dependencies=[Depends(require_viewer)])
+# The phone as the companion's speaker: a realtime connection of its own (below).
+sockets = APIRouter(prefix="/v1/view")
 
 
 def _cameras(request: Request) -> None:
@@ -157,8 +159,23 @@ async def talk(request: Request) -> dict[str, Any]:
     audio = wav_to_mono16k(data)
     if audio is None:
         raise HTTPException(status_code=400, detail="send a 16-bit PCM WAV")
-    session = _runtime(request).talk_session()
+    session = _runtime(request).talk_session(request.query_params.get("session"))
     if session is None:
         raise HTTPException(status_code=409, detail="no device is connected to answer through")
     await session.push_to_talk(audio)
     return {"session_id": session.session_id, "seconds": round(audio.size / 16_000, 1)}
+
+
+@sockets.websocket("/realtime")
+async def phone_realtime(ws: WebSocket) -> None:
+    """The phone page as a device of the companion (its speaker, for push to talk answered on
+    the phone), with the admin token, on the tailnet only. Its own conversation."""
+    from companion.api.auth import Identity
+    from companion.api.realtime import serve
+
+    runtime = _runtime(ws)  # type: ignore[arg-type]
+    allowed = from_tailnet(ws) or via_tailscale_serve(ws) or from_this_machine(ws)
+    if not runtime.config.server.viewer.enabled or not allowed or admin_refusal(ws) is not None:
+        await ws.close(code=1008, reason="the viewer, on the tailnet, with the admin token")
+        return
+    await serve(ws, Identity())
