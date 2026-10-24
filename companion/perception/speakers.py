@@ -33,7 +33,7 @@ class Speaker:
     role: str  # user | acquaintance | stranger | media | unknown
     confidence: str  # high | medium | low
     on_screen: bool
-    how: str  # voice+lips, voice, lips, alone, media, none
+    how: str  # voice+lips, voice, lips, alone, media, none, push_to_talk
     track_id: str | None = None
     voice_score: float | None = None
 
