@@ -57,4 +57,6 @@ label.scan input { position: absolute; inset: 0; width: 100%; height: 100%; opac
 /* Push to talk: a big button to hold with a thumb. */
 .talk { display: flex; flex-direction: column; align-items: stretch; gap: 6px; margin-bottom: 12px; }
 #talk-button { padding: 18px; font-size: 18px; touch-action: none; user-select: none; -webkit-user-select: none; }
+.talk-row { display: flex; align-items: center; gap: 8px; font-size: 14px; }
+.talk-row select { flex: 1; min-width: 0; }
 #talk-button.on { background: var(--accent); color: #fff; border-color: var(--accent); }
