@@ -150,6 +150,13 @@ def read_wav(data: bytes) -> Any:
     return audio
 
 
+def likeliest(model: Any, audio: Any, allowed: list[str]) -> str:
+    """The most likely of the ``allowed`` languages for ``audio``."""
+    _, _, likely = model.detect_language(audio)
+    chances = dict(likely)
+    return max(allowed, key=lambda code: chances.get(code, 0.0))
+
+
 def create_app(model: Any, name: str, device: str, beam_size: int) -> FastAPI:
     app = FastAPI(title="Built-in speech recognition")
     lock = threading.Lock()  # one transcription at a time: the model is shared
@@ -168,13 +175,19 @@ def create_app(model: Any, name: str, device: str, beam_size: int) -> FastAPI:
         language: Annotated[str | None, Form()] = None,
         prompt: Annotated[str | None, Form()] = None,
         response_format: Annotated[str, Form()] = "json",
+        # Not OpenAI's: without a language, the ones it may be (comma separated). The
+        # likeliest of them is used, so noise is not read as some other language.
+        languages: Annotated[str | None, Form()] = None,
     ) -> Any:
         try:
             audio = read_wav(file.file.read())
         except (wave.Error, ValueError, EOFError) as exc:
             raise HTTPException(status_code=400, detail=f"not a WAV file: {exc}") from exc
+        allowed = [code.strip() for code in (languages or "").split(",") if code.strip()]
         try:
             with lock:
+                if not language and allowed:
+                    language = likeliest(model, audio, allowed)
                 segments, info = model.transcribe(
                     audio,
                     language=language or None,
