@@ -122,6 +122,7 @@ class ChatCompletionsAgent:
             "messages": self._messages(messages, context),
         }
         produced = False
+        visible = False  # anything but blanks
         # The first words are held back until they cannot be the agent saying it is full.
         held = "" if not retry else None
         try:
@@ -147,6 +148,7 @@ class ChatCompletionsAgent:
                         if not text:
                             continue
                         produced = True
+                        visible = visible or bool(text.strip())
                         if held is None:
                             yield AgentEvent(kind="text", text=text)
                             continue
@@ -162,6 +164,12 @@ class ChatCompletionsAgent:
             raise describe_http_error(self.name, exc, self._config.base_url) from exc
         if held:  # a short answer that looked like the start of it
             yield AgentEvent(kind="text", text=held)
+        if produced and not visible:
+            # Seen from OpenClaw when its session is busy with the turn before or too full.
+            log.warning(
+                "the agent answered only blanks",
+                extra=kv(agent=self.name, session=self.agent_session_id(session)),
+            )
         if not produced:
             raise ProviderError(
                 self.name,
