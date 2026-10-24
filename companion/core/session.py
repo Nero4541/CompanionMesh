@@ -583,7 +583,25 @@ class Session:
             log.warning("speaker unknown", extra=kv(session=self.session_id, error=str(exc)))
             return None
 
-    async def _voice_turn(self, audio: np.ndarray, ended: float | None = None) -> None:
+    async def push_to_talk(self, audio: np.ndarray) -> None:
+        """A sentence from push to talk (a phone): the user, speaking to the companion."""
+        await self.interrupt("new_utterance")
+        self._speech_end = TurnTimings.now()
+        self._timings = TurnTimings(speech_end=self._speech_end)
+        self._start_turn(self._voice_turn(audio, pushed=True))
+
+    def _pusher(self) -> Speaker | None:
+        """Who uses push to talk: the user (signed in with the admin token)."""
+        from companion.perception.speakers import Speaker
+
+        user = self.runtime.perception.registry.user
+        if user is None:
+            return None
+        return Speaker(user.id, user.name, "user", "high", False, "push_to_talk", None, None)
+
+    async def _voice_turn(
+        self, audio: np.ndarray, ended: float | None = None, *, pushed: bool = False
+    ) -> None:
         stt = self.runtime.stt
         if stt is None:  # the built-in engine is still starting, or was turned off
             await self.emit_error(
@@ -594,7 +612,7 @@ class Session:
         await self.set_state(State.TRANSCRIBING, deadline_s=self.realtime.transcribe_timeout_s)
         started = time.perf_counter()
         prompt = self.runtime.config.stt.prompt
-        attributing = self._attribute(audio, ended)
+        attributing = None if pushed else self._attribute(audio, ended)
         try:
             transcript = await stt.transcribe(audio, **({"prompt": prompt} if prompt else {}))
         except CompanionError as exc:
@@ -610,13 +628,16 @@ class Session:
         echo = bool(
             transcript.text
             and not invented
+            and not pushed  # the phone is held to the mouth, not near the speaker
             and self.realtime.echo.guard
             and self.echo_guard.is_echo(transcript.text)
         )
         outcome = (
             "made_up" if invented else "echo" if echo else "turn" if transcript.text else "empty"
         )
-        recording_id = await self._keep_recording(audio, transcript.text, outcome, stt_s)
+        recording_id = await self._keep_recording(
+            audio, transcript.text, outcome, stt_s, pushed=pushed
+        )
         log.info(
             "transcribed",
             extra=kv(
@@ -643,8 +664,11 @@ class Session:
             self.metrics.count("echo_dropped")
             await self.rest("echo")
             return
-        speaker = await self._speaker(attributing)
-        route = await self._route(speaker, transcript.text)
+        if pushed:  # said to the companion by the user: no guessing who, or to whom
+            speaker, route = self._pusher(), None
+        else:
+            speaker = await self._speaker(attributing)
+            route = await self._route(speaker, transcript.text)
         heard: dict[str, Any] = {"text": transcript.text, "final": True}
         extra: dict[str, Any] = {}
         if speaker is not None:
@@ -656,7 +680,7 @@ class Session:
             self.session_id,
             "user",
             transcript.text,
-            device_id=self._mic.device.device_id if self._mic else None,
+            device_id="phone" if pushed else self._mic.device.device_id if self._mic else None,
             recording_id=recording_id,
             **extra,
         )
@@ -691,6 +715,8 @@ class Session:
             return None
         persona = self.runtime.persona
         names = cfg.wake_names or [n for n in (persona.display_name, persona.name) if n]
+        if not cfg.use_wake_names:
+            names = []
         last = self.attention.state.last_agent_speech_at
         since = (self.attention.clock() - last).total_seconds() if last else None
         facing = False
@@ -749,7 +775,7 @@ class Session:
         await self.rest("not for the companion")
 
     async def _keep_recording(
-        self, audio: np.ndarray, text: str, outcome: str, stt_s: float
+        self, audio: np.ndarray, text: str, outcome: str, stt_s: float, *, pushed: bool = False
     ) -> str | None:
         """Save the utterance for the dashboard (``stt.keep_audio``); its id, or None."""
         if not self.runtime.config.stt.keep_audio:
@@ -759,7 +785,7 @@ class Session:
                 self.runtime.recordings.save,
                 audio,
                 session_id=self.session_id,
-                device_id=self._mic.device.device_id if self._mic else None,
+                device_id="phone" if pushed else self._mic.device.device_id if self._mic else None,
                 text=text,
                 outcome=outcome,
                 stt_s=stt_s,
