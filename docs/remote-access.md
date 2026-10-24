@@ -42,6 +42,8 @@ Browsers give a page its microphone only over https, so open the page at the ser
 2. On the server's computer: `tailscale serve --bg http://127.0.0.1:8765` (once; it stays). Tailscale gets a certificate for the computer's tailnet name and forwards https to the server.
 3. On the phone: `https://<computer>.<tailnet>.ts.net/view/` (`tailscale status` shows the name; the dashboard works there too, with its admin token).
 
+**Answer on** chooses where the companion answers. *The board, or this phone when none is on* (the default) answers through a connected board's speaker; with no board on, the phone itself plays the answer. *This phone* always answers on the phone. The phone plays where it plays any sound: pair Bluetooth earphones or a speaker with it in its own settings and the answer plays there. Browsers that let a page pick the output (desktop Chrome and Edge) also show **Play on** to choose one. The microphone is given back after each sentence, so the phone plays the answer as media, not as a call through its earpiece.
+
 The server takes what `tailscale serve` forwards as coming from the tailnet only when Tailscale says who sent it (its `Tailscale-User-Login` header); the dashboard still asks for its token.
 
 ## When the server also runs a VPN
