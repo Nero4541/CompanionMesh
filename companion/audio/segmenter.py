@@ -47,7 +47,8 @@ class UtteranceSegmenter:
     strict: tuple[float, int] | None = None
 
     def __post_init__(self) -> None:
-        self._preroll = deque(maxlen=max(1, self.config.speech_pad_ms // _FRAME_MS))
+        longest = max(self.config.speech_pad_ms, self.config.lookback_ms)
+        self._preroll = deque(maxlen=max(1, longest // _FRAME_MS))
 
     @property
     def in_speech(self) -> bool:
@@ -92,7 +93,12 @@ class UtteranceSegmenter:
                 if self._candidate_frames * _FRAME_MS >= min_speech_ms:
                     self._triggered = True
                     self._silence_frames = 0
-                    self._speech = [*self._preroll, *self._speech]
+                    # Lookback: what came just before goes with it (a start detected late).
+                    # Only the pad while strict: that may be the companion's own voice.
+                    lookback = cfg.speech_pad_ms if self.strict else cfg.lookback_ms
+                    keep = max(cfg.speech_pad_ms, lookback) // _FRAME_MS
+                    before = list(self._preroll)[-keep:] if keep else []
+                    self._speech = [*before, *self._speech]
                     self._preroll.clear()
                     return SpeechStart()
             else:
