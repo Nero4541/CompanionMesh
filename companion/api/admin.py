@@ -518,14 +518,26 @@ async def phone(request: Request) -> dict[str, Any]:
     server = _runtime(request).config.server
     token = server.admin_token()
     addresses = await asyncio.to_thread(edge_install.server_addresses) if token else []
+    # tailscale serve's https name first: phones give a page their microphone only over https.
+    secure = await asyncio.to_thread(edge_install.serve_urls, server.port) if token else []
     return {
         "token_set": token is not None,
         "token_env": server.admin_token_env,
         "editable": _source(request) is not None,
         "listening": server.host,
         "urls": [
-            {"url": f"http://{a}:{server.port}/admin/?token={token}", "tailscale": on_tailnet(a)}
-            for a in addresses
+            *(
+                {"url": f"{base}/admin/?token={token}", "tailscale": True, "https": True}
+                for base in secure
+            ),
+            *(
+                {
+                    "url": f"http://{a}:{server.port}/admin/?token={token}",
+                    "tailscale": on_tailnet(a),
+                    "https": False,
+                }
+                for a in addresses
+            ),
         ],
     }
 
