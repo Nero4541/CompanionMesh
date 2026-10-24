@@ -132,6 +132,7 @@ def build_builtin(name: str, config: CompanionConfig, url: str) -> Any:
             )
         )
         stt.name = "builtin_stt"
+        stt.sends_languages = True
         return stt
     from companion.providers.tts.openai_compatible import OpenAICompatibleTTS
 
