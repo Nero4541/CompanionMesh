@@ -869,6 +869,10 @@ class RoutingConfig(_Section):
 
     enabled: bool = False
     """Turn the gate on. Off: every sentence heard is answered, as before."""
+    use_wake_names: bool = True
+    """Calling the companion by name means it is spoken to. Off: names count for nothing, the
+    other signs decide.
+    """
     wake_names: list[str] = Field(default_factory=list)
     """Names that mean the companion is spoken to, e.g. ["Hana", "ハナ"]. Empty: the persona's
     display name and file name.
