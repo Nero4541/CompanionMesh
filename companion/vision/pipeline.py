@@ -236,6 +236,11 @@ class VisionChannel:
             and self._last_hash is not None
             and hamming(frame_hash, self._last_hash) <= self.config.dedup_threshold
         ):
+            # Not for the agent, but perception looks at every picture: a board slows
+            # down after "duplicate" (to camera.max_interval_s, 60 s), too seldom to
+            # tell that someone sitting still is still there.
+            if self.runtime.perception.ready:
+                return await self._status(frame_id, "accepted")
             return await self._status(frame_id, "duplicate")
         jpeg = await asyncio.to_thread(
             to_jpeg, decoded.image, max_side=self.runtime.config.vlm.max_image_side
