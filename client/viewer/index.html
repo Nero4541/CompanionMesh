@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
   <title>Companion · viewer</title>
   <!-- ?v=2: phones that kept these from before the server said no-cache fetch them again. -->
-  <link rel="stylesheet" href="viewer.css?v=3">
+  <link rel="stylesheet" href="viewer.css?v=4">
 </head>
 <body>
   <header>
@@ -23,6 +23,13 @@
   <p id="notice" class="notice" hidden></p>
 
   <section id="conversation">
+    <div id="talk" class="talk" hidden>
+      <button id="talk-button" type="button">Hold to talk</button>
+      <span id="talk-state" class="muted"></span>
+    </div>
+    <p id="talk-hint" class="muted" hidden>To talk from this phone, open this page with https at this
+      server's tailnet name (https://&lt;computer&gt;.&lt;tailnet&gt;.ts.net/view/, from tailscale serve):
+      browsers give a page its microphone only that way.</p>
     <ol id="lines"></ol>
     <p id="no-lines" class="muted">Nothing said since the server started (or since this was turned on).</p>
   </section>
@@ -70,5 +77,6 @@
 
   <script src="viewer.js?v=2"></script>
   <script src="people.js?v=4"></script>
+  <script src="talk.js?v=1"></script>
 </body>
 </html>
