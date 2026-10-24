@@ -6,7 +6,7 @@
   <meta name="theme-color" content="#161618" media="(prefers-color-scheme: dark)">
   <title>Companion · viewer</title>
   <!-- ?v=2: phones that kept these from before the server said no-cache fetch them again. -->
-  <link rel="stylesheet" href="viewer.css?v=4">
+  <link rel="stylesheet" href="viewer.css?v=5">
 </head>
 <body>
   <header>
@@ -26,6 +26,17 @@
     <div id="talk" class="talk" hidden>
       <button id="talk-button" type="button">Hold to talk</button>
       <span id="talk-state" class="muted"></span>
+      <label class="talk-row">Answer on
+        <select id="talk-out">
+          <option value="auto">the board, or this phone when none is on</option>
+          <option value="phone">this phone</option>
+        </select>
+      </label>
+      <label id="talk-sink-row" class="talk-row" hidden>Play on
+        <select id="talk-sink"><option value="">the phone's own choice</option></select>
+      </label>
+      <span id="talk-sink-hint" class="muted">On this phone, answers play where it plays sound: pair
+        Bluetooth earphones or a speaker in its settings and they play there.</span>
     </div>
     <p id="talk-hint" class="muted" hidden>To talk from this phone, open this page with https at this
       server's tailnet name (https://&lt;computer&gt;.&lt;tailnet&gt;.ts.net/view/, from tailscale serve):
@@ -77,6 +88,6 @@
 
   <script src="viewer.js?v=2"></script>
   <script src="people.js?v=4"></script>
-  <script src="talk.js?v=1"></script>
+  <script src="talk.js?v=2"></script>
 </body>
 </html>
