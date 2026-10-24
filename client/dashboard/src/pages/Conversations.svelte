@@ -87,7 +87,12 @@
     return [...groups.entries()];
   });
 
-  const OUTCOME = { turn: "answered", echo: "dropped: its own voice", empty: "nothing recognized" };
+  const OUTCOME = {
+    turn: "answered",
+    echo: "dropped: its own voice",
+    empty: "nothing recognized",
+    made_up: "dropped: made up from noise",
+  };
   const today = new Date().toDateString();
   function when(t) {
     const d = new Date(t * 1000);
