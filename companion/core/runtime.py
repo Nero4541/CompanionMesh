@@ -536,8 +536,11 @@ class CompanionRuntime:
                     closed += 1
         return closed
 
-    def talk_session(self) -> Session | None:
-        """Where push to talk goes: the newest conversation with a speaker, else the newest."""
+    def talk_session(self, session_id: str | None = None) -> Session | None:
+        """Where push to talk goes: the conversation asked for (the phone's own, answered on the
+        phone), else the newest one with a speaker, else the newest."""
+        if session_id:
+            return self.sessions.get(session_id)
         sessions = list(self.sessions.values())
         with_speaker = [s for s in sessions if any("speaker" in d.roles for d in s.devices)]
         pool = with_speaker or sessions
