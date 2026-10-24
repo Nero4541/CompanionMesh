@@ -39,7 +39,8 @@ class State(StrEnum):
 _REST = frozenset({State.IDLE, State.LISTENING})
 
 TRANSITIONS: dict[State, frozenset[State]] = {
-    State.IDLE: frozenset({State.LISTENING, State.THINKING, State.RECOVERING}),
+    # Idle -> transcribing: a sentence that arrives whole, such as push to talk on a phone.
+    State.IDLE: frozenset({State.LISTENING, State.TRANSCRIBING, State.THINKING, State.RECOVERING}),
     State.LISTENING: frozenset(
         {State.IDLE, State.TRANSCRIBING, State.THINKING, State.INTERRUPTING, State.RECOVERING}
     ),
