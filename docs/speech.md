@@ -49,7 +49,7 @@ stt:
   api_key_env: STT_API_KEY                        # optional
 ```
 
-`stt.provider: none` turns speech input off. Voice activity detection always runs in the companion (Silero VAD, whose model comes with the server); only finished utterances are sent, as 16 kHz WAV. An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence.
+`stt.provider: none` turns speech input off. Voice activity detection always runs in the companion (Silero VAD, whose model comes with the server); only finished utterances are sent, as 16 kHz WAV. An utterance ends after `vad.min_silence_ms` (default 1000 ms) of silence; lower it for snappier turns, raise it if you are cut off mid-sentence. The second before speech was detected (`vad.lookback_ms`, 1000) goes with it, so a soft start, which a noisy room makes detected late, is not lost; while the companion's own voice may reach the microphone, only `vad.speech_pad_ms` (200) does.
 
 Up to 1.4.0, `stt.provider: faster_whisper` ran Whisper inside the server process (with `--extra stt --extra cuda`). That is gone: such a setting now turns on `builtin.stt` with the same model, `device`, `compute_type` and `beam_size`, and the extras install nothing.
 
@@ -62,6 +62,18 @@ stt:
 ```
 
 It goes with every utterance (Whisper's initial prompt; `prompt` in the OpenAI API, which speaches, OpenAI and the built-in engine take) and applies at once. There is none by default; add one only if you need it. Keep it to one short sentence: a long or repetitive prompt can make Whisper repeat itself. It changes how words are written, not which words are heard; for better Cantonese recognition, use a model fine-tuned for it.
+
+**Several languages.** With `stt.language` empty, Whisper works out each sentence's language. On a short or unclear sentence it often guesses one nobody speaks here, and makes the words up in it (Korean, Vietnamese, English for Cantonese mumbling). `stt.languages` lists the ones spoken here, and each sentence is taken as the likeliest of them:
+
+```yaml
+stt:
+  language: null
+  languages: [ja, yue, zh]   # Japanese to the companion, Cantonese and Mandarin around it
+```
+
+The built-in engine weighs only these; another server is asked again in the first of them when it reports a language not in the list.
+
+**Made-up sentences.** For noise or silence Whisper sometimes writes what video subtitles end with: "ご視聴ありがとうございました", "Thanks for watching", "請不吝點讚 訂閱 轉發…". These are dropped and never reach the agent; the Conversations page shows them as "dropped: made up from noise".
 
 ## Voice (speaking)
 
