@@ -26,7 +26,8 @@ class AgentContext:
 
 @dataclass(slots=True)
 class AgentEvent:
-    kind: Literal["text", "tool"]
+    # context_full: only within the gateway backends (the agent's session is full)
+    kind: Literal["text", "tool", "context_full"]
     text: str = ""
     tool: str | None = None
     status: str | None = None
