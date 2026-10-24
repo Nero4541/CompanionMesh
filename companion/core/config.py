@@ -324,6 +324,11 @@ class STTConfig(_Section):
     """Language you speak, as a code: ja Japanese, en English, zh Chinese, yue Cantonese. Empty =
     detect it each time (slower and less reliable).
     """
+    languages: list[str] = Field(default_factory=list)
+    """With language empty: the languages spoken here, e.g. [ja, yue, en]. A sentence is taken
+    as the likeliest of them, so a short or unclear one is not read as some other language (and
+    made up in it). Empty = any language.
+    """
     preload: bool = True
     """Ask the speech recognition server for one tiny transcript when the server starts, so it
     loads its model and the first sentence is not slow. Off: it loads on first use.
@@ -388,6 +393,11 @@ class VADConfig(_Section):
     speech_pad_ms: int = Field(default=200, ge=0)
     """Milliseconds of audio kept before and after the speech, so the first and last sounds are not
     clipped.
+    """
+    lookback_ms: int = Field(default=1000, ge=0, le=5000)
+    """Milliseconds of audio from just before speech was detected that go with the sentence, so a
+    soft start (detected late, in a noisy room) is not lost. While the companion's own voice may
+    reach the microphone, only speech_pad_ms is used.
     """
     max_utterance_s: float = Field(default=30.0, gt=0)
     """Longest single sentence, in seconds; longer speech is cut and sent in parts."""
