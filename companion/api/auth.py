@@ -118,6 +118,20 @@ def from_tailnet(conn: Request | WebSocket) -> bool:
     return on_tailnet(peer) and bool(local) and on_tailnet(local[0])
 
 
+def via_tailscale_serve(conn: Request | WebSocket) -> bool:
+    """Forwarded by ``tailscale serve`` on this machine: https at the machine's tailnet name,
+    for someone signed in to the tailnet (Tailscale adds who it is). Pages that need https on a
+    phone (its microphone) come this way.
+    """
+    peer = conn.client.host if conn.client else ""
+    host = _hostname(conn.headers.get("host", ""))
+    return (
+        peer in LOOPBACK_HOSTS
+        and host.endswith(".ts.net")
+        and bool(conn.headers.get("tailscale-user-login"))
+    )
+
+
 def admin_refusal(conn: Request | WebSocket) -> tuple[int, str] | None:
     """Why ``conn`` may not use the admin API, as (HTTP status, reason); None if it may.
 
