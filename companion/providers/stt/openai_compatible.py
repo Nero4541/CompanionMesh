@@ -32,6 +32,9 @@ def to_wav(audio: np.ndarray) -> bytes:
 
 class OpenAICompatibleSTT:
     name = "openai_compatible_stt"
+    # The built-in engine takes stt.languages itself (a "languages" field, not OpenAI's);
+    # other servers are asked again when they report a language not among them.
+    sends_languages = False
 
     def __init__(
         self, config: STTConfig, *, transport: httpx.AsyncBaseTransport | None = None
@@ -64,6 +67,9 @@ class OpenAICompatibleSTT:
         lang = language or cfg.language
         if lang:
             data["language"] = lang
+        allowed = [] if lang else cfg.languages
+        if allowed and self.sends_languages:
+            data["languages"] = ",".join(allowed)
         if prompt:
             data["prompt"] = prompt
         files = {"file": ("speech.wav", to_wav(audio), "audio/wav")}
@@ -78,6 +84,15 @@ class OpenAICompatibleSTT:
             raise ProviderError(self.name, "transcription response is not JSON") from exc
         if not isinstance(body, dict) or not isinstance(body.get("text"), str):
             raise ProviderError(self.name, "transcription response has no text")
+        detected = body.get("language")
+        if (
+            allowed
+            and not self.sends_languages
+            and isinstance(detected, str)
+            and len(detected) <= 3  # a code like ours, not a name such as "japanese"
+            and detected not in allowed
+        ):
+            return await self.transcribe(audio, language=allowed[0], prompt=prompt)
         duration = body.get("duration")
         return Transcript(
             text=body["text"].strip(),
