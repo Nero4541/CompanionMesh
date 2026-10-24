@@ -86,6 +86,7 @@ def create_app(
     app.include_router(maintain.router)
     app.include_router(updates.router)
     app.include_router(viewer.router)
+    app.include_router(viewer.sockets)
 
     if config.server.dashboard and DASHBOARD_DIR.is_dir():
         app.mount("/admin", Revalidated(directory=DASHBOARD_DIR, html=True), name="dashboard")
