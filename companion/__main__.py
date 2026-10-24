@@ -250,6 +250,9 @@ def _run_server(config: CompanionConfig, source: ConfigSource | None) -> bool:
             host=host,
             port=port,
             log_config=None,
+            # The real peer, not X-Forwarded-For: who may use what is decided from it (and
+            # from what tailscale serve forwards, see api/auth.py).
+            proxy_headers=False,
             timeout_graceful_shutdown=5,
             ws_max_size=config.vision.max_frame_bytes + 64 * 1024,
         )
@@ -279,6 +282,7 @@ def _run_server(config: CompanionConfig, source: ConfigSource | None) -> bool:
                 uvicorn.Config(
                     create_public_app(app.state.runtime),
                     log_config=None,
+                    proxy_headers=False,
                     timeout_graceful_shutdown=5,
                     ws_max_size=config.vision.max_frame_bytes + 64 * 1024,
                     ssl_certfile=str(cert_file),
