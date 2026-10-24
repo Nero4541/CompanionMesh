@@ -93,12 +93,12 @@
     {:else}
       <p class="muted">
         Scan it with the phone's camera: the dashboard opens there and stays logged in. A Tailscale address works
-        away from home too.
+        away from home too; the https one also lets the phone page talk (push to talk).
       </p>
       {#if info.urls.length > 1}
         <select bind:value={picked} aria-label="Address for the phone">
           {#each info.urls as u, i (u.url)}
-            <option value={i}>{host(u.url)} {u.tailscale ? "(Tailscale: home and away)" : "(this network)"}</option>
+            <option value={i}>{host(u.url)} {u.https ? "(Tailscale https: home and away, push to talk)" : u.tailscale ? "(Tailscale: home and away)" : "(this network)"}</option>
           {/each}
         </select>
       {/if}
