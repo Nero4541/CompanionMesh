@@ -37,14 +37,17 @@ import io
 import ipaddress
 import json
 import logging
+import os
 import re
 import secrets
 import shlex
+import shutil
 import socket
 import subprocess
 import sys
 import tarfile
 import time
+import urllib.parse
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -517,6 +520,36 @@ def tailscale_addresses() -> list[str]:
     """This machine's Tailscale (100.64.0.0/10) addresses: reachable by a board on
     the same tailnet from anywhere."""
     return [a for a in local_ipv4_addresses() if ipaddress.IPv4Address(a) in _OVERLAY]
+
+
+def _tailscale_cli() -> str | None:
+    found = shutil.which("tailscale")
+    if found:
+        return found
+    program_files = Path(os.environ.get("ProgramFiles", r"C:\Program Files"))
+    windows = program_files / "Tailscale" / "tailscale.exe"
+    return str(windows) if windows.is_file() else None
+
+
+def serve_urls(port: int) -> list[str]:
+    """https addresses at which ``tailscale serve`` forwards to this server on ``port``:
+    secure pages on phones (their microphone), with a certificate from Tailscale."""
+    cli = _tailscale_cli()
+    if cli is None:
+        return []
+    try:
+        status = json.loads(_output([cli, "serve", "status", "--json"]) or "{}")
+    except ValueError:
+        return []
+    urls = []
+    for host_port, web in (status.get("Web") or {}).items():
+        host, _, listen = host_port.rpartition(":")
+        for path, handler in (web.get("Handlers") or {}).items():
+            target = urllib.parse.urlsplit(str((handler or {}).get("Proxy") or ""))
+            if target.hostname in ("127.0.0.1", "localhost", "::1") and target.port == port:
+                at = "" if listen == "443" else f":{listen}"
+                urls.append(f"https://{host}{at}{path.rstrip('/')}")
+    return urls
 
 
 def server_addresses() -> list[str]:
