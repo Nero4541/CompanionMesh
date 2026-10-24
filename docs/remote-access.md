@@ -32,6 +32,18 @@ With Tailscale on the server and on your phone (same account), turn on `server.v
 
 Only devices on the tailnet get in, and only at the server's Tailscale address: everyone else, on your home network too, is refused. Tailscale is what checks who they are, so anyone you share the server with in your tailnet sees it as well. The server must listen beyond this machine (`server.host: 0.0.0.0`, as for boards). The words are kept on the server while the viewer is on, even with `server.dashboard_conversation` off (the dashboard still does not show them then).
 
+### Talking from the phone (push to talk)
+
+The phone page can also be a microphone: hold **Hold to talk** in the Conversation tab, speak, let go. The sentence goes to the companion as said by you, the user (no guessing who said it or to whom), and it answers through the device it talks with, such as a board's speaker. The phone is held to your mouth, so it hears you better than a board across the room. It needs the dashboard's admin token on the phone (scan the QR code under **Phone** on the dashboard's Overview page, or sign in under People).
+
+Browsers give a page its microphone only over https, so open the page at the server's tailnet name instead of its 100.x address:
+
+1. In the Tailscale admin console, under **DNS**, turn on MagicDNS and **HTTPS Certificates**.
+2. On the server's computer: `tailscale serve --bg http://127.0.0.1:8765` (once; it stays). Tailscale gets a certificate for the computer's tailnet name and forwards https to the server.
+3. On the phone: `https://<computer>.<tailnet>.ts.net/view/` (`tailscale status` shows the name; the dashboard works there too, with its admin token).
+
+The server takes what `tailscale serve` forwards as coming from the tailnet only when Tailscale says who sent it (its `Tailscale-User-Login` header); the dashboard still asks for its token.
+
 ## When the server also runs a VPN
 
 If the server's computer uses another VPN (Surfshark, NordVPN, ProtonVPN and the like), for privacy or to change its location often, Tailscale and that VPN have to share the machine. Without the steps below they get in each other's way: the VPN may not connect at all ("an issue with your connection"), or Tailscale reaches nothing while the VPN is on. On the server's computer:
