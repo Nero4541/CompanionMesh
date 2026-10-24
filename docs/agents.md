@@ -34,6 +34,8 @@ OpenClaw likewise keeps each session's transcript and its agent memory on the ga
 2. Put the gateway token (`gateway.auth.token`) in the companion's `.env` as `OPENCLAW_GATEWAY_TOKEN`.
 3. Choose the agent with `agent.openclaw.agent_id` (default `main`), then start the gateway. It listens on `http://127.0.0.1:18789`.
 
+When a session no longer fits the agent's model (OpenClaw answers "Context overflow: prompt too large for the model"), the companion goes on in a new agent session for that conversation, `companion-<session>-1` and so on, and asks again; the old one stays on the gateway.
+
 ## No agent framework (`direct`)
 
 The companion talks to an OpenAI-compatible LLM itself, such as LM Studio, Ollama, llama.cpp, vLLM or a cloud API. Configure `llm.base_url`, `llm.model` and, if needed, `LLM_API_KEY`. This backend has no tools. Its memory is the stored conversation history plus a small full-text recall over earlier conversations.
