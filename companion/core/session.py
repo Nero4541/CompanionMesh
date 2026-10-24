@@ -48,6 +48,7 @@ from companion.core.text import SentenceSplitter
 from companion.protocol import Envelope, make_event
 from companion.protocol import events as ev
 from companion.providers.llm.base import ChatMessage
+from companion.providers.stt.base import made_up
 from companion.vision.pipeline import TurnImage, VisionChannel
 
 if TYPE_CHECKING:
@@ -605,17 +606,17 @@ class Session:
         if self._timings is not None:
             self._timings.transcript = TurnTimings.now()
         stt_s = time.perf_counter() - started
+        invented = bool(transcript.text) and made_up(transcript.text)
         echo = bool(
             transcript.text
+            and not invented
             and self.realtime.echo.guard
             and self.echo_guard.is_echo(transcript.text)
         )
-        recording_id = await self._keep_recording(
-            audio,
-            transcript.text,
-            "echo" if echo else "turn" if transcript.text else "empty",
-            stt_s,
+        outcome = (
+            "made_up" if invented else "echo" if echo else "turn" if transcript.text else "empty"
         )
+        recording_id = await self._keep_recording(audio, transcript.text, outcome, stt_s)
         log.info(
             "transcribed",
             extra=kv(
@@ -625,10 +626,14 @@ class Session:
                 text=transcript.text,
             ),
         )
-        if (not transcript.text or echo) and attributing is not None:
+        if (not transcript.text or echo or invented) and attributing is not None:
             attributing.cancel()
         if not transcript.text:
             await self.rest("nothing recognized")
+            return
+        if invented:  # Whisper's invention for noise, such as "thanks for watching"
+            self.metrics.count("made_up_dropped")
+            await self.rest("made up")
             return
         if echo:
             log.info(
