@@ -7,6 +7,8 @@ be a different machine than the companion server.
 
 from __future__ import annotations
 
+import contextlib
+import logging
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -15,6 +17,7 @@ import httpx
 from companion.agent.base import AgentContext, AgentEvent, SessionRef
 from companion.core.config import GatewayAgentConfig
 from companion.core.errors import ProviderError
+from companion.core.logging import kv
 from companion.providers.http import (
     SSEEvent,
     describe_http_error,
@@ -24,6 +27,13 @@ from companion.providers.http import (
     raise_for_status,
 )
 from companion.providers.llm.base import ChatMessage
+
+log = logging.getLogger(__name__)
+
+# How an agent answers when its session no longer fits its model (OpenClaw: "Context overflow:
+# prompt too large for the model. Try /reset ..."). The conversation then goes on in a new
+# agent session; the old one stays with the agent.
+CONTEXT_FULL = ("Context overflow:",)
 
 
 class ChatCompletionsAgent:
@@ -42,6 +52,8 @@ class ChatCompletionsAgent:
             timeout=config.timeout,
             transport=transport,
         )
+        # Companion session -> how many times its agent session was started anew.
+        self._renewed: dict[str, int] = {}
 
     # --- hooks ----------------------------------------------------------
 
@@ -51,7 +63,9 @@ class ChatCompletionsAgent:
         return True
 
     def agent_session_id(self, session: SessionRef) -> str:
-        return f"{self._config.session_prefix}{session.session_id}"
+        renewed = self._renewed.get(session.session_id, 0)
+        suffix = f"-{renewed}" if renewed else ""
+        return f"{self._config.session_prefix}{session.session_id}{suffix}"
 
     def request_headers(self, session: SessionRef) -> dict[str, str]:
         return {}
@@ -75,6 +89,30 @@ class ChatCompletionsAgent:
     async def respond(
         self, session: SessionRef, messages: list[ChatMessage], context: AgentContext
     ) -> AsyncIterator[AgentEvent]:
+        full = False
+        async with contextlib.aclosing(self._respond(session, messages, context)) as events:
+            async for event in events:
+                if event.kind == "context_full":
+                    full = True
+                    break
+                yield event
+        if full:  # once: a new session holds nothing but this turn
+            self._renewed[session.session_id] = self._renewed.get(session.session_id, 0) + 1
+            log.warning(
+                "agent session full, going on in a new one",
+                extra=kv(agent=self.name, session=self.agent_session_id(session)),
+            )
+            async for event in self._respond(session, messages, context, retry=True):
+                yield event
+
+    async def _respond(
+        self,
+        session: SessionRef,
+        messages: list[ChatMessage],
+        context: AgentContext,
+        *,
+        retry: bool = False,
+    ) -> AsyncIterator[AgentEvent]:
         if not messages or messages[-1]["role"] != "user":
             raise ValueError("messages must end with a user message")
         body = {
@@ -84,6 +122,8 @@ class ChatCompletionsAgent:
             "messages": self._messages(messages, context),
         }
         produced = False
+        # The first words are held back until they cannot be the agent saying it is full.
+        held = "" if not retry else None
         try:
             async with self._client.stream(
                 "POST", "chat/completions", json=body, headers=self.request_headers(session)
@@ -104,11 +144,24 @@ class ChatCompletionsAgent:
                         raise ProviderError(self.name, str(chunk["error"]))
                     for choice in chunk.get("choices") or []:
                         text = (choice.get("delta") or {}).get("content")
-                        if text:
-                            produced = True
+                        if not text:
+                            continue
+                        produced = True
+                        if held is None:
                             yield AgentEvent(kind="text", text=text)
+                            continue
+                        held += text
+                        if any(p.startswith(held) or held.startswith(p) for p in CONTEXT_FULL):
+                            if any(held.startswith(p) for p in CONTEXT_FULL):
+                                yield AgentEvent(kind="context_full", text=held)
+                                return
+                            continue  # still maybe the start of it
+                        yield AgentEvent(kind="text", text=held)
+                        held = None
         except httpx.HTTPError as exc:
             raise describe_http_error(self.name, exc, self._config.base_url) from exc
+        if held:  # a short answer that looked like the start of it
+            yield AgentEvent(kind="text", text=held)
         if not produced:
             raise ProviderError(
                 self.name,
