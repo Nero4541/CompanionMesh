@@ -103,6 +103,8 @@ async def state(request: Request) -> dict[str, Any]:
             {"session_id": s.session_id, "state": s.state.value} for s in runtime.sessions.values()
         ],
         "devices": devices,
+        # How the phone page talks and listens (phone): the page follows these.
+        "phone": runtime.config.phone.model_dump(),
     }
 
 
@@ -148,7 +150,8 @@ TALK_MAX_BYTES = 31 * 32_000
 @router.post("/talk")
 async def talk(request: Request) -> dict[str, Any]:
     """Push to talk on a phone: one sentence (a 16-bit WAV), said by the user to the companion,
-    who answers through the device it talks with. Needs the admin token: it makes it speak.
+    in the conversation ?session= names (the phone's), else the one with a speaker. Where the
+    answer plays follows phone.answer_on. Needs the admin token: it makes it speak.
     """
     refusal = admin_refusal(request)
     if refusal is not None:
@@ -168,14 +171,16 @@ async def talk(request: Request) -> dict[str, Any]:
 
 @sockets.websocket("/realtime")
 async def phone_realtime(ws: WebSocket) -> None:
-    """The phone page as a device of the companion (its speaker, for push to talk answered on
-    the phone), with the admin token, on the tailnet only. Its own conversation."""
+    """The phone page as a device of the companion ("phone"): its speaker, and its microphone
+    with phone.listen always. It joins the board's conversation (phone.share_session) or has
+    its own; the page picks which. With the admin token, on the tailnet only."""
     from companion.api.auth import Identity
     from companion.api.realtime import serve
+    from companion.core.session import PHONE_DEVICE
 
     runtime = _runtime(ws)  # type: ignore[arg-type]
     allowed = from_tailnet(ws) or via_tailscale_serve(ws) or from_this_machine(ws)
     if not runtime.config.server.viewer.enabled or not allowed or admin_refusal(ws) is not None:
         await ws.close(code=1008, reason="the viewer, on the tailnet, with the admin token")
         return
-    await serve(ws, Identity())
+    await serve(ws, Identity(PHONE_DEVICE))
