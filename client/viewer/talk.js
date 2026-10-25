@@ -111,7 +111,11 @@
     const wav = toWav(merge(chunks), context.sampleRate);
     say("Sending…");
     try {
-      await phone.connect().catch(() => null); // to hear the answer here, when it plays here
+      // To hear the answer here, when it plays here.
+      const missing = await phone.connect().then(
+        () => null,
+        (err) => err.message,
+      );
       const query = phone.session ? `?session=${encodeURIComponent(phone.session)}` : "";
       const res = await fetch(`/v1/view/talk${query}`, {
         method: "POST",
@@ -123,7 +127,11 @@
         body = await res.json();
       } catch {}
       if (!res.ok) throw new Error(body.detail || `${res.status} ${res.statusText}`);
-      say(`Sent (${body.seconds} s); the companion answers.`);
+      say(
+        missing
+          ? `Sent (${body.seconds} s), but this phone is not connected (${missing}): the answer may play elsewhere.`
+          : `Sent (${body.seconds} s); the companion answers.`,
+      );
     } catch (err) {
       say(err.message);
     }
