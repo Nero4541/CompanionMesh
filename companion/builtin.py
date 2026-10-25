@@ -43,10 +43,11 @@ from companion.core.logging import kv
 log = logging.getLogger(__name__)
 
 PROJECTS = Path(__file__).resolve().parents[1] / "builtin"
-ENGINES = ("stt", "tts", "perception")
-SPEECH = ("stt", "tts")  # engines that stand in for stt.provider / tts.provider
+ENGINES = ("stt", "tts", "perception", "vlm")
+# Engines that stand in for a provider (stt.provider, tts.provider, vlm.provider).
+SPEECH = ("stt", "tts", "vlm")
 # Engines whose PyTorch has to be named for a CPU install (STT runs on CPU without extras).
-TORCH_ENGINES = ("tts", "perception")
+TORCH_ENGINES = ("tts", "perception", "vlm")
 LOG_LINES = 200
 STOP_WAIT_S = 5.0
 
@@ -138,6 +139,7 @@ ENGINE_SETTINGS = {
     "stt": ("builtin.stt", "model"),
     "tts": ("builtin.tts", "checkpoint"),
     "perception": ("perception", "face_model"),
+    "vlm": ("builtin.vlm", "model"),
 }
 
 
@@ -164,6 +166,25 @@ def worker_spec(name: str, config: CompanionConfig) -> WorkerSpec | None:
                 perception.voice_model,
                 "--device",
                 perception.device,
+            ),
+            libraries=libraries,
+        )
+    if name == "vlm":
+        vlm = config.builtin.vlm
+        if not vlm.enabled:
+            return None
+        return WorkerSpec(
+            args=(
+                "--model",
+                vlm.model,
+                "--device",
+                vlm.device,
+                "--precision",
+                vlm.precision,
+                "--fused",
+                "on" if vlm.fused else "off",
+                "--max-side",
+                str(max(1280, config.vlm.max_image_side)),
             ),
             libraries=libraries,
         )
