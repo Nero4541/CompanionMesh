@@ -183,4 +183,7 @@ async def phone_realtime(ws: WebSocket) -> None:
     if not runtime.config.server.viewer.enabled or not allowed or admin_refusal(ws) is not None:
         await ws.close(code=1008, reason="the viewer, on the tailnet, with the admin token")
         return
+    # One phone page at a time: an older one (another tab, a page left open on a computer)
+    # would play the phone's answers too.
+    await runtime.disconnect_device(PHONE_DEVICE)
     await serve(ws, Identity(PHONE_DEVICE))
