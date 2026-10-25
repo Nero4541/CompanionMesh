@@ -131,15 +131,25 @@ class VisionChannel:
             return self.config.enabled
         return self.config.enabled and self.runtime.vlm is not None
 
+    @property
+    def from_devices(self) -> bool:
+        """Devices may send pictures: vision is on and vision.from_devices allows them."""
+        return self.enabled and self.config.from_devices
+
     async def _emit_state(self) -> None:
+        # Devices hear "off" while their pictures are not wanted, and stop sending.
         await self.session.emit(
-            ev.VISION_STATE, {"enabled": self.enabled, "available": self.available}
+            ev.VISION_STATE,
+            {"enabled": self.from_devices, "available": self.available},
         )
 
     def reconfigure(self, config: CompanionConfig) -> None:
         """Follow live setting changes; the mode stays until a restart."""
+        before = self.from_devices
         self.config = config.vision
         self.scene.config = config.attention
+        if self.from_devices != before:
+            self.session._spawn(self._emit_state())
 
     async def enable(self) -> None:
         if not self.config.enabled:
@@ -183,7 +193,7 @@ class VisionChannel:
     ) -> FrameStatus:
         payload = header.payload
         frame_id = str(payload.get("frame_id") or header.id)
-        if not self.enabled:
+        if not self.from_devices:
             return await self._status(frame_id, "disabled")
         reason = str(payload.get("reason") or "periodic")
         device_id = header.device_id or sender_id
@@ -301,7 +311,7 @@ class VisionChannel:
 
     async def submit_stream_chunk(self, data: bytes, device_id: str | None) -> None:
         """A piece of a device's H.264 camera stream (stream mode): pictures for perception."""
-        if not self.enabled or not device_id:
+        if not self.from_devices or not device_id:
             return
         from companion.perception.stream import H264Frames, to_jpeg
 
