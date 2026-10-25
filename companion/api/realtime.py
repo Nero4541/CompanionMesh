@@ -84,7 +84,7 @@ async def _dispatch(session: Session, device: Device, event: Envelope) -> None:
         case ev.AUDIO_INPUT_STOP:
             await session.audio_stop(device)
         case ev.AUDIO_OUTPUT_PLAYED:
-            await session.playback_finished(payload.get("turn_id"))
+            await session.playback_finished(payload.get("turn_id"), device)
         case ev.AUDIO_OUTPUT_PROGRESS:
             await session.playback_progress(payload)
         case ev.AUDIO_OUTPUT_STOPPED:
@@ -211,7 +211,7 @@ async def serve(ws: WebSocket, identity: Identity) -> None:
                 "vision_mode": session.vision.mode,
                 "roles": sorted(device.roles),
                 "devices": [d.describe() for d in session.devices],
-                "vision_enabled": session.vision.enabled,
+                "vision_enabled": session.vision.from_devices,
                 "proactive": runtime.config.attention.proactive,
                 "quiet": session.attention.state.quiet_mode,
                 "barge_in": runtime.config.realtime.barge_in,
