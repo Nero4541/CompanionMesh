@@ -586,6 +586,10 @@ class VisionConfig(_Section):
 
     enabled: bool = True
     """Master switch for pictures from cameras and devices. Off, all pictures are refused."""
+    from_devices: bool = True
+    """Take pictures from connected devices (boards). Off, the server refuses them and tells each
+    device to stop sending; cameras under cameras still work. Applies at once.
+    """
     max_frame_bytes: int = Field(default=4 * 1024 * 1024, ge=1024)
     """Largest picture accepted, in bytes (4194304 = 4 MB)."""
     max_pixels: int = Field(default=16_000_000, ge=64 * 64)
@@ -1085,6 +1089,29 @@ class PerceptionConfig(_Section):
     """Longest answer to a glance, in tokens (the answer is a small JSON, usually 30 to 60)."""
 
 
+class PhoneConfig(_Section):
+    """The phone page (/view/) as a microphone and speaker of the companion: push to talk, or
+    listening all the time, with the answer on the phone or on a board. Needs the page over https
+    and the admin token on the phone (see docs/remote-access.md). Applies at once.
+    """
+
+    share_session: bool = True
+    """The phone joins the board's conversation: one history, and the companion knows what was
+    said into either. Off, the phone has a conversation of its own.
+    """
+    answer_on: Literal["where_said", "board", "phone", "both"] = "where_said"
+    """Where answers play while the phone and a board share a conversation. where_said: on the one
+    that heard it (what the board heard on the board, what was said into the phone on the phone;
+    the companion speaking by itself on the board). board or phone: always there. both: on both.
+    With only one of them connected, answers play on that one.
+    """
+    listen: Literal["push_to_talk", "always"] = "push_to_talk"
+    """push_to_talk: the phone hears you only while its button is held. always: it listens all the
+    time like a board, while the page is open and in view. Its microphone then stays on, so the
+    phone plays as in a call (Bluetooth earphones too: call sound quality).
+    """
+
+
 class MetricsConfig(_Section):
     """Timing measurements for the Latency page: numbers only, never audio, pictures or text."""
 
@@ -1111,6 +1138,7 @@ class CompanionConfig(_Section):
     attention: AttentionConfig = AttentionConfig()
     realtime: RealtimeConfig = RealtimeConfig()
     metrics: MetricsConfig = MetricsConfig()
+    phone: PhoneConfig = PhoneConfig()
     people: PeopleConfig = PeopleConfig()
     routing: RoutingConfig = RoutingConfig()
     timeline: TimelineConfig = TimelineConfig()
@@ -1202,6 +1230,7 @@ _LIVE_SETTINGS = {
     "timeline": True,  # rules and sampling follow at once
     "mcp": True,  # checked on every request
     "perception": True,  # the engine starts, stops and restarts while running
+    "phone": True,  # read for every connection and turn
 }
 
 
