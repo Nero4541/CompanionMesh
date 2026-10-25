@@ -431,7 +431,7 @@ class PerceptionService:
                     continue
                 key = id(device)
                 seen.add(key)
-                want = self.ready and fps > 0 and session.vision.enabled
+                want = self.ready and fps > 0 and session.vision.from_devices
                 last = self._leases.get(key)
                 if want and (last is None or now - last >= STREAM_RENEW_S):
                     formats = offer.get("formats") or ["mjpeg"]
