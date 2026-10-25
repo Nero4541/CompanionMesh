@@ -18,7 +18,7 @@ npm run dev      # http://localhost:5173/admin/, API proxied to a server on :876
 npm run build    # writes dist/
 ```
 
-Release packages are built from a tag: `uv run python scripts/package_release.py v1.4.0` writes the Windows and Linux server packages, the edge client package and `SHA256SUMS` to `build/release/`. They hold the committed files of that tag without CI settings and dashboard sources, and the same tag always gives the same files.
+Release packages are built from a tag: `uv run python scripts/package_release.py v2.0.0` writes the Windows and Linux server packages, the edge client package and `SHA256SUMS` to `build/release/`. They hold the committed files of that tag without CI settings and dashboard sources, and the same tag always gives the same files.
 
 ```text
 companion/
