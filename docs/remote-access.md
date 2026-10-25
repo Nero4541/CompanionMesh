@@ -32,9 +32,15 @@ With Tailscale on the server and on your phone (same account), turn on `server.v
 
 Only devices on the tailnet get in, and only at the server's Tailscale address: everyone else, on your home network too, is refused. Tailscale is what checks who they are, so anyone you share the server with in your tailnet sees it as well. The server must listen beyond this machine (`server.host: 0.0.0.0`, as for boards). The words are kept on the server while the viewer is on, even with `server.dashboard_conversation` off (the dashboard still does not show them then).
 
-### Talking from the phone (push to talk)
+### Talking from the phone
 
-The phone page can also be a microphone: hold **Hold to talk** in the Conversation tab, speak, let go. The sentence goes to the companion as said by you, the user (no guessing who said it or to whom), and it answers through the device it talks with, such as a board's speaker. The phone is held to your mouth, so it hears you better than a board across the room. It needs the dashboard's admin token on the phone (scan the QR code under **Phone** on the dashboard's Overview page, or sign in under People).
+The phone page can also be a microphone and a speaker of the companion. With push to talk (the default), hold **Hold to talk** in the Conversation tab, speak, let go: the sentence goes to the companion as said by you, the user (no guessing who said it or to whom). The phone is held to your mouth, so it hears you better than a board across the room. It needs the dashboard's admin token on the phone (scan the QR code under **Phone** on the dashboard's Overview page, or sign in under People).
+
+The `phone` settings (also on the dashboard's Overview page, under **Voice pipeline**) decide the rest; they apply at once:
+
+- `phone.share_session` (on): the phone joins the board's conversation, so there is one history and the companion knows what was said into either. Off, the phone has a conversation of its own.
+- `phone.answer_on`: where answers play while the phone and a board share the conversation. `where_said` (the default) plays each answer on the one that heard it, what the companion says by itself on the board; `board`, `phone` or `both` always there. With only one of them connected, answers play on that one.
+- `phone.listen`: `push_to_talk`, or `always`: the phone listens all the time like a board while the page is open and in view (tap **Tap to listen** once). Speech is found by the server as for a board; when the board and the phone hear the same sentence, the first to finish it counts and the other is dropped.
 
 Browsers give a page its microphone only over https, so open the page at the server's tailnet name instead of its 100.x address:
 
@@ -42,7 +48,7 @@ Browsers give a page its microphone only over https, so open the page at the ser
 2. On the server's computer: `tailscale serve --bg http://127.0.0.1:8765` (once; it stays). Tailscale gets a certificate for the computer's tailnet name and forwards https to the server.
 3. On the phone: `https://<computer>.<tailnet>.ts.net/view/` (`tailscale status` shows the name; the dashboard works there too, with its admin token).
 
-**Answer on** chooses where the companion answers. *The board, or this phone when none is on* (the default) answers through a connected board's speaker; with no board on, the phone itself plays the answer. *This phone* always answers on the phone. The phone plays where it plays any sound: pair Bluetooth earphones or a speaker with it in its own settings and the answer plays there. Browsers that let a page pick the output (desktop Chrome and Edge) also show **Play on** to choose one. The microphone is given back after each sentence, so the phone plays the answer as media, not as a call through its earpiece.
+The phone plays its answers where it plays any sound: pair Bluetooth earphones or a speaker with it in its own settings and the answer plays there. Browsers that let a page pick the output (desktop Chrome and Edge) also show **Play on** to choose one. With push to talk the microphone is given back after each sentence, so the phone plays the answer as media; while it listens all the time, the phone stays in call mode and Bluetooth earphones sound like a call.
 
 The server takes what `tailscale serve` forwards as coming from the tailnet only when Tailscale says who sent it (its `Tailscale-User-Login` header); the dashboard still asks for its token.
 
