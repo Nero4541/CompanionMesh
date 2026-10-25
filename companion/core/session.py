@@ -2,7 +2,10 @@
 
 A session can have several devices attached at once (e.g. a browser with the
 mic and speaker plus a separate IP camera). Events go to every device; speech
-audio goes only to devices with the "speaker" role.
+audio goes only to devices with the "speaker" role. Several microphones may feed
+one conversation (a board and the phone page): each has its own speech
+detection, and the first sentence to end wins; the others' overlapping speech
+is dropped, since they heard the same thing.
 
 Audio is full duplex when the microphone's client says so (v0.5): it keeps
 sending while the companion speaks, and speech detected meanwhile is the user
@@ -43,6 +46,7 @@ from companion.core.clock import ClockSync
 from companion.core.errors import CompanionError
 from companion.core.logging import kv
 from companion.core.metrics import TurnTimings
+from companion.core.pipeline import VoiceTest
 from companion.core.states import State, StateMachine
 from companion.core.text import SentenceSplitter
 from companion.protocol import Envelope, make_event
@@ -62,6 +66,7 @@ __all__ = ["DEFAULT_ROLES", "Device", "Outbox", "Session", "State", "parse_roles
 log = logging.getLogger(__name__)
 
 MIN_UTTERANCE_S = 0.3
+PHONE_DEVICE = "phone"  # the phone page (/view/) as a device: push to talk, its speaker
 # SPEAKING lasts at most this long when the length of the audio is unknown.
 PLAYBACK_ACK_TIMEOUT_S = 90.0
 CONTEXT_NOTE_MAX_AGE_S = 1800.0
@@ -161,6 +166,8 @@ class _Mic:
     full_duplex: bool  # keeps sending while the companion speaks
     device_aec: bool  # the device cancels its own speaker's echo
     canceller: EchoCanceller
+    segmenter: UtteranceSegmenter
+    decoder: Any = None  # OpusDecoder when the mic sends opus
     pos: int = 0  # next microphone sample index
     last_capture_ms: float | None = None  # device clock, end of the newest chunk
 
@@ -183,6 +190,7 @@ class _Playback:
     expected_end: float = 0.0  # monotonic; when the audio sent should have played
     unknown_length: bool = False
     progress_reported: bool = False  # the device reports per-clip progress
+    devices: list[Device] = field(default_factory=list)  # the speakers it was sent to
 
     def heard_text(self) -> str | None:
         """Text of the clips the device started playing; None when it does not say."""
@@ -223,9 +231,7 @@ class Session:
         self._turn_id: str | None = None
         self._token: CancelToken | None = None
         self._timings: TurnTimings | None = None
-        self._mic: _Mic | None = None
-        self._decoder: Any = None  # OpusDecoder when the mic sends opus
-        self._segmenter: UtteranceSegmenter | None = None
+        self._mics: list[_Mic] = []
         self._speech_end: float | None = None  # monotonic, end of the last utterance
         self._playback: _Playback | None = None
         self._barge_in_at: float | None = None
@@ -234,8 +240,12 @@ class Session:
         self.echo_guard = EchoGuard(similarity=echo.guard_similarity, window_s=echo.guard_window_s)
         self.reference = ReferenceBuffer()
         self.vision = VisionChannel(self)
-        # Lists that collect raw microphone audio for a while (the dashboard's mic test).
-        self.mic_taps: list[list[np.ndarray]] = []
+        # Lists that collect raw microphone audio of one device for a while (the dashboard's
+        # mic test).
+        self.mic_taps: list[tuple[Device, list[np.ndarray]]] = []
+        # The dashboard's voice input test, by device id: the next sentence is only recognised.
+        self.voice_tests: dict[str | None, VoiceTest] = {}
+        self._test_acks: dict[str, asyncio.Future[str | None]] = {}  # speaker tests, by turn
         self._watchdog: asyncio.Task[None] | None = None
         self._tasks: set[asyncio.Task[Any]] = set()
         with contextlib.suppress(RuntimeError):  # no loop: built outside asyncio (tests)
@@ -253,6 +263,20 @@ class Session:
         self.echo_guard.window_s = config.realtime.echo.guard_window_s
         self.attention.config = config.attention
         self.vision.reconfigure(config)
+
+    @property
+    def _mic(self) -> _Mic | None:
+        """The first open microphone (most conversations have only one)."""
+        return self._mics[0] if self._mics else None
+
+    def mic_of(self, device: Device | None) -> _Mic | None:
+        if device is None:
+            return self._mic
+        return next((m for m in self._mics if m.device is device), None)
+
+    def _reset_segmenters(self) -> None:
+        for mic in self._mics:
+            mic.segmenter.reset()
 
     def _spawn(self, coro: Any) -> None:
         """Run ``coro`` detached from the caller (kept referenced until done)."""
@@ -279,7 +303,7 @@ class Session:
         """
         if device in self.devices:
             self.devices.remove(device)
-        if self._mic is not None and device is self._mic.device:
+        if self.mic_of(device) is not None:
             await self.audio_stop(device)
         if "speaker" in device.roles and not self.with_role("speaker"):
             # Nobody left to play (or confirm) the reply audio. Recover in a task
@@ -302,6 +326,24 @@ class Session:
 
     def with_role(self, role: str) -> list[Device]:
         return [d for d in self.devices if role in d.roles]
+
+    def outputs_for(self, origin: Device | None) -> list[Device]:
+        """The speakers that play the answer to what ``origin`` heard (phone.answer_on)."""
+        speakers = self.with_role("speaker")
+        phones = [d for d in speakers if d.device_id == PHONE_DEVICE]
+        boards = [d for d in speakers if d.device_id != PHONE_DEVICE]
+        if not phones or not boards:
+            return speakers
+        choice = self.runtime.config.phone.answer_on
+        if choice == "both":
+            return speakers
+        if choice == "phone":
+            return phones
+        if choice == "board":
+            return boards
+        if origin is not None and origin.device_id == PHONE_DEVICE:
+            return phones
+        return [origin] if origin in boards else boards
 
     async def replay_backlog(self, device: Device) -> int:
         """Deliver what happened while the conversation devices were away."""
@@ -401,8 +443,7 @@ class Session:
         self._playback = None
         self._stopping_turn = None
         self._barge_in_at = None
-        if self._segmenter is not None:
-            self._segmenter.reset()
+        self._reset_segmenters()
         await self.rest("recovered")
 
     # --- text input -----------------------------------------------------
@@ -438,12 +479,12 @@ class Session:
         if self.runtime.stt is None and not self.runtime.config.builtin.stt.enabled:
             await self.emit_error("speech input is disabled (stt.provider: none)", code="stt_off")
             return
-        self._decoder = None
+        decoder = None
         if encoding == "opus":
             from companion.audio.opus import OpusDecoder
 
             try:
-                self._decoder = OpusDecoder()
+                decoder = OpusDecoder()
             except CompanionError as exc:
                 await self.emit_error(exc)
                 return
@@ -454,19 +495,23 @@ class Session:
             canceller = NlmsEchoCanceller(
                 self.reference, filter_ms=echo.filter_ms, max_delay_ms=echo.max_delay_ms
             )
-        self._mic = _Mic(
-            device=device or self.devices[0],
+        owner = device or self.devices[0]
+        mic = _Mic(
+            device=owner,
             full_duplex=bool(payload.get("full_duplex")),
             device_aec=device_aec,
             canceller=canceller,
+            segmenter=self.runtime.new_segmenter(),
+            decoder=decoder,
         )
-        self._segmenter = self.runtime.new_segmenter()
+        self._mics = [m for m in self._mics if m.device is not owner] + [mic]
         log.info(
             "microphone open",
             extra=kv(
                 session=self.session_id,
+                device=owner.device_id,
                 encoding=encoding,
-                full_duplex=self._mic.full_duplex,
+                full_duplex=mic.full_duplex,
                 aec="device" if device_aec else echo.canceller,
             ),
         )
@@ -474,38 +519,39 @@ class Session:
             await self.set_state(State.LISTENING, "microphone open")
 
     async def audio_stop(self, device: Device | None = None) -> None:
-        mic = self._mic
-        if mic is None or (device is not None and device is not mic.device):
-            return  # only the device that opened the mic can close it
-        self._mic = None
-        segmenter, self._segmenter = self._segmenter, None
-        if segmenter is not None and self.state == State.LISTENING:
-            utterance = segmenter.flush()
-            if utterance is not None:
-                await self._on_utterance(utterance)
-                return
+        mic = self.mic_of(device)
+        if mic is None:
+            return  # only the device that opened a mic can close it
+        self._mics.remove(mic)
         if self.state == State.LISTENING:
+            utterance = mic.segmenter.flush()
+            if utterance is not None:
+                await self._on_utterance(utterance, mic)
+                return
+        if self.state == State.LISTENING and not self._mics:
             await self.set_state(State.IDLE, "microphone closed")
 
     def _playing(self) -> bool:
         """Reply audio may be coming out of a speaker right now."""
         return self._playback is not None or self._stopping_turn is not None
 
-    def _echo_risk(self) -> bool:
-        mic = self._mic
-        return mic is not None and not mic.device_aec and self._playing()
+    def _echo_risk(self, mic: _Mic) -> bool:
+        return not mic.device_aec and self._playing()
 
     async def audio_chunk(
         self, data: bytes, device: Device | None = None, meta: dict[str, Any] | None = None
     ) -> None:
-        mic = self._mic
-        if mic is None or self._segmenter is None:
+        mic = self.mic_of(device)
+        if mic is None:
             return
-        if device is not None and device is not mic.device:
-            return  # one microphone per session
-        samples = self._decoder.decode(data) if self._decoder else pcm16_to_float32(data)
-        for tap in self.mic_taps:
-            tap.append(samples)
+        samples = mic.decoder.decode(data) if mic.decoder else pcm16_to_float32(data)
+        for owner, tap in self.mic_taps:
+            if owner is mic.device:
+                tap.append(samples)
+        self.runtime.pipeline.audio(mic.device.device_id, samples)
+        test = self.voice_tests.get(mic.device.device_id)
+        if test is not None:
+            test.heard(samples)
         meta = meta or {}
         pos = meta.get("pos")
         if isinstance(pos, int) and pos >= 0:
@@ -528,22 +574,27 @@ class Session:
             return
         if self.state == State.TRANSCRIBING:
             return  # the utterance before this one is being transcribed
-        segmenter = self._segmenter
+        segmenter = mic.segmenter
         segmenter.strict = (
             (self.realtime.barge_in_threshold, self.realtime.barge_in_min_speech_ms)
-            if self._echo_risk()
+            if self._echo_risk(mic)
             else None
         )
         for item in segmenter.feed(samples):
             if isinstance(item, SpeechStart):
                 self._record_mic_to_vad(mic)
+                self.runtime.pipeline.speech(mic.device.device_id)
+                if test is not None:
+                    test.speech = True
+                    continue  # a test sentence interrupts nothing
                 if self._proactive or self.busy or self._playing():
                     await self.interrupt("barge_in")  # the user comes first
                 await self.emit(ev.AUDIO_VAD, {"state": "speech_start"})
                 await self.vision.request_capture("speech")
             elif isinstance(item, Utterance):
-                await self.emit(ev.AUDIO_VAD, {"state": "speech_end"})
-                await self._on_utterance(item)
+                if test is None:
+                    await self.emit(ev.AUDIO_VAD, {"state": "speech_end"})
+                await self._on_utterance(item, mic)
                 break
 
     def _record_mic_to_vad(self, mic: _Mic) -> None:
@@ -552,9 +603,15 @@ class Session:
             if age is not None:
                 self.metrics.record("mic_to_vad", age / 1000)
 
-    async def _on_utterance(self, utterance: Utterance) -> None:
-        if self._segmenter is not None:
-            self._segmenter.reset()
+    async def _on_utterance(self, utterance: Utterance, mic: _Mic | None = None) -> None:
+        test = self.voice_tests.get(mic.device.device_id) if mic is not None else None
+        if test is not None:
+            mic.segmenter.reset()  # type: ignore[union-attr]
+            if utterance.duration_s >= MIN_UTTERANCE_S:
+                self._spawn(self._run_voice_test(test, utterance.audio))
+            return
+        # The other microphones heard the same sentence: theirs is dropped.
+        self._reset_segmenters()
         if utterance.duration_s < MIN_UTTERANCE_S:
             if self.state == State.INTERRUPTING:
                 await self.rest("utterance too short")
@@ -564,7 +621,27 @@ class Session:
         self._timings = TurnTimings(speech_end=self._speech_end)
         # The speech ended when the silence that closed it began.
         ended = time.time() - self.runtime.config.vad.min_silence_ms / 1000
-        self._start_turn(self._voice_turn(utterance.audio, ended))
+        origin = mic.device if mic is not None else None
+        self._start_turn(self._voice_turn(utterance.audio, ended, origin=origin))
+
+    async def _run_voice_test(self, test: VoiceTest, audio: np.ndarray) -> None:
+        """The dashboard's voice input test: recognise the sentence, answer nothing."""
+        test.utterance_s = audio.size / SAMPLE_RATE
+        stt = self.runtime.stt
+        if stt is None:
+            test.finish(error="speech recognition is not running")
+            return
+        prompt = self.runtime.config.stt.prompt
+        started = time.perf_counter()
+        try:
+            transcript = await stt.transcribe(audio, **({"prompt": prompt} if prompt else {}))
+        except CompanionError as exc:
+            self.runtime.pipeline.stt.note(False, str(exc))
+            test.finish(error=str(exc))
+            return
+        test.stt_s = time.perf_counter() - started
+        self.runtime.pipeline.stt.note(True, _heard(transcript.text, test.stt_s))
+        test.finish(text=transcript.text)
 
     def _attribute(self, audio: np.ndarray, ended: float | None) -> asyncio.Task[Any] | None:
         """Who said it (perception.speakers), worked out while speech is recognised."""
@@ -585,10 +662,19 @@ class Session:
 
     async def push_to_talk(self, audio: np.ndarray) -> None:
         """A sentence from push to talk (a phone): the user, speaking to the companion."""
+        self.runtime.pipeline.audio(PHONE_DEVICE, audio)
+        self.runtime.pipeline.speech(PHONE_DEVICE, "push to talk")
+        test = self.voice_tests.get(PHONE_DEVICE)
+        if test is not None:
+            test.heard(audio)
+            test.speech = True
+            await self._run_voice_test(test, audio)
+            return
         await self.interrupt("new_utterance")
         self._speech_end = TurnTimings.now()
         self._timings = TurnTimings(speech_end=self._speech_end)
-        self._start_turn(self._voice_turn(audio, pushed=True))
+        phone = next((d for d in self.devices if d.device_id == PHONE_DEVICE), None)
+        self._start_turn(self._voice_turn(audio, pushed=True, origin=phone))
 
     def _pusher(self) -> Speaker | None:
         """Who uses push to talk: the user (signed in with the admin token)."""
@@ -600,7 +686,12 @@ class Session:
         return Speaker(user.id, user.name, "user", "high", False, "push_to_talk", None, None)
 
     async def _voice_turn(
-        self, audio: np.ndarray, ended: float | None = None, *, pushed: bool = False
+        self,
+        audio: np.ndarray,
+        ended: float | None = None,
+        *,
+        pushed: bool = False,
+        origin: Device | None = None,
     ) -> None:
         stt = self.runtime.stt
         if stt is None:  # the built-in engine is still starting, or was turned off
@@ -618,6 +709,7 @@ class Session:
         except CompanionError as exc:
             if attributing is not None:
                 attributing.cancel()
+            self.runtime.pipeline.stt.note(False, str(exc))
             await self.emit_error(exc)
             await self.rest("transcription failed")
             return
@@ -635,8 +727,16 @@ class Session:
         outcome = (
             "made_up" if invented else "echo" if echo else "turn" if transcript.text else "empty"
         )
+        self.runtime.pipeline.stt.note(
+            True,
+            {
+                "made_up": "dropped: made up from noise",
+                "echo": "dropped: its own voice heard back",
+            }.get(outcome, _heard(transcript.text, stt_s)),
+        )
+        heard_on = origin.device_id if origin is not None else PHONE_DEVICE if pushed else None
         recording_id = await self._keep_recording(
-            audio, transcript.text, outcome, stt_s, pushed=pushed
+            audio, transcript.text, outcome, stt_s, device_id=heard_on
         )
         log.info(
             "transcribed",
@@ -680,7 +780,7 @@ class Session:
             self.session_id,
             "user",
             transcript.text,
-            device_id="phone" if pushed else self._mic.device.device_id if self._mic else None,
+            device_id=heard_on,
             recording_id=recording_id,
             **extra,
         )
@@ -693,7 +793,7 @@ class Session:
         if route is not None and route.route != "turn":
             await self._not_for_me(route, speaker, transcript.text)
             return
-        await self.run_turn(transcript.text, speaker=speaker)
+        await self.run_turn(transcript.text, speaker=speaker, origin=origin)
 
     def _log_speech(
         self, who: str, role: str, text: str, *, route: str = "turn", typed: bool = False
@@ -775,7 +875,7 @@ class Session:
         await self.rest("not for the companion")
 
     async def _keep_recording(
-        self, audio: np.ndarray, text: str, outcome: str, stt_s: float, *, pushed: bool = False
+        self, audio: np.ndarray, text: str, outcome: str, stt_s: float, *, device_id: str | None
     ) -> str | None:
         """Save the utterance for the dashboard (``stt.keep_audio``); its id, or None."""
         if not self.runtime.config.stt.keep_audio:
@@ -785,7 +885,7 @@ class Session:
                 self.runtime.recordings.save,
                 audio,
                 session_id=self.session_id,
-                device_id="phone" if pushed else self._mic.device.device_id if self._mic else None,
+                device_id=device_id,
                 text=text,
                 outcome=outcome,
                 stt_s=stt_s,
@@ -797,19 +897,32 @@ class Session:
 
     # --- playback ---------------------------------------------------------
 
-    async def playback_finished(self, turn_id: str | None) -> None:
+    async def playback_finished(self, turn_id: str | None, device: Device | None = None) -> None:
         """The device played all of a turn's audio (audio.output.played)."""
+        waiting = self._test_acks.get(turn_id or "")
+        if waiting is not None:
+            if not waiting.done():
+                waiting.set_result(device.device_id if device is not None else None)
+            return
         playback = self._playback
         if playback is None or (turn_id and turn_id != playback.turn_id):
             return
+        if device is not None and playback.devices and device not in playback.devices:
+            return  # it was not sent this answer (phone.answer_on)
+        self.runtime.pipeline.played(
+            device.device_id if device is not None else None, True, "played the answer"
+        )
         await self._playback_done(playback.turn_id, "played")
 
     async def _playback_done(self, turn_id: str, reason: str) -> None:
         if self._playback is not None and self._playback.turn_id == turn_id:
+            if reason != "played":
+                for device in self._playback.devices:
+                    self.runtime.pipeline.played(device.device_id, False, reason)
             self._playback = None
-        segmenter = self._segmenter
-        if segmenter is not None and not segmenter.in_speech:
-            segmenter.reset()  # drop the tail of our own voice
+        for mic in self._mics:
+            if not mic.segmenter.in_speech:
+                mic.segmenter.reset()  # drop the tail of our own voice
         if self.state == State.SPEAKING:
             await self.rest(reason)
 
@@ -843,10 +956,12 @@ class Session:
         if self.state == State.INTERRUPTING:
             await self.rest("playback stopped")
 
-    def _track_chunk(self, turn_id: str, seq: int, text: str, audio: bytes, mime: str) -> None:
+    def _track_chunk(
+        self, turn_id: str, seq: int, text: str, audio: bytes, mime: str, devices: list[Device]
+    ) -> None:
         playback = self._playback
         if playback is None or playback.turn_id != turn_id:
-            playback = self._playback = _Playback(turn_id)
+            playback = self._playback = _Playback(turn_id, devices=list(devices))
         duration = audio_duration_s(audio, mime)
         reference = None
         if self._mic is not None and isinstance(self._mic.canceller, NlmsEchoCanceller):
@@ -924,7 +1039,9 @@ class Session:
             with contextlib.suppress(asyncio.CancelledError):
                 await self._turn
 
-    async def run_turn(self, user_text: str, *, speaker: Speaker | None = None) -> str:
+    async def run_turn(
+        self, user_text: str, *, speaker: Speaker | None = None, origin: Device | None = None
+    ) -> str:
         """Run one conversational turn; returns the assistant text.
 
         With a ``speaker`` (perception.speakers), the agent sees who said it:
@@ -982,8 +1099,12 @@ class Session:
         started = time.perf_counter()
         queue: asyncio.Queue[str | None] = asyncio.Queue()
         tts_task: asyncio.Task[bool] | None = None
-        if self.speak and self.with_role("speaker"):
-            tts_task = asyncio.create_task(self._tts_worker(turn_id, queue, token, timings))
+        outputs = self.outputs_for(origin)
+        if self.speak and outputs:
+            tts_task = asyncio.create_task(
+                self._tts_worker(turn_id, queue, token, timings, outputs)
+            )
+        failure: str | None = None
         splitter = SentenceSplitter()
         try:
             async for item in rt.agent.respond(session, messages, context):
@@ -1016,8 +1137,10 @@ class Session:
             cancelled = True
             raise
         except CompanionError as exc:
+            failure = str(exc)
             await self.emit_error(exc)
         except Exception as exc:
+            failure = f"internal error: {exc}"
             log.exception("turn failed", extra=kv(session=self.session_id))
             await self.emit_error(f"internal error: {exc}", code="internal_error")
         finally:
@@ -1026,6 +1149,13 @@ class Session:
                 with contextlib.suppress(asyncio.CancelledError, Cancelled):
                     audio_sent = await tts_task or audio_sent
             text = "".join(parts).strip()
+            if failure is not None:
+                rt.pipeline.agent.note(False, failure)
+            elif not cancelled:
+                took = time.perf_counter() - started
+                rt.pipeline.agent.note(
+                    bool(text), f"answered in {took:.1f} s" if text else "answered nothing"
+                )
             await self._finish_turn(
                 turn_id, text, cancelled=cancelled, audio_sent=audio_sent, reason=token.reason
             )
@@ -1101,22 +1231,29 @@ class Session:
         queue: asyncio.Queue[str | None],
         token: CancelToken,
         timings: TurnTimings | None = None,
+        outputs: list[Device] | None = None,
     ) -> bool:
         tts = self.runtime.tts
         assert tts is not None
+        speakers = outputs if outputs is not None else self.with_role("speaker")
         seq = 0
         failed = False
         while (sentence := await queue.get()) is not None:
             if failed:
                 continue
+            started = time.perf_counter()
             try:
                 audio = await token.run(tts.synthesize(sentence, voice=self.runtime.persona.voice))
             except Cancelled:
                 break
             except CompanionError as exc:
                 failed = True  # continue text-only for the rest of this turn
+                self.runtime.pipeline.tts.note(False, str(exc))
                 await self.emit_error(exc)
                 continue
+            self.runtime.pipeline.tts.note(
+                True, f"{len(sentence)} characters in {time.perf_counter() - started:.1f} s"
+            )
             if token.cancelled:
                 break
             header = make_event(
@@ -1125,8 +1262,8 @@ class Session:
                 session_id=self.session_id,
                 device_id=self.device_id,
             )
-            self._track_chunk(turn_id, seq, sentence, audio.data, audio.mime)
-            for device in self.with_role("speaker"):
+            self._track_chunk(turn_id, seq, sentence, audio.data, audio.mime, speakers)
+            for device in speakers:
                 await device.outbox.send_binary(header, audio.data)
             if seq == 0:
                 if timings is not None:
@@ -1148,12 +1285,24 @@ class Session:
         """The device whose microphone feeds this session, if any."""
         return self._mic.device if self._mic is not None else None
 
-    async def say_test(self, device: Device, text: str) -> None:
-        """Speak ``text`` on one device only, outside the conversation (speaker test)."""
+    async def say_test(
+        self, device: Device, text: str, *, confirm_s: float | None = None
+    ) -> dict[str, Any]:
+        """Speak ``text`` on one device only, outside the conversation (speaker test).
+
+        With ``confirm_s``, wait that long for the device to say it played it.
+        """
         tts = self.runtime.tts
         if tts is None:
             raise CompanionError("no text-to-speech is configured (tts.provider)", code="no_tts")
-        audio = await tts.synthesize(text, voice=self.runtime.persona.voice)
+        started = time.perf_counter()
+        try:
+            audio = await tts.synthesize(text, voice=self.runtime.persona.voice)
+        except CompanionError as exc:
+            self.runtime.pipeline.tts.note(False, str(exc))
+            raise
+        tts_s = time.perf_counter() - started
+        self.runtime.pipeline.tts.note(True, f"{len(text)} characters in {tts_s:.1f} s")
         turn_id = f"test-{uuid.uuid4().hex[:8]}"
         self.echo_guard.spoke(text)  # the microphone may hear it
         header = make_event(
@@ -1161,8 +1310,30 @@ class Session:
             {"turn_id": turn_id, "seq": 0, "mime": audio.mime, "text": text},
             session_id=self.session_id,
         )
-        await device.outbox.send_binary(header, audio.data)
-        await self.emit_to([device], ev.AUDIO_OUTPUT_DONE, {"turn_id": turn_id})
+        waiting: asyncio.Future[str | None] | None = None
+        if confirm_s:
+            waiting = asyncio.get_running_loop().create_future()
+            self._test_acks[turn_id] = waiting
+        try:
+            await device.outbox.send_binary(header, audio.data)
+            await self.emit_to([device], ev.AUDIO_OUTPUT_DONE, {"turn_id": turn_id})
+            played: bool | None = None
+            if waiting is not None:
+                try:
+                    await asyncio.wait_for(waiting, confirm_s)
+                    played = True
+                except TimeoutError:
+                    played = False
+                self.runtime.pipeline.played(
+                    device.device_id, played, "played the test" if played else "test not confirmed"
+                )
+        finally:
+            self._test_acks.pop(turn_id, None)
+        return {
+            "tts_s": round(tts_s, 2),
+            "played": played,
+            "seconds": audio_duration_s(audio.data, audio.mime),
+        }
 
     # --- attention (v0.3) ------------------------------------------------------
 
@@ -1441,17 +1612,18 @@ class Session:
         )
         await self.emit(ev.RESPONSE_DELTA, {"turn_id": turn_id, "text": text})
         audio_sent = False
-        if self.speak and self.with_role("speaker"):
+        outputs = self.outputs_for(None)  # by itself: on the board
+        if self.speak and outputs:
             queue: asyncio.Queue[str | None] = asyncio.Queue()
             splitter = SentenceSplitter()
             for sentence in [*splitter.feed(text), *splitter.flush()]:
                 queue.put_nowait(sentence)
             queue.put_nowait(None)
-            audio_sent = await self._tts_worker(turn_id, queue, token)
+            audio_sent = await self._tts_worker(turn_id, queue, token, outputs=outputs)
         await self._finish_turn(turn_id, text, cancelled=token.cancelled, audio_sent=audio_sent)
 
     async def close(self) -> None:
-        self._mic = None
+        self._mics = []
         await self.vision.close()
         await self._cancel_turn("session closed")
         self._playback = None
@@ -1461,3 +1633,10 @@ class Session:
                 task.cancel()
                 with contextlib.suppress(asyncio.CancelledError, Exception):
                     await task
+
+
+def _heard(text: str, stt_s: float) -> str:
+    if not text:
+        return "recognized nothing"
+    short = text if len(text) <= 40 else text[:39] + "…"
+    return f"「{short}」 in {stt_s:.1f} s"
