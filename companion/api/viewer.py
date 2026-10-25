@@ -164,7 +164,11 @@ async def talk(request: Request) -> dict[str, Any]:
         raise HTTPException(status_code=400, detail="send a 16-bit PCM WAV")
     session = _runtime(request).talk_session(request.query_params.get("session"))
     if session is None:
-        raise HTTPException(status_code=409, detail="no device is connected to answer through")
+        raise HTTPException(
+            status_code=409,
+            detail="nothing is connected to play the answer: "
+            "reload this page (or turn the board on)",
+        )
     await session.push_to_talk(audio)
     return {"session_id": session.session_id, "seconds": round(audio.size / 16_000, 1)}
 
