@@ -16,6 +16,8 @@ camera frame (JPEG/PNG/WebP)
 
 Cameras send a frame every few seconds (configurable, or only on request). In addition, when you start speaking or send a message, the server asks every camera device for a fresh frame (`vision.capture.request`, controlled by `vision.capture_on_turn`) and waits up to `vision.wait_for_pending_s` for it, so a question like 「これ何？」 is answered with what the camera sees now.
 
+`vision.from_devices: false` refuses the pictures of connected devices (boards) and tells them to stop sending, which spares the board the work of making them; cameras under `cameras` still work. It applies at once, also from the dashboard's Overview page (**Take pictures from boards**).
+
 ## Agent mode (default)
 
 `vision.mode: agent` hands the image straight to the agent: your next message is sent as text plus the newest frame (an OpenAI `image_url` part). The agent's own model does the seeing, and its memory records what it saw. With `vision.max_turn_images: N` (default 1) the message carries up to N frames that arrived since the last turn, oldest first; when more arrive, routine frames are dropped before ones a detector or the user asked for. Each frame is sent at most once and only if it is younger than `vision.observation_max_age_s`; the companion keeps no image after the turn.
