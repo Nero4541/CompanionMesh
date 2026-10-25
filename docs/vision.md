@@ -88,7 +88,7 @@ Without a vision model server of your own, the server installs and runs one itse
 
 The model goes to `builtin/vlm/models/<name>` on the first start; a folder you put there yourself can be named instead. The FP8 version decodes about 2.7 times faster with three small fused CUDA kernels, which the engine builds for your GPU on its first start (about two minutes) and keeps in `builtin/vlm/models/.cache`. Building them needs the **CUDA toolkit** matching PyTorch's CUDA (13.0) and, on Windows, **Visual Studio's C++ build tools** (the free Build Tools or Community edition, "Desktop development with C++"); the engine finds both by itself. Without them it runs unfused: the same answers, slower (`builtin.vlm.fused: false` skips the build). Measured on an RTX 4070 Ti: about 0.25 s to read a 768-pixel picture and 23 ms per word piece of the answer (fused).
 
-It serves the OpenAI chat API (with `image_url` parts) on `127.0.0.1` only, so the rest of the server talks to it like to any other vision model.
+It serves the OpenAI chat API (with `image_url` parts) on `127.0.0.1` only, so the rest of the server talks to it like to any other vision model. With [people](people.md) on, it also glances at the cameras (`perception.glance`) and checks unknown faces for posters.
 
 ### Vision model settings
 
