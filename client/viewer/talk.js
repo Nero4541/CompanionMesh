@@ -77,13 +77,16 @@
 
   // --- push to talk -------------------------------------------------------------------------
 
+  let opening = false; // the microphone is being opened for push to talk
+
   async function start() {
     wanted = true;
-    if (recording) return;
+    if (recording || opening) return;
     if (!token()) {
       say("Sign in under People first (scan the QR code on the dashboard).");
       return;
     }
+    opening = true;
     try {
       stream ??= await navigator.mediaDevices.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
@@ -92,6 +95,8 @@
     } catch (err) {
       say(`No microphone: ${err.message}`);
       return;
+    } finally {
+      opening = false;
     }
     outputs();
     if (!wanted) return; // let go while the browser asked for the microphone
@@ -163,22 +168,39 @@
 
   const listening = {
     on: false,
+    starting: false, // the microphone is being opened
+    tries: 0, // bumped by stop(): a start still opening the microphone then gives up
     stream: null,
     source: null,
     node: null,
     pos: 0, // samples sent since the microphone opened
 
+    // One capture at a time: a second one (a second tap while the browser opens the
+    // microphone) would send every piece of sound twice, slow and stuttering.
     async start() {
+      if (this.on || this.starting) return;
       if (!token()) {
         say("Sign in under People first (scan the QR code on the dashboard).");
         return;
       }
+      const attempt = ++this.tries;
+      this.starting = true;
+      say("Opening the microphone…");
       try {
         const ctx = await audio();
-        this.stream = await navigator.mediaDevices.getUserMedia({
+        const stream = await navigator.mediaDevices.getUserMedia({
           audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true, channelCount: 1 },
         });
+        if (attempt !== this.tries) {
+          stream.getTracks().forEach((t) => t.stop()); // stopped while it opened
+          return;
+        }
+        this.stream = stream;
         await ctx.audioWorklet.addModule("mic-worklet.js?v=1");
+        if (attempt !== this.tries) {
+          this.stop();
+          return;
+        }
         this.source = ctx.createMediaStreamSource(this.stream);
         this.node = new AudioWorkletNode(ctx, "mic-capture");
         this.node.port.onmessage = (e) => {
@@ -194,6 +216,8 @@
         this.stop();
         say(`No microphone: ${err.message}`);
         return;
+      } finally {
+        this.starting = false;
       }
       this.on = true;
       outputs();
@@ -223,6 +247,8 @@
     },
 
     stop() {
+      this.tries++;
+      this.starting = false;
       if (this.node) this.node.port.onmessage = null;
       this.source?.disconnect();
       this.node?.disconnect();
@@ -562,7 +588,7 @@
   button.addEventListener("pointerdown", (ev) => {
     ev.preventDefault();
     if (always()) {
-      if (listening.on) listening.stop();
+      if (listening.on || listening.starting) listening.stop();
       else listening.start();
       return;
     }
