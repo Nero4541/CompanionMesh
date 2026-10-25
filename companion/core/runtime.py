@@ -32,8 +32,9 @@ from companion.core.feed import AdminFeed
 from companion.core.logging import kv
 from companion.core.metrics import Metrics
 from companion.core.persona import Persona, load_persona
+from companion.core.pipeline import PipelineMonitor, VoiceTest
 from companion.core.recordings import Recording, RecordingStore
-from companion.core.session import DEFAULT_ROLES, Device, Outbox, Session
+from companion.core.session import DEFAULT_ROLES, PHONE_DEVICE, Device, Outbox, Session
 from companion.devices.manager import START_DELAY_S, CameraManager
 from companion.devices.registry import DeviceRegistry
 from companion.memory.store import EphemeralStore, SQLiteStore, TranscriptStore
@@ -221,6 +222,7 @@ class CompanionRuntime:
         self.speech_log = SpeechLog()
         self.tools = AgentTools(self)
         self.metrics = Metrics(enabled=config.metrics.enabled, window=config.metrics.window)
+        self.pipeline = PipelineMonitor()  # the dashboard's pipeline monitor
         self.started_at = time.time()
 
     async def start(self) -> None:
@@ -730,14 +732,85 @@ class CompanionRuntime:
             )
         return result
 
-    async def speaker_test(self, device_id: str, text: str) -> None:
+    async def speaker_test(
+        self, device_id: str, text: str, *, confirm_s: float | None = None
+    ) -> dict[str, Any]:
         found = self.find_device(device_id)
         if found is None:
             raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
         session, device = found
         if "speaker" not in device.roles:
             raise CompanionError(f"device {device_id!r} has no speaker", code="no_speaker")
-        await session.say_test(device, text)
+        return await session.say_test(device, text, confirm_s=confirm_s)
+
+    async def voice_test(self, device_id: str, seconds: float) -> dict[str, Any]:
+        """The dashboard's voice input test: the device's next sentence, recognised but not
+        answered, and what each step (microphone, speech detection, recognition) saw."""
+        found = self.find_device(device_id)
+        if found is None:
+            raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
+        session, device = found
+        pushed = session.mic_of(device) is None
+        if pushed and device_id != PHONE_DEVICE:
+            raise CompanionError(
+                f"device {device_id!r} sends no microphone audio (is audio.input_enabled off?)",
+                code="no_mic",
+            )
+        if self.stt is None:
+            raise CompanionError(
+                "speech recognition is not running (see Speech)", code="stt_starting"
+            )
+        test = VoiceTest(device_id, pushed=pushed)
+        session.voice_tests[device_id] = test
+        try:
+            with contextlib.suppress(TimeoutError):
+                await asyncio.wait_for(test.done.wait(), seconds)
+        finally:
+            session.voice_tests.pop(device_id, None)
+        return test.report()
+
+    def pipeline_report(self) -> dict[str, Any]:
+        """Each stage of the voice pipeline, for the dashboard (see companion.core.pipeline)."""
+        devices = []
+        for session in self.sessions.values():
+            for device in session.devices:
+                if not device.roles & {"mic", "speaker"}:
+                    continue
+                listen = None  # how the device hears, when it sends no microphone stream
+                roles = set(device.roles)
+                if session.mic_of(device) is None:
+                    if "mic" in roles:
+                        listen = "waiting"  # declared, but sends nothing (yet)
+                    elif device.device_id == PHONE_DEVICE:
+                        listen = "push_to_talk"
+                    roles.discard("mic")
+                devices.append(
+                    {
+                        "device_id": device.device_id,
+                        "session_id": session.session_id,
+                        "roles": sorted(roles),
+                        "listen": listen,
+                    }
+                )
+        stt = None
+        if self.stt is None:
+            off = self.config.stt.provider == "none" and not self.config.builtin.stt.enabled
+            stt = "off" if off else "not running yet (see Speech)"
+        tts = None
+        if self.tts is None:
+            off = self.config.tts.provider == "none" and not self.config.builtin.tts.enabled
+            tts = "off" if off else "not running yet (see Speech)"
+        report = self.pipeline.report(devices, {"stt": stt, "agent": None, "tts": tts})
+        report["sessions"] = [
+            {
+                "session_id": s.session_id,
+                "state": s.state.value,
+                "devices": [d.device_id for d in s.devices],
+            }
+            for s in self.sessions.values()
+        ]
+        report["phone"] = self.config.phone.model_dump()
+        return report
 
     async def mic_test(self, device_id: str, seconds: float) -> Recording:
         """Record ``seconds`` of what the device's microphone sends, as a recording."""
@@ -745,17 +818,17 @@ class CompanionRuntime:
         if found is None:
             raise CompanionError(f"device {device_id!r} is not connected", code="not_connected")
         session, device = found
-        if session.mic_device is not device:
+        if session.mic_of(device) is None:
             raise CompanionError(
                 f"device {device_id!r} sends no microphone audio (is audio.input_enabled off?)",
                 code="no_mic",
             )
         tap: list[np.ndarray] = []
-        session.mic_taps.append(tap)
+        session.mic_taps.append((device, tap))
         try:
             await asyncio.sleep(seconds)
         finally:
-            session.mic_taps.remove(tap)
+            session.mic_taps.remove((device, tap))
         audio = np.concatenate(tap) if tap else np.zeros(0, dtype=np.float32)
         if not audio.size:
             raise CompanionError("no microphone audio arrived from the device", code="no_audio")
