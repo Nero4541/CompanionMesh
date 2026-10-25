@@ -193,15 +193,33 @@ async def tailscale_logout(request: Request, device_id: str) -> dict[str, Any]:
 
 class SpeakerBody(BaseModel):
     text: str = Field(default="This is a speaker test.", min_length=1, max_length=300)
+    confirm_s: float | None = Field(default=None, gt=0, le=60)
+    """Wait this long for the device to say it played the test (the pipeline self-test)."""
 
 
 @router.post("/{device_id}/speaker-test")
 async def speaker_test(request: Request, device_id: str, body: SpeakerBody) -> dict[str, Any]:
     try:
-        await _runtime(request).speaker_test(device_id, body.text)
+        result = await _runtime(request).speaker_test(
+            device_id, body.text, confirm_s=body.confirm_s
+        )
     except CompanionError as exc:
         raise _error(exc) from exc
-    return {"played": device_id}
+    return {"played": device_id, **result}
+
+
+class VoiceBody(BaseModel):
+    seconds: float = Field(default=15.0, gt=0, le=60)
+
+
+@router.post("/{device_id}/voice-test")
+async def voice_test(request: Request, device_id: str, body: VoiceBody) -> dict[str, Any]:
+    """The pipeline self-test of voice input: the device's next sentence, recognised but not
+    answered, with what the microphone, speech detection and recognition each saw."""
+    try:
+        return await _runtime(request).voice_test(device_id, body.seconds)
+    except CompanionError as exc:
+        raise _error(exc) from exc
 
 
 class MicBody(BaseModel):
