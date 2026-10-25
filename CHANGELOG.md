@@ -2,9 +2,9 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
-## Unreleased
+## 2.0.0 — 2026-10-26
 
-Protocol 1.3 and 1.4 (both additive), edge client 1.3.0.
+The companion knows who is around and who is talking to it, your phone becomes a microphone and speaker, the dashboard follows the whole voice pipeline, and boards get Tailscale and Bluetooth speakers from the dashboard. The new features are off until you turn them on; the fixes to speech apply at once. Protocol 1.3 and 1.4 (both additive), edge client 1.3.0.
 
 Tried only in the tests so far, not yet with a real board: explicit proactive decisions, glances and the timeline, stream mode, replay, going on in a new agent session when one is full, and the wake names switch.
 
