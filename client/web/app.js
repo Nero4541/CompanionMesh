@@ -345,7 +345,7 @@ async function startMic() {
       $("meter-bar").style.width = `${Math.min(100, e.data.level * 400)}%`;
     }
   };
-  source.connect(node);
+  lowPass(ctx, source).connect(node);
   mic = { stream, source, node };
   micOn = true;
   // The browser cancels its own speaker's echo (echoCancellation above), so we can
@@ -357,6 +357,23 @@ async function startMic() {
   $("mic-toggle").textContent = "Stop mic";
   $("mic-toggle").classList.add("active");
   await listMics(); // labels become available after permission is granted
+}
+
+// Before going down to 16 kHz, take out what 16 kHz cannot hold (above 8 kHz): left in, it
+// folds back onto the voice and speech recognition mishears the consonants. An 8th-order
+// Butterworth low-pass at 7 kHz, as four biquads (their Q in dB).
+function lowPass(ctx, input) {
+  if (ctx.sampleRate <= 16000) return input;
+  let node = input;
+  for (const q of [-5.85, -4.42, -0.92, 8.17]) {
+    const filter = ctx.createBiquadFilter();
+    filter.type = "lowpass";
+    filter.frequency.value = 7000;
+    filter.Q.value = q;
+    node.connect(filter);
+    node = filter;
+  }
+  return node;
 }
 
 function stopMic() {
