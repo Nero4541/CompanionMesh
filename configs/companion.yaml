@@ -153,6 +153,7 @@ vlm:
 # Camera frames from clients. Each session must opt in (vision.enable).
 vision:
   enabled: true             # server-wide switch
+  from_devices: true        # pictures from boards; false: refused, boards stop sending
   mode: agent               # agent: attach the newest frames as images to your next
                             # message (the agent's model must accept images)
                             # vlm: describe frames with the vlm provider above
@@ -291,6 +292,13 @@ mcp:
   consent: conversation     # remember_person: the user's last line said yes | dashboard
   consent_window_s: 300
   speech_minutes: 30        # what recent_speech can give (in memory only)
+
+# The phone page (/view/, over https) as a microphone and speaker.
+# See docs/remote-access.md.
+phone:
+  share_session: true       # join the board's conversation; false: a conversation of its own
+  answer_on: where_said     # where_said | board | phone | both
+  listen: push_to_talk      # push_to_talk | always (the microphone stays on)
 
 # IP cameras and phones the server watches itself (or use the dashboard's
 # Cameras page). Logins come from .env, never from the URL.
