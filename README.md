@@ -2,13 +2,14 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser or from a small Linux board with a camera, microphone and speaker; it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v1.4.0. The realtime protocol is version 1.2: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
+**Status:** v2.0.0. The realtime protocol is version 1.4: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
 
 - **Bring your own agent**: [Hermes Agent](https://github.com/NousResearch/hermes-agent), [OpenClaw](https://openclaw.ai), or any OpenAI-compatible LLM, on this machine or another one.
 - **Conversational**: streaming replies spoken sentence by sentence; talk over the companion and it stops to listen.
 - **A body for the companion**: a small Linux board (LicheeRV Nano tested) with microphone, speaker and camera, set up over USB from the dashboard and looked after from it, at home or away.
 - **Opt-in vision and proactive speech**: it looks only when a session allows it, and speaks first only within strict limits.
 - **Knows who is around** (opt-in): recognises you and the people you add by face and voice, tells who said what, answers only what is meant for it, and keeps a timeline of what everyone has been doing, with a local vision model and tools for the agent over MCP.
+- **Your phone too**: follow the conversation on it, talk to the companion from it (push to talk, or listening all the time) and hear it answer there, Bluetooth earphones included, over Tailscale.
 - **Windows first, Linux supported**, with local speech recognition and synthesis it can install itself.
 - **Private by default**: with an external agent nothing of the conversation is written to disk; audio and images are never stored unless you turn that on.
 
