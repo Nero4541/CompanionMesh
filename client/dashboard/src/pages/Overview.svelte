@@ -2,6 +2,7 @@
   import { api } from "../lib/api.js";
   import { duration, time, value } from "../lib/format.js";
   import PhoneLogin from "../lib/PhoneLogin.svelte";
+  import Pipeline from "../lib/Pipeline.svelte";
   import { poll } from "../lib/poll.svelte.js";
 
   let { onAuthError } = $props();
@@ -81,6 +82,8 @@
     </div>
 
     <PhoneLogin {onAuthError} />
+
+    <Pipeline {onAuthError} />
   </div>
 
   <h3 class="table-title">Sessions <span class="muted">{s.active_sessions} active</span></h3>
