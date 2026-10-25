@@ -614,6 +614,12 @@ async def status(request: Request, probe: bool = False) -> dict[str, Any]:
     return await _runtime(request).status(probe=probe)
 
 
+@router.get("/pipeline")
+async def pipeline(request: Request) -> dict[str, Any]:
+    """What each stage of the voice pipeline did last, per device (the pipeline monitor)."""
+    return _runtime(request).pipeline_report()
+
+
 @router.get("/metrics")
 async def metrics(request: Request) -> dict[str, Any]:
     runtime = _runtime(request)
