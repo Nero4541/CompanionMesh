@@ -525,6 +525,8 @@ async def phone(request: Request) -> dict[str, Any]:
         "token_env": server.admin_token_env,
         "editable": _source(request) is not None,
         "listening": server.host,
+        # The phone page (/view/: the conversation, talking) answers only with this on.
+        "viewer": server.viewer.enabled,
         "urls": [
             *(
                 {"url": f"{base}/admin/?token={token}", "tailscale": True, "https": True}
