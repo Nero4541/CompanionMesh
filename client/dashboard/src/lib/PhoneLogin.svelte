@@ -1,10 +1,11 @@
 <script>
   import qrcode from "qrcode-generator";
   import { api } from "./api.js";
+  import { setPath } from "./schema.js";
 
   let { onAuthError } = $props();
 
-  let info = $state(null); // {token_set, token_env, editable, listening, urls: [{url, tailscale}]}
+  let info = $state(null); // {token_set, token_env, editable, listening, viewer, urls: [{url, tailscale}]}
   let error = $state(null);
   let busy = $state(false);
   let shown = $state(false); // the QR code holds the token: only on request
@@ -33,6 +34,27 @@
       error = null;
       picked = 0;
       shown = true;
+    } catch (err) {
+      error = err.message;
+      if (err.isAuth) onAuthError?.(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  // The phone page (/view/) answers nothing while server.viewer.enabled is off; it applies at once.
+  async function turnOnViewer() {
+    busy = true;
+    try {
+      const cfg = await api("/config");
+      const draft = cfg.saved ?? cfg.running;
+      setPath(draft, "server.viewer.enabled", true);
+      await api("/config", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ config: draft }),
+      });
+      await load();
     } catch (err) {
       error = err.message;
       if (err.isAuth) onAuthError?.(err);
@@ -77,6 +99,15 @@
         The server listens only on this machine (<code>server.host: {info.listening}</code>): set it to
         <code>0.0.0.0</code> under Configuration and restart, so a phone can reach it.
       </p>
+    {/if}
+    {#if !info.viewer}
+      <p class="muted">
+        The phone page is off (<code>server.viewer.enabled</code>): a phone can open the dashboard, but not follow the
+        conversation, talk or listen there.
+      </p>
+      <div class="row">
+        <button class="small" onclick={turnOnViewer} disabled={busy || !info.editable}>Turn on the phone page</button>
+      </div>
     {/if}
     {#if !info.token_set}
       <p class="muted">
