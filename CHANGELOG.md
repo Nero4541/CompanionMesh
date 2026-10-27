@@ -2,6 +2,10 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
+## Unreleased
+
+- **The Phone card says when the phone page is off**: with `server.viewer.enabled` off (the default), a phone logged in with the QR code opened the dashboard, but the phone page answered nothing and looked like it could not reach the server. The card now says so and has **Turn on the phone page** (applies at once, no restart).
+
 ## 2.0.0 — 2026-10-26
 
 The companion knows who is around and who is talking to it, your phone becomes a microphone and speaker, the dashboard follows the whole voice pipeline, and boards get Tailscale and Bluetooth speakers from the dashboard. The new features are off until you turn them on; the fixes to speech apply at once. Protocol 1.3 and 1.4 (both additive), edge client 1.3.0.
