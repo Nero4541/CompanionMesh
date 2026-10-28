@@ -2,7 +2,7 @@
 
 An open-source, self-hosted AI companion server. Talk to it by voice or text from a browser or from a small Linux board with a camera, microphone and speaker; it listens, can look through your camera when you allow it, thinks through the agent framework of your choice, and answers with streaming text and speech.
 
-**Status:** v2.0.0. The realtime protocol is version 1.4: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
+**Status:** v2.1.0. The realtime protocol is version 1.4: 1.x releases only add events and optional fields, so a client written for 1.0 keeps working as long as it ignores what it does not recognize.
 
 - **Bring your own agent**: [Hermes Agent](https://github.com/NousResearch/hermes-agent), [OpenClaw](https://openclaw.ai), or any OpenAI-compatible LLM, on this machine or another one.
 - **Conversational**: streaming replies spoken sentence by sentence; talk over the companion and it stops to listen.
