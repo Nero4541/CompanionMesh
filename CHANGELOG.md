@@ -2,7 +2,9 @@
 
 What changed in each release of the Companion Server and its edge client. The newest is first. To update, stop the server and run `update-companion.bat` (Windows) or `./update-companion.sh` (Linux); see [docs/updating.md](docs/updating.md).
 
-## Unreleased
+## 2.1.0 — 2026-10-28
+
+The phone page is easier to reach: the dashboard's Phone card says when the page is off and turns it on, and sets up the https address phones need to talk. Protocol 1.4 and edge client 1.3.0 are unchanged.
 
 - **The Phone card says when the phone page is off**: with `server.viewer.enabled` off (the default), a phone logged in with the QR code opened the dashboard, but the phone page answered nothing and looked like it could not reach the server. The card now says so and has **Turn on the phone page** (applies at once, no restart).
 - **https for the phone from the Phone card**: talking from the phone needs its page at `https://<computer>.<tailnet>.ts.net/view/`, which only existed after running `tailscale serve` by hand, so the card showed only `http://` addresses. It now says what is missing (Tailscale, signing in, MagicDNS and HTTPS Certificates in the Tailscale admin console), has **Set up https://…** to run `tailscale serve` for you, and then shows the phone page's address to open on the phone.
