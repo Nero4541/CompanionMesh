@@ -45,8 +45,8 @@ The `phone` settings (also on the dashboard's Overview page, under **Voice pipel
 Browsers give a page its microphone only over https, so open the page at the server's tailnet name instead of its 100.x address:
 
 1. In the Tailscale admin console, under **DNS**, turn on MagicDNS and **HTTPS Certificates**.
-2. On the server's computer: `tailscale serve --bg http://127.0.0.1:8765` (once; it stays). Tailscale gets a certificate for the computer's tailnet name and forwards https to the server.
-3. On the phone: `https://<computer>.<tailnet>.ts.net/view/` (`tailscale status` shows the name; the dashboard works there too, with its admin token).
+2. On the dashboard's Overview page, under **Phone**, press **Set up https://…** (the card says what is missing first). It runs `tailscale serve --bg http://127.0.0.1:8765` on the server's computer, which you can also run yourself (once; it stays). Tailscale gets a certificate for the computer's tailnet name and forwards https to the server.
+3. On the phone: `https://<computer>.<tailnet>.ts.net/view/`, which the **Phone** card then shows (the dashboard works there too, with its admin token).
 
 The phone plays its answers where it plays any sound: pair Bluetooth earphones or a speaker with it in its own settings and the answer plays there. Browsers that let a page pick the output (desktop Chrome and Edge) also show **Play on** to choose one. With push to talk the microphone is given back after each sentence, so the phone plays the answer as media; while it listens all the time, the phone stays in call mode and Bluetooth earphones sound like a call.
 
