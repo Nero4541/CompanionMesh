@@ -5,7 +5,9 @@
 
   let { onAuthError } = $props();
 
-  let info = $state(null); // {token_set, token_env, editable, listening, viewer, urls: [{url, tailscale}]}
+  // {token_set, token_env, editable, listening, viewer, phone_page, https: {tailscale, name, certificates},
+  //  urls: [{url, tailscale}]}
+  let info = $state(null);
   let error = $state(null);
   let busy = $state(false);
   let shown = $state(false); // the QR code holds the token: only on request
@@ -63,10 +65,24 @@
     }
   }
 
-  async function copy() {
+  // tailscale serve: the https address phones talk from.
+  async function serveHttps() {
+    busy = true;
     try {
-      await navigator.clipboard.writeText(url);
-      copied = true;
+      info = await api("/phone/https", { method: "POST" });
+      error = null;
+    } catch (err) {
+      error = err.message;
+      if (err.isAuth) onAuthError?.(err);
+    } finally {
+      busy = false;
+    }
+  }
+
+  async function copy(text = url, which = "login") {
+    try {
+      await navigator.clipboard.writeText(text);
+      copied = which;
       setTimeout(() => (copied = false), 2000);
     } catch (err) {
       error = `cannot copy: ${err.message}`;
@@ -138,10 +154,46 @@
       {/if}
       <div class="row">
         <button class="small" onclick={() => (shown = !shown)}>{shown ? "Hide" : "Show the QR code"}</button>
-        <button class="small" onclick={copy}>{copied ? "Copied" : "Copy the link"}</button>
+        <button class="small" onclick={() => copy()}>{copied === "login" ? "Copied" : "Copy the link"}</button>
         <button class="small" onclick={() => make(true)} disabled={busy || !info.editable}>New token</button>
       </div>
       <span class="muted small">Whoever has the code or the link can use the dashboard; a new token logs every phone out.</span>
+    {/if}
+    {#if info.token_set && info.phone_page}
+      <p>
+        Phone page, to talk and listen:
+        <a href={info.phone_page} target="_blank" rel="noopener noreferrer"><code>{info.phone_page}</code></a>
+      </p>
+      <div class="row">
+        <button class="small" onclick={() => copy(info.phone_page, "page")}>
+          {copied === "page" ? "Copied" : "Copy the phone page"}
+        </button>
+      </div>
+    {:else if info.token_set && info.https}
+      <p class="muted">
+        To talk from the phone, its page needs https (browsers give the microphone only to secure pages), which
+        Tailscale provides at this computer's tailnet name.
+      </p>
+      {#if !info.https.tailscale}
+        <p class="muted">Install Tailscale on this computer and sign in, then check again.</p>
+      {:else if !info.https.name}
+        <p class="muted">Tailscale is not signed in on this computer (or MagicDNS is off): sign in, then check again.</p>
+      {:else if !info.https.certificates}
+        <p class="muted">
+          Turn on <b>MagicDNS</b> and <b>HTTPS Certificates</b> in the Tailscale admin console
+          (<a href="https://login.tailscale.com/admin/dns" target="_blank" rel="noopener noreferrer">DNS</a>), then
+          check again.
+        </p>
+      {/if}
+      <div class="row">
+        {#if info.https.certificates}
+          <button class="primary" onclick={serveHttps} disabled={busy}>
+            {busy ? "Setting up…" : `Set up https://${info.https.name}`}
+          </button>
+        {:else}
+          <button class="small" onclick={load} disabled={busy}>Check again</button>
+        {/if}
+      </div>
     {/if}
   {/if}
 </div>
