@@ -520,6 +520,7 @@ async def phone(request: Request) -> dict[str, Any]:
     addresses = await asyncio.to_thread(edge_install.server_addresses) if token else []
     # tailscale serve's https name first: phones give a page their microphone only over https.
     secure = await asyncio.to_thread(edge_install.serve_urls, server.port) if token else []
+    https = await asyncio.to_thread(edge_install.https_status) if token and not secure else None
     return {
         "token_set": token is not None,
         "token_env": server.admin_token_env,
@@ -527,6 +528,9 @@ async def phone(request: Request) -> dict[str, Any]:
         "listening": server.host,
         # The phone page (/view/: the conversation, talking) answers only with this on.
         "viewer": server.viewer.enabled,
+        # Phones talk only from an https page: tailscale serve's, set up from the card.
+        "phone_page": f"{secure[0]}/view/" if secure else None,
+        "https": https,
         "urls": [
             *(
                 {"url": f"{base}/admin/?token={token}", "tailscale": True, "https": True}
@@ -558,6 +562,19 @@ async def phone_login(request: Request, body: PhoneBody) -> dict[str, Any]:
         token = secrets.token_urlsafe(32)
         await asyncio.to_thread(set_values, source.project_root / ".env", {name: token})
         log.info("admin token for phones", extra=kv(renewed=body.renew))
+    return await phone(request)
+
+
+@router.post("/phone/https")
+async def phone_https(request: Request) -> dict[str, Any]:
+    """Have tailscale serve forward https on this machine's tailnet name to the server."""
+    from companion import edge_install
+
+    port = _runtime(request).config.server.port
+    error = await asyncio.to_thread(edge_install.serve_https, port)
+    if error is not None:
+        raise HTTPException(status_code=502, detail=error)
+    log.info("tailscale serve set up for phones", extra=kv(port=port))
     return await phone(request)
 
 
