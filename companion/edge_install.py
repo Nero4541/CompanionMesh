@@ -552,6 +552,44 @@ def serve_urls(port: int) -> list[str]:
     return urls
 
 
+def https_status() -> dict[str, Any]:
+    """What ``tailscale serve`` needs here: the CLI, this machine's tailnet name and
+    HTTPS certificates turned on for the tailnet (MagicDNS too: the name is from it)."""
+    cli = _tailscale_cli()
+    if cli is None:
+        return {"tailscale": False, "name": None, "certificates": False}
+    try:
+        status = json.loads(_output([cli, "status", "--json"]) or "{}")
+    except ValueError:
+        status = {}
+    name = str((status.get("Self") or {}).get("DNSName") or "").rstrip(".") or None
+    return {
+        "tailscale": True,
+        "name": name,
+        "certificates": name is not None and name in (status.get("CertDomains") or []),
+    }
+
+
+def serve_https(port: int) -> str | None:
+    """Let ``tailscale serve`` forward https on this machine's tailnet name to the
+    server on ``port`` (it stays across restarts); the CLI's complaint if it would not."""
+    cli = _tailscale_cli()
+    if cli is None:
+        return "Tailscale is not installed on this computer"
+    try:
+        done = subprocess.run(
+            [cli, "serve", "--bg", f"http://127.0.0.1:{port}"],
+            capture_output=True,
+            text=True,
+            timeout=60,  # the first certificate takes a while
+        )
+    except (OSError, subprocess.SubprocessError) as exc:
+        return f"tailscale serve did not run: {exc}"
+    if done.returncode != 0:
+        return (done.stderr or done.stdout).strip() or f"tailscale serve failed ({done.returncode})"
+    return None
+
+
 def server_addresses() -> list[str]:
     """Addresses to offer boards, the one that works everywhere (Tailscale) first."""
     return tailscale_addresses() + lan_addresses()
